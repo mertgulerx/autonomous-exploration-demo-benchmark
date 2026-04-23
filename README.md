@@ -9,7 +9,7 @@ A ROS 2 Jazzy benchmark workspace created to compare multiple autonomous explora
 
 The repository brings together a simulaton environment, multiple exploration packages, benchmark utilities, and result reporting so exploration behavior can be compared more fairly.
 
-Main purpose of this repository is testing stability and correctness of the [frontier_exploration_ros2](https://github.com/mertgulerx/frontier_exploration_ros2) package.
+An extra purpose of this repository is testing stability and correctness of the [frontier_exploration_ros2](https://github.com/mertgulerx/frontier_exploration_ros2) package.
 
 ## Table of Contents
 
