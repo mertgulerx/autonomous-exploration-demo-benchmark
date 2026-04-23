@@ -75,7 +75,7 @@ For any inquiries or concerns related to these, please [contact me](#maintainer)
 ### Benchmark World Inventory
 
 The current benchmark includes two different worlds with unique properties to test packages extensively.
-Custom worlds are supported and can be used easily.
+Custom worlds are also supported and can be used easily.
 
 **Main benchmark world: `bookstore`**
 A complex maze like environment. Slightly modified and Gazebo Harmonic ported version of the [AWS RoboMaker Bookstore](https://github.com/aws-robotics/aws-robomaker-bookstore-world) world.
