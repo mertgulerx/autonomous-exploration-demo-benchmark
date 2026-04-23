@@ -19,6 +19,7 @@ Main purpose of this repository is testing stability and correctness of the [fro
 - [Usage](#usage)
 - [Results](#results)
 - [Contributing](#contributing)
+- [Thanks](#thanks)
 - [License](#license)
 - [Maintainer](#maintainer)
 
