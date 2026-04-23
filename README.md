@@ -54,14 +54,15 @@ For any inquiries or concerns related to these, please [contact me](#maintainer)
    - License: `Apache-2.0`
    - Source: [mertgulerx/frontier_exploration_ros2](https://github.com/mertgulerx/frontier_exploration_ros2)
    - Commit: [bc84d69451c3479b8ddcb3066b3734073ee66c88](https://github.com/mertgulerx/frontier_exploration_ros2/commit/bc84d69451c3479b8ddcb3066b3734073ee66c88)
-2. `nav2_wavefront_frontier_exploration`
-   - License: `MIT`
-   - Source: [SeanReg/nav2_wavefront_frontier_exploration](https://github.com/SeanReg/nav2_wavefront_frontier_exploration)
-   - Commit: [07473294204663473fd6ae058729c4bba71b6074](https://github.com/SeanReg/nav2_wavefront_frontier_exploration/commit/07473294204663473fd6ae058729c4bba71b6074)
-3. `m-explore-ros2` (`explore_lite`)
+2. `m-explore-ros2` 
    - License: `BSD`
    - Source: [robo-friends/m-explore-ros2](https://github.com/robo-friends/m-explore-ros2)
    - Commit: [86742bff6edd53fcce16f99dbc8c06ed5d7eed22](https://github.com/robo-friends/m-explore-ros2/commit/86742bff6edd53fcce16f99dbc8c06ed5d7eed22)
+3. `nav2_wavefront_frontier_exploration`
+   - License: `MIT`
+   - Source: [SeanReg/nav2_wavefront_frontier_exploration](https://github.com/SeanReg/nav2_wavefront_frontier_exploration)
+   - Commit: [07473294204663473fd6ae058729c4bba71b6074](https://github.com/SeanReg/nav2_wavefront_frontier_exploration/commit/07473294204663473fd6ae058729c4bba71b6074)
+
 4. `roadmap-explorer`
    - License: `Apache License 2.0`
    - Citation: `S. Saravanan, A. Bains, C. Chanel, D. Vivet, "FIT-SLAM 2: Efficient 3D Exploration with Fisher Information and Traversability Based Adaptive Roadmap"`
