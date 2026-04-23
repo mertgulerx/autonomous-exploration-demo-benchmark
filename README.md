@@ -14,11 +14,13 @@ Main purpose of this repository is testing stability and correctness of the [fro
 ## Table of Contents
 
 - [Overview](#overview)
-- [Resources and References](#resources-and-references)
+- [Resources and Citation](#resources-and-citation)
 - [Build and Run](#build-and-run)
 - [Usage](#usage)
 - [Results](#results)
 - [Contributing](#contributing)
+- [frontier_exploration_ros2 Integration](#frontier_exploration_ros2-integration)
+
 - [Thanks](#thanks)
 - [License](#license)
 - [Maintainer](#maintainer)
@@ -332,7 +334,7 @@ When contributing, please keep changes focused and document any effect on benchm
 
 ## frontier_exploration_ros2 Integration
 
-This repository is also a demo integration for the `frontier_exploration_ros2` package. It was very easy to integrate.
+This repository is also a demo integration for my own `frontier_exploration_ros2` package. It was very easy to integrate.
 
 - I cloned the package
 - Created my own YAML config according to MOGI Robot's specifications.
