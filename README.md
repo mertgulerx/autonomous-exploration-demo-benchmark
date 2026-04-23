@@ -74,7 +74,7 @@ The current benchmark includes two different worlds with unique properties to te
 Custom worlds are supported and can be used easily.
 
 **Main benchmark world: `bookstore`**
-A complex maze like environment. Custom and Gazebo Harmonic ported version of the [AWS RoboMaker Bookstore](https://github.com/aws-robotics/aws-robomaker-bookstore-world) world.
+A complex maze like environment. Slightly modified and Gazebo Harmonic ported version of the [AWS RoboMaker Bookstore](https://github.com/aws-robotics/aws-robomaker-bookstore-world) world.
 
 ![Bookstore world](assets/bookstore.png)
 
