@@ -1,0 +1,35 @@
+roadmap_explorer_node:
+  ros__parameters:
+    use_sim_time: true
+    localisation_only_mode: false
+    explorationBT:
+      localisation_only_mode: false
+
+# I added this because it was failing to detect obstacles
+# Couldn't detect walls ex. 
+roadmap_explorer_costmap:
+  roadmap_explorer_costmap:
+    ros__parameters:
+      use_sim_time: true
+      robot_radius: 0.22
+      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
+      static_layer:
+        map_topic: /map
+        map_subscribe_transient_local: true
+      obstacle_layer:
+        plugin: "nav2_costmap_2d::ObstacleLayer"
+        enabled: true
+        observation_sources: scan
+        scan:
+          topic: /scan
+          max_obstacle_height: 2.0
+          clearing: true
+          marking: true
+          data_type: "LaserScan"
+          raytrace_max_range: 3.0
+          raytrace_min_range: 0.0
+          obstacle_max_range: 2.5
+          obstacle_min_range: 0.0
+      inflation_layer:
+        inflation_radius: 0.50
+        cost_scaling_factor: 4.5

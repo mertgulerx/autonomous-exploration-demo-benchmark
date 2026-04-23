@@ -1,0 +1,38 @@
+<root BTCPP_format="4">
+    <BehaviorTree ID="MainTree">
+        <PipelineSequence>
+            <RateController hz="1.0">
+                <Sequence name="root">
+                    <LogIterationBT />
+                    <UpdateBoundaryPolygon />
+                    <SearchForFrontiers frontier_list="{the_frontier_list}" every_frontier="{the_every_frontier}"/>
+                    <ForceSuccess>
+                        <CleanupRoadmap frontier_list="{the_frontier_list}" time_between_cleanup="7.0" correct_loop_closure="false"/>
+                    </ForceSuccess>
+                    <UpdateFrontierRoadmap frontier_list="{the_frontier_list}" add_robot_pose_to_roadmap="true"/>
+                    <Fallback>
+                        <ProcessFrontierCosts frontier_list="{the_frontier_list}" every_frontier="{the_every_frontier}" frontier_costs_result="{the_frontier_costs}"/>
+                        <!-- The below node is a fallback in case roadmap planning fails. It should use Grid based planning (TODO: suchetan) -->
+                        <!-- <ProcessFrontierCosts frontier_list="{the_frontier_list}" every_frontier="{the_every_frontier}" frontier_costs_result="{the_frontier_costs}"/> -->
+                    </Fallback>
+
+                    <!-- Try to optimize the full path. If failing, cleanup roadmap and retry. -->
+                    <RecoveryNode number_of_retries="2">
+                        <OptimizeFullPath frontier_costs_result="{the_frontier_costs}" allocated_frontier="{the_allocated_frontier}" optimized_path="{optimized_path}"/>
+                        <ForceSuccess>
+                            <CleanupRoadmap frontier_list="{the_frontier_list}" time_between_cleanup="0.0" correct_loop_closure="false"/>
+                        </ForceSuccess>
+                    </RecoveryNode>
+                </Sequence>
+            </RateController>
+
+            <!-- Send nav2 goal and wait for termination. Retry this 3 times on failure. If still failing, blacklist goal. -->
+            <Fallback>
+                <RetryUntilSuccessful num_attempts="3">
+                    <SendNav2Goal allocated_frontier="{the_allocated_frontier}"/>
+                </RetryUntilSuccessful>
+                <BlacklistGoal/>
+            </Fallback>
+        </PipelineSequence>
+    </BehaviorTree>
+</root>

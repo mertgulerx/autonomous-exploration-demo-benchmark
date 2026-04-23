@@ -1,0 +1,10 @@
+<library path="rviz_autonomous_exploration_benchmark_plugins">
+  <class
+      name="rviz_autonomous_exploration_benchmark/ExplorationControlPanel"
+      type="utils::ExplorationControlPanel"
+      base_class_type="rviz_common::Panel">
+    <description>
+      Starts/stops configured exploration package launches and tracks active PID.
+    </description>
+  </class>
+</library>

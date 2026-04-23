@@ -1,0 +1,913 @@
+<sdf version='1.10'>
+  <world name='default'>
+    <gui>
+      <camera name='gzclient_camera'>
+        <pose>-5.7300000000000004 3.7599999999999998 8.0999999999999996 -6.5274645047857874e-17 1.1315999999999999 -0.43980000000000008</pose>
+      </camera>
+    </gui>
+    <gravity>0 0 -9.8000000000000007</gravity>
+    <magnetic_field>6.0000000000000002e-06 2.3e-05 -4.1999999999999998e-05</magnetic_field>
+    <atmosphere type='adiabatic'/>
+    <physics name='default_physics' default='false' type='ode'>
+      <max_step_size>0.001</max_step_size>
+      <real_time_factor>1</real_time_factor>
+      <real_time_update_rate>1000</real_time_update_rate>
+    </physics>
+    <plugin name='gz::sim::systems::Physics' filename='gz-sim-physics-system'/>
+    <plugin name='gz::sim::systems::Sensors' filename='gz-sim-sensors-system'>
+      <render_engine>ogre2</render_engine>
+    </plugin>
+    <plugin name='gz::sim::systems::Imu' filename='gz-sim-imu-system'/>
+    <plugin name='gz::sim::systems::Contact' filename='gz-sim-contact-system'/>
+    <plugin name='gz::sim::systems::UserCommands' filename='gz-sim-user-commands-system'/>
+    <plugin name='gz::sim::systems::SceneBroadcaster' filename='gz-sim-scene-broadcaster-system'/>
+    <scene>
+      <ambient>0.400000006 0.400000006 0.400000006 1</ambient>
+      <background>0.699999988 0.699999988 0.699999988 1</background>
+      <shadows>true</shadows>
+      <grid>false</grid>
+      <origin_visual>false</origin_visual>
+    </scene>
+    <spherical_coordinates>
+      <surface_model>EARTH_WGS84</surface_model>
+      <latitude_deg>0</latitude_deg>
+      <longitude_deg>0</longitude_deg>
+      <elevation>0</elevation>
+      <heading_deg>0</heading_deg>
+    </spherical_coordinates>
+    <model name='AirConditionerC_01_001'>
+      <include>
+        <uri>model://aws_robomaker_retail_AirConditionerC_01</uri>
+      </include>
+      <pose>7.458202 1.422453 3.2909440000000001 0 0 -1.564217</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='Bicycle_01_001'>
+      <include>
+        <uri>model://aws_robomaker_retail_Bicycle_01</uri>
+      </include>
+      <pose>5.6812480000000001 -2.242451 0.93124600000000002 2.0000000001933335e-06 -2.4000000002320004e-05 -2.3200025119835873e-21</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='BookE_01_001'>
+      <include>
+        <uri>model://aws_robomaker_retail_BookE_01</uri>
+      </include>
+      <pose>5.576709747314454 -2.6128242015838627 0.94893550872802734 3.999999932859126e-06 1.000000006820374e-06 -2.5435199850155787</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='BookE_01_002'>
+      <include>
+        <uri>model://aws_robomaker_retail_BookE_01</uri>
+      </include>
+      <pose>-5.896678924560546 3.3163273334503174 0.934015452861786 -9.9999999216624391e-07 -1.0000003360355567e-06 -1.5410903436394041</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='BookE_01_003'>
+      <include>
+        <uri>model://aws_robomaker_retail_BookE_01</uri>
+      </include>
+      <pose>5.717839241027832 -0.45882222056388922 0.94893079996109009 4.0000000810401947e-06 -1.0000000316737573e-06 -2.6543099946264594</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='BookE_01_004'>
+      <include>
+        <uri>model://aws_robomaker_retail_BookE_01</uri>
+      </include>
+      <pose>5.6772309999999999 -4.649203 0.94639399999999996 9.9999999999999991e-05 6.0000000000000146e-06 -2.3557519999999998</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='BookE_01_005'>
+      <include>
+        <uri>model://aws_robomaker_retail_BookE_01</uri>
+      </include>
+      <pose>5.5381499999999999 -1.610317 0.94893300000000003 0 0 -2.5269010000000001</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='BookE_01_006'>
+      <include>
+        <uri>model://aws_robomaker_retail_BookE_01</uri>
+      </include>
+      <pose>-2.4139599800109863 4.7151298522949219 1.0549399852752686 0 0 1.5681599913132518</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='BookE_01_007'>
+      <include>
+        <uri>model://aws_robomaker_retail_BookE_01</uri>
+      </include>
+      <pose>-2.6773722171783447 3.670901775360107 1.0549399852752686 0 0 1.5681599913132518</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='BookE_01_008'>
+      <include>
+        <uri>model://aws_robomaker_retail_BookE_01</uri>
+      </include>
+      <pose>-13.610896110534672 5.4487566947937029 -55.90672302246093 3.1412399981571184 -0.072268003754151114 -2.5269100077218885</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='BookE_01_009'>
+      <include>
+        <uri>model://aws_robomaker_retail_BookE_01</uri>
+      </include>
+      <pose>1.170199 1.196251 343582.71871799999 0.0022410000000000012 -0.0011000000000000003 -0.62332799999999988</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='BookE_01_010'>
+      <include>
+        <uri>model://aws_robomaker_retail_BookE_01</uri>
+      </include>
+      <pose>-5.8561220169067383 1.0112289190292356 0.94146299362182617 0 0 -1.5684399905538051</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='BookE_01_011'>
+      <include>
+        <uri>model://aws_robomaker_retail_BookE_01</uri>
+      </include>
+      <pose>5.7132110595703125 -3.2255642414093009 0.94893455505371094 1.9999998875457789e-06 9.9999995522695518e-07 2.2233899908248582</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='BookE_01_012'>
+      <include>
+        <uri>model://aws_robomaker_retail_BookE_01</uri>
+      </include>
+      <pose>-5.7813739776611337 0.026219889521598566 0.95147913694381714 -1.0000031011972806e-06 -0.004548999930091403 -2.7984900053663759</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='BookE_01_013'>
+      <include>
+        <uri>model://aws_robomaker_retail_BookE_01</uri>
+      </include>
+      <pose>-5.8015127182006836 2.2529237270355225 0.93111956119537354 0.02120400020828208 -1.0003471626452851e-06 -2.3557499758070044</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='BookE_01_015'>
+      <include>
+        <uri>model://aws_robomaker_retail_BookE_01</uri>
+      </include>
+      <pose>-2.7249386310577388 4.352914333343505 1.0549399852752686 0 0 1.5681599913132518</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='BookE_01_016'>
+      <include>
+        <uri>model://aws_robomaker_retail_BookE_01</uri>
+      </include>
+      <pose>-2.6858406066894531 2.8084392547607422 1.0549399852752686 0 0 1.5681599913132518</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='BookE_01_017'>
+      <include>
+        <uri>model://aws_robomaker_retail_BookE_01</uri>
+      </include>
+      <pose>-2.3400800228118901 5.2443428039550772 1.0549399852752686 0 0 1.5681599913132518</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='BookE_01_018'>
+      <include>
+        <uri>model://aws_robomaker_retail_BookE_01</uri>
+      </include>
+      <pose>-2.6672940254211426 4.0694489479064941 1.0549399852752686 0 0 1.5681599913132518</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='BookE_01_019'>
+      <include>
+        <uri>model://aws_robomaker_retail_BookE_01</uri>
+      </include>
+      <pose>-2.6813549995422363 3.173774242401123 1.0549399852752686 0 0 1.5681599913132518</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='BookE_01_020'>
+      <include>
+        <uri>model://aws_robomaker_retail_BookE_01</uri>
+      </include>
+      <pose>-0.69431200000000004 -3.5308229999999998 1.053825 3.9999999999999981e-06 -3.9999999999999998e-06 -1.5733820000000005</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='BookE_01_021'>
+      <include>
+        <uri>model://aws_robomaker_retail_BookE_01</uri>
+      </include>
+      <pose>-0.69431200000000004 -3.7605110000000002 1.053825 3.9999999999999981e-06 -3.9999999999999998e-06 -1.5733820000000005</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='BookE_01_022'>
+      <include>
+        <uri>model://aws_robomaker_retail_BookE_01</uri>
+      </include>
+      <pose>-0.69431200000000004 -3.9804719999999998 1.053825 3.9999999999999981e-06 -3.9999999999999998e-06 -1.5733820000000005</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='BookE_01_023'>
+      <include>
+        <uri>model://aws_robomaker_retail_BookE_01</uri>
+      </include>
+      <pose>-0.69431200000000004 -4.2218910000000003 1.053825 3.9999999999999981e-06 -3.9999999999999998e-06 -1.5733820000000005</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='BookE_01_024'>
+      <include>
+        <uri>model://aws_robomaker_retail_BookE_01</uri>
+      </include>
+      <pose>-0.69431200000000004 -4.4618909999999996 1.053825 3.9999999999999981e-06 -3.9999999999999998e-06 -1.5733820000000005</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='BookE_01_025'>
+      <include>
+        <uri>model://aws_robomaker_retail_BookE_01</uri>
+      </include>
+      <pose>-0.69431200000000004 -4.7018909999999998 1.053825 3.9999999999999981e-06 -3.9999999999999998e-06 -1.5733820000000005</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='BookE_01_026'>
+      <include>
+        <uri>model://aws_robomaker_retail_BookE_01</uri>
+      </include>
+      <pose>-0.69431200000000004 -4.941891 1.053825 3.9999999999999981e-06 -3.9999999999999998e-06 -1.5733820000000005</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='BookE_01_027'>
+      <include>
+        <uri>model://aws_robomaker_retail_BookE_01</uri>
+      </include>
+      <pose>-0.69431200000000004 -5.2218910000000003 1.053825 3.9999999999999981e-06 -3.9999999999999998e-06 -1.5733820000000005</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='BookE_01_028'>
+      <include>
+        <uri>model://aws_robomaker_retail_BookE_01</uri>
+      </include>
+      <pose>-0.69431200000000004 -3.2918910000000001 1.053825 3.9999999999999981e-06 -3.9999999999999998e-06 -1.5733820000000005</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='BookE_01_029'>
+      <include>
+        <uri>model://aws_robomaker_retail_BookE_01</uri>
+      </include>
+      <pose>-0.69431200000000004 -3.0218910000000001 1.053825 3.9999999999999981e-06 -3.9999999999999998e-06 -1.5733820000000005</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='BookE_01_030'>
+      <include>
+        <uri>model://aws_robomaker_retail_BookE_01</uri>
+      </include>
+      <pose>-2.6887011528015137 3.3472635746002197 1.0549399852752686 0 0 1.5681599913132518</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='BookF_01_001'>
+      <include>
+        <uri>model://aws_robomaker_retail_BookF_01</uri>
+      </include>
+      <pose>3.212854146957397 0.11404319852590558 0.77492904663085938 0.0034480001693837688 -1.1000000467341174e-05 0.0031139999731815667</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='BookF_01_002'>
+      <include>
+        <uri>model://aws_robomaker_retail_BookF_01</uri>
+      </include>
+      <pose>2.9029790000000002 -4.7607480000000004 0.75826000000000005 0.0034499999999999986 5.9999999999999993e-06 -0.0022499999999999998</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='BookD_01_002'>
+      <include>
+        <uri>model://aws_robomaker_retail_BookD_01</uri>
+      </include>
+      <pose>-4.1777162551879892 -1.9177989959716797 0.80448198318481445 0 0 -3.9999999899223067e-06</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='BookF_01_003'>
+      <include>
+        <uri>model://aws_robomaker_retail_BookF_01</uri>
+      </include>
+      <pose>-5.5183253288269043 -4.6809201240539542 0.80448400974273671 3.9999999899223067e-06 0 0</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='BookF_01_004'>
+      <include>
+        <uri>model://aws_robomaker_retail_BookF_01</uri>
+      </include>
+      <pose>-2.4202983379364014 0.30587786436080927 1.0381942987442014 8.0000001669993147e-06 -1.2210382749659136e-12 1.5803800506593317</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='BookD_01_004'>
+      <include>
+        <uri>model://aws_robomaker_retail_BookD_01</uri>
+      </include>
+      <pose>-1.3253902196884151 0.26298341155052185 1.0381497144699094 6.0000001891725981e-06 -2.7444035656857863e-16 0.0017119999887184028</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='BookF_01_005'>
+      <include>
+        <uri>model://aws_robomaker_retail_BookF_01</uri>
+      </include>
+      <pose>-0.33738699555397028 0.28887501358985901 1.0381799936294556 8.0000001639176309e-06 -1.8641407590735265e-12 1.5803800506593317</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='BookshelfA_01_001'>
+      <include>
+        <uri>model://aws_robomaker_retail_BookshelfA_01</uri>
+      </include>
+      <pose>2.5897400379180904 -2.428925514221191 0.034133363515138633 3.8482613935406353e-05 0.0034897899387403091 -1.559930041680784</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='BookshelfA_01_004'>
+      <include>
+        <uri>model://aws_robomaker_retail_BookshelfA_01</uri>
+      </include>
+      <pose>-3.1384799480438232 -4.3322076797485352 0.003410999896004796 0 0 0</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='BookshelfB_01_001'>
+      <include>
+        <uri>model://aws_robomaker_retail_BookshelfB_01</uri>
+      </include>
+      <pose>-6.180002212524415 -7.0017886161804199 -0.010117868892848462 0.010000002198935839 0.020000003592362304 1.6243880799178075e-11</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='BookshelfB_01_002'>
+      <include>
+        <uri>model://aws_robomaker_retail_BookshelfB_01</uri>
+      </include>
+      <pose>-2.2093830108642578 -7.0456571578979483 0.01708349771797657 -0.0001280000071910729 -0.00025200000602955755 0.00036400001037704412</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='BookshelfB_01_003'>
+      <include>
+        <uri>model://aws_robomaker_retail_BookshelfB_01</uri>
+      </include>
+      <pose>0.52224600315093994 -7.0708227157592773 0.018273971974849697 -0.0032919999572378874 0 0</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='BookshelfB_01_004'>
+      <include>
+        <uri>model://aws_robomaker_retail_BookshelfB_01</uri>
+      </include>
+      <pose>3.2933900356292725 -7.0517044067382812 0.017382295802235607 7.999999979985946e-06 -1.9999999950064866e-06 8.2030208877340691e-21</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='BookshelfB_01_005'>
+      <include>
+        <uri>model://aws_robomaker_retail_BookshelfB_01</uri>
+      </include>
+      <pose>6.0803799629211426 -7.0423488616943359 0.017399484291672714 0.0001740000024547287 4.0000000403823066e-06 1.4973002597806181e-17</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='BookshelfB_01_006'>
+      <include>
+        <uri>model://aws_robomaker_retail_BookshelfB_01</uri>
+      </include>
+      <pose>7.5499944686889657 -5.2994995117187473 0.01758448593318462 -0.0019740000387313138 -0.00021100001277250582 1.5540599931276671</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='BookshelfB_01_007'>
+      <include>
+        <uri>model://aws_robomaker_retail_BookshelfB_01</uri>
+      </include>
+      <pose>7.5768685340881365 -2.511509895324707 0.017401015385985374 9.9999998564832783e-06 -1.300000044910434e-05 1.5620700363301385</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='BookshelfB_01_008'>
+      <include>
+        <uri>model://aws_robomaker_retail_BookshelfB_01</uri>
+      </include>
+      <pose>7.5479793548584002 0.40253877639770508 0.017180779948830601 3.0000026982168746e-06 -0.00015599999833992053 1.5707999792057139</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='BookshelfC_01_001'>
+      <include>
+        <uri>model://aws_robomaker_retail_BookshelfC_01</uri>
+      </include>
+      <pose>3.2150192260742192 0.11137827485799789 0.013376669958233833 0.0034519999520038957 -2.9999999386950202e-06 0.00062000000325048864</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='BookshelfC_01_002'>
+      <include>
+        <uri>model://aws_robomaker_retail_BookshelfC_01</uri>
+      </include>
+      <pose>2.9154490000000002 -4.7617120000000002 -0.0034550000000000002 0.0034520000000000024 -1.3234889800848443e-23 1.4000000000000007e-05</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='BookshelfC_01_003'>
+      <include>
+        <uri>model://aws_robomaker_retail_BookshelfC_01</uri>
+      </include>
+      <pose>-4.1761898994445801 -1.9210834503173828 0.045908000320196152 0 0 0</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='BookshelfC_01_004'>
+      <include>
+        <uri>model://aws_robomaker_retail_BookshelfC_01</uri>
+      </include>
+      <pose>-5.5346698760986328 -4.6781101226806641 0.045908000320196152 0 0 0</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='ChairB_01_001'>
+      <include>
+        <uri>model://aws_robomaker_retail_ChairB_01</uri>
+      </include>
+      <pose>6.4240307807922372 -0.21047635376453397 0.023409159854054465 -1.7633684330364331e-14 0.0061739999969098796 8.7999997779997929e-05</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='ChairB_01_002'>
+      <include>
+        <uri>model://aws_robomaker_retail_ChairB_01</uri>
+      </include>
+      <pose>6.4211025238037118 -1.6220096349716184 0.023427238687872894 -1.7633684330364331e-14 0.0061739999969098796 8.7999997779997929e-05</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='ChairB_01_003'>
+      <include>
+        <uri>model://aws_robomaker_retail_ChairB_01</uri>
+      </include>
+      <pose>6.392533779144288 -3.2466521263122559 0.023603625595569607 -1.7633684330364331e-14 0.0061739999969098796 8.7999997779997929e-05</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='ChairB_01_004'>
+      <include>
+        <uri>model://aws_robomaker_retail_ChairB_01</uri>
+      </include>
+      <pose>6.4530515670776376 -4.6816167831420898 0.023229982703924193 -1.7633684330364331e-14 0.0061739999969098796 8.7999997779997929e-05</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='ChairB_01_010'>
+      <include>
+        <uri>model://aws_robomaker_retail_ChairB_01</uri>
+      </include>
+      <pose>-6.3865971565246591 5.0262012481689453 0.026602776721119881 -0.0014220003001326517 -0.0024240004772733636 0.00017600002567860523</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='ChairB_01_012'>
+      <include>
+        <uri>model://aws_robomaker_retail_ChairB_01</uri>
+      </include>
+      <pose>-6.503058910369873 3.2933592796325688 0.028417775407433503 -0.0010720000634135869 -0.0019360000048993912 0.00011900000494507407</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='ChairB_01_014'>
+      <include>
+        <uri>model://aws_robomaker_retail_ChairB_01</uri>
+      </include>
+      <pose>-6.4404177665710449 1.7985674142837527 0.028836119920015332 0.0013619999829216354 -0.0019459999883505257 0.0001050000022974977</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='ChairB_01_016'>
+      <include>
+        <uri>model://aws_robomaker_retail_ChairB_01</uri>
+      </include>
+      <pose>-6.4899744987487802 0.19381430745124814 0.026553450152277943 0.0013569999953815563 -0.0019499998976649539 0.0032910000141909228</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='ColumnB_01_002'>
+      <include>
+        <uri>model://aws_robomaker_retail_ColumnB_01</uri>
+      </include>
+      <pose>-4.2072396278381339 -6.8602180480957022 0.017428725957870494 0.0018949999907011148 -0.00062799997509180891 -0.0037549999683129803</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='Computer_01_001'>
+      <include>
+        <uri>model://aws_robomaker_retail_Computer_01</uri>
+      </include>
+      <pose>0.52027291059494019 4.0375847816467303 1.0936553478240965 -0.0040060000933092831 -9.699999667374249e-05 -0.010659999726058229</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='InfoDesk_01_001'>
+      <include>
+        <uri>model://aws_robomaker_retail_InfoDesk_01</uri>
+      </include>
+      <pose>1.2937135696411131 4.0275034904479972 0.016499942168593403 -0.0065823897912948796 0.0053102097628883217 0.0049105000795694959</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='DeskB_01_001'>
+      <include>
+        <uri>model://aws_robomaker_retail_DeskB_01</uri>
+      </include>
+      <pose>5.6229420000000001 -2.475419 -0.181282 0 0 0</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='DeskB_01_002'>
+      <include>
+        <uri>model://aws_robomaker_retail_DeskB_01</uri>
+      </include>
+      <pose>-5.8089809417724609 2.5805399417877197 -0.18128199875354767 0 0 0</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='DeskA_01_001'>
+      <include>
+        <uri>model://aws_robomaker_retail_DeskA_01</uri>
+      </include>
+      <pose>-2.5486524105072026 4.0216126441955566 0.015020716935396196 9.9908387697996597e-06 0.00012400100226840911 -1.5704899890797919</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='DeskA_01_004'>
+      <include>
+        <uri>model://aws_robomaker_retail_DeskA_01</uri>
+      </include>
+      <pose>-0.67159891128540039 -3.7695224285125728 0.014866000041365623 0 0 -1.5661000685161439</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='DeskA_01_005'>
+      <include>
+        <uri>model://aws_robomaker_retail_DeskA_01</uri>
+      </include>
+      <pose>-1.2667126655578613 0.26993271708488464 0.027186775580048561 -2.0000000561230147e-06 0.0034510000699383664 2.3999999789484886e-05</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='DoorB_01_001'>
+      <include>
+        <uri>model://aws_robomaker_retail_DoorB_01</uri>
+      </include>
+      <pose>-2.4924569999999999 7.2193699999999996 -0.035202999999999998 0 0 0</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='RetailShopFloor_01_001'>
+      <include>
+        <uri>model://aws_robomaker_retail_RetailShopFloor_01</uri>
+      </include>
+      <pose>-0.0026870000000000002 0 -0.27661799999999998 0 0 0</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='TabletB_01_002'>
+      <include>
+        <uri>model://aws_robomaker_retail_TabletB_01</uri>
+      </include>
+      <pose>-0.49085800000000002 -2.5263040000000001 1.1810879999999999 0.53431399999999996 -0.007302999999999984 -3.1250390000000001</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='TabletB_01_005'>
+      <include>
+        <uri>model://aws_robomaker_retail_TabletB_01</uri>
+      </include>
+      <pose>-0.37856099999999998 -4.9549849999999998 1.1847179999999999 0.51838300000000048 0.023341999999999963 1.5645140000000002</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='TabletB_01_006'>
+      <include>
+        <uri>model://aws_robomaker_retail_TabletB_01</uri>
+      </include>
+      <pose>-0.37856099999999998 -4.2271700000000001 1.1847179999999999 0.51838300000000048 0.023341999999999963 1.5645140000000002</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='TabletB_01_007'>
+      <include>
+        <uri>model://aws_robomaker_retail_TabletB_01</uri>
+      </include>
+      <pose>-0.37856099999999998 -3.2805499999999999 1.1847179999999999 0.51838300000000048 0.023341999999999963 1.5645140000000002</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='TabletB_01_008'>
+      <include>
+        <uri>model://aws_robomaker_retail_TabletB_01</uri>
+      </include>
+      <pose>-1.0038549999999999 -4.9648490000000001 1.1847179999999999 0.51246100000000028 -0.058404999999999929 -1.6041030000000007</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='TabletB_01_009'>
+      <include>
+        <uri>model://aws_robomaker_retail_TabletB_01</uri>
+      </include>
+      <pose>-1.0038549999999999 -4.2240200000000003 1.1847179999999999 0.51246100000000028 -0.058404999999999929 -1.6041030000000007</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='TabletB_01_010'>
+      <include>
+        <uri>model://aws_robomaker_retail_TabletB_01</uri>
+      </include>
+      <pose>-1.0038549999999999 -3.2755209999999999 1.1847179999999999 0.51246100000000028 -0.058404999999999929 -1.6041030000000007</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='Holder_01_002'>
+      <include>
+        <uri>model://aws_robomaker_retail_Holder_01</uri>
+      </include>
+      <pose>-0.49163200000000001 -2.5286870000000001 1.0377559999999999 0 0 -3.1301489999999998</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='Holder_01_013'>
+      <include>
+        <uri>model://aws_robomaker_retail_Holder_01</uri>
+      </include>
+      <pose>-0.372529 -4.9603619999999999 1.0377559999999999 0 0 1.5500000000000003</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='Holder_01_014'>
+      <include>
+        <uri>model://aws_robomaker_retail_Holder_01</uri>
+      </include>
+      <pose>-0.372529 -4.2268239999999997 1.0377559999999999 0 0 1.5500000000000003</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='Holder_01_015'>
+      <include>
+        <uri>model://aws_robomaker_retail_Holder_01</uri>
+      </include>
+      <pose>-0.372529 -3.2863180000000001 1.0377559999999999 0 0 1.5500000000000003</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='Holder_01_016'>
+      <include>
+        <uri>model://aws_robomaker_retail_Holder_01</uri>
+      </include>
+      <pose>-1.0017 -4.9615200000000002 1.0377559999999999 0 0 -1.5886449999999999</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='Holder_01_017'>
+      <include>
+        <uri>model://aws_robomaker_retail_Holder_01</uri>
+      </include>
+      <pose>-1.0017 -4.2260999999999997 1.0377559999999999 0 0 -1.5886449999999999</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='Holder_01_018'>
+      <include>
+        <uri>model://aws_robomaker_retail_Holder_01</uri>
+      </include>
+      <pose>-1.0017 -3.2691300000000001 1.0377559999999999 0 0 -1.5886449999999999</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='Horologe_01_001'>
+      <include>
+        <uri>model://aws_robomaker_retail_Horologe_01</uri>
+      </include>
+      <pose>2.4051239999999998 3.0257079999999998 2.525191 0 0 -1.5655820000000003</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='RetailShopWall_01_001'>
+      <include>
+        <uri>model://aws_robomaker_retail_RetailShopWall_01</uri>
+      </include>
+      <pose>0 0 -0.28128199999999998 0 0 0</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='LightA_01_001'>
+      <include>
+        <uri>model://aws_robomaker_retail_LightA_01</uri>
+      </include>
+      <pose>2.7744179999999998 -3.6281500000000002 3.1503290000000002 0 0 0</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='LightA_01_002'>
+      <include>
+        <uri>model://aws_robomaker_retail_LightA_01</uri>
+      </include>
+      <pose>5.383991 -5.3837099999999998 3.150328 0 0 0</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='LightA_01_003'>
+      <include>
+        <uri>model://aws_robomaker_retail_LightA_01</uri>
+      </include>
+      <pose>5.383991 0.041919999999999999 3.150328 0 0 0</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='LightA_01_004'>
+      <include>
+        <uri>model://aws_robomaker_retail_LightA_01</uri>
+      </include>
+      <pose>-3.2106680000000001 -5.3837099999999998 3.150328 0 0 0</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='LightA_01_005'>
+      <include>
+        <uri>model://aws_robomaker_retail_LightA_01</uri>
+      </include>
+      <pose>-3.271001 2.6859250000000001 3.150328 0 0 0</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='MagicCube_01_001'>
+      <include>
+        <uri>model://aws_robomaker_retail_MagicCube_01</uri>
+      </include>
+      <pose>5.6675599999999999 -5.1749080000000003 0.96859700000000004 1.5599390000000009 -9.9999999941829965e-07 -1.5554090000000003</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='MagicCube_01_002'>
+      <include>
+        <uri>model://aws_robomaker_retail_MagicCube_01</uri>
+      </include>
+      <pose>-5.8268704414367667 4.9029316902160653 0.97159028053283691 1.5641299959115771 -1.037766073464139e-06 -1.5554099921346562</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='Spotlight_01_001'>
+      <include>
+        <uri>model://aws_robomaker_retail_Spotlight_01</uri>
+      </include>
+      <pose>1.4932000000000001 4.6923719999999998 3.3026580000000001 0 0 0</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <model name='ShopWindow_01_001'>
+      <include>
+        <uri>model://aws_robomaker_retail_ShopWindow_01</uri>
+      </include>
+      <pose>-7.738156 0.015959999999999998 -0.180092 0 0 0</pose>
+      <static>false</static>
+      <self_collide>false</self_collide>
+    </model>
+    <light name='RetailShop_CeilingLight_001' type='point'>
+      <pose>2.7744179999999998 -3.6281500000000002 3.1784659999999998 0 0 0</pose>
+      <cast_shadows>false</cast_shadows>
+      <intensity>1</intensity>
+      <direction>0 0 -1</direction>
+      <diffuse>0.5 0.5 0.5 1</diffuse>
+      <specular>0.100000001 0.100000001 0.100000001 1</specular>
+      <attenuation>
+        <range>20</range>
+        <linear>0.01</linear>
+        <constant>0.32000000000000001</constant>
+        <quadratic>0.029999999999999999</quadratic>
+      </attenuation>
+      <spot>
+        <inner_angle>0</inner_angle>
+        <outer_angle>0</outer_angle>
+        <falloff>0</falloff>
+      </spot>
+    </light>
+    <light name='RetailShop_CeilingLight_002' type='point'>
+      <pose>5.383991 -5.3837099999999998 3.1784659999999998 0 0 0</pose>
+      <cast_shadows>false</cast_shadows>
+      <intensity>1</intensity>
+      <direction>0 0 -1</direction>
+      <diffuse>0.5 0.5 0.5 1</diffuse>
+      <specular>0.100000001 0.100000001 0.100000001 1</specular>
+      <attenuation>
+        <range>20</range>
+        <linear>0.01</linear>
+        <constant>0.32000000000000001</constant>
+        <quadratic>0.029999999999999999</quadratic>
+      </attenuation>
+      <spot>
+        <inner_angle>0</inner_angle>
+        <outer_angle>0</outer_angle>
+        <falloff>0</falloff>
+      </spot>
+    </light>
+    <light name='RetailShop_CeilingLight_003' type='point'>
+      <pose>5.383991 0.041919999999999999 3.1784659999999998 0 0 0</pose>
+      <cast_shadows>false</cast_shadows>
+      <intensity>1</intensity>
+      <direction>0 0 -1</direction>
+      <diffuse>0.5 0.5 0.5 1</diffuse>
+      <specular>0.100000001 0.100000001 0.100000001 1</specular>
+      <attenuation>
+        <range>20</range>
+        <linear>0.01</linear>
+        <constant>0.32000000000000001</constant>
+        <quadratic>0.029999999999999999</quadratic>
+      </attenuation>
+      <spot>
+        <inner_angle>0</inner_angle>
+        <outer_angle>0</outer_angle>
+        <falloff>0</falloff>
+      </spot>
+    </light>
+    <light name='RetailShop_CeilingLight_004' type='point'>
+      <pose>-3.2106680000000001 -5.3837099999999998 3.1784659999999998 0 0 0</pose>
+      <cast_shadows>false</cast_shadows>
+      <intensity>1</intensity>
+      <direction>0 0 -1</direction>
+      <diffuse>0.5 0.5 0.5 1</diffuse>
+      <specular>0.100000001 0.100000001 0.100000001 1</specular>
+      <attenuation>
+        <range>20</range>
+        <linear>0.01</linear>
+        <constant>0.32000000000000001</constant>
+        <quadratic>0.029999999999999999</quadratic>
+      </attenuation>
+      <spot>
+        <inner_angle>0</inner_angle>
+        <outer_angle>0</outer_angle>
+        <falloff>0</falloff>
+      </spot>
+    </light>
+    <light name='RetailShop_CeilingLight_005' type='point'>
+      <pose>-3.271001 2.6859250000000001 3.1784659999999998 0 0 0</pose>
+      <cast_shadows>false</cast_shadows>
+      <intensity>1</intensity>
+      <direction>0 0 -1</direction>
+      <diffuse>0.5 0.5 0.5 1</diffuse>
+      <specular>0.100000001 0.100000001 0.100000001 1</specular>
+      <attenuation>
+        <range>20</range>
+        <linear>0.01</linear>
+        <constant>0.32000000000000001</constant>
+        <quadratic>0.029999999999999999</quadratic>
+      </attenuation>
+      <spot>
+        <inner_angle>0</inner_angle>
+        <outer_angle>0</outer_angle>
+        <falloff>0</falloff>
+      </spot>
+    </light>
+    <light name='RetailShop_CeilingLight_006' type='point'>
+      <pose>1.4932000000000001 4.6923719999999998 3.1784659999999998 0 0 0</pose>
+      <cast_shadows>false</cast_shadows>
+      <intensity>1</intensity>
+      <direction>0 0 -1</direction>
+      <diffuse>0.5 0.5 0.5 1</diffuse>
+      <specular>0.100000001 0.100000001 0.100000001 1</specular>
+      <attenuation>
+        <range>20</range>
+        <linear>0.01</linear>
+        <constant>0.32000000000000001</constant>
+        <quadratic>0.029999999999999999</quadratic>
+      </attenuation>
+      <spot>
+        <inner_angle>0</inner_angle>
+        <outer_angle>0</outer_angle>
+        <falloff>0</falloff>
+      </spot>
+    </light>
+  </world>
+</sdf>
