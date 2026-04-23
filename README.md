@@ -338,7 +338,7 @@ This repository is also a demo integration for my own `frontier_exploration_ros2
 
 - I cloned the package
 - Created my own YAML config according to MOGI Robot's specifications.
-- Builded without optional RViz plugin.
+- Built without optional RViz plugin.
 - Launched it with `ros2 launch frontier_exploration_ros2 frontier_explorer.launch.py params_file:=config/frontier_exploration_ros2/config.yaml`
 - Worked absolutely fine. Had no stucking problem but I tweaked some parameters to make it work better with **10m range LiDAR** of the MOGI Robot.
 
