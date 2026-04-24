@@ -11,7 +11,7 @@ from launch.substitutions import LaunchConfiguration
 def generate_launch_description():
     ld = LaunchDescription()
     config = os.path.join(
-        get_package_share_directory("explore_lite"), "config", "params_costmap.yaml"
+        get_package_share_directory("explore_lite"), "config", "params.yaml"
     )
     use_sim_time = LaunchConfiguration("use_sim_time")
     namespace = LaunchConfiguration("namespace")
@@ -39,6 +39,7 @@ def generate_launch_description():
         parameters=[config, {"use_sim_time": use_sim_time}],
         output="screen",
         remappings=remappings,
+        # arguments=['--ros-args', '--log-level', 'DEBUG' ]
     )
     ld.add_action(declare_use_sim_time_argument)
     ld.add_action(declare_namespace_argument)
