@@ -114,6 +114,7 @@ Docker notes:
 - **NVIDIA GPU** is enabled automatically when `nvidia-smi` and Docker NVIDIA runtime are available.
 - **Intel/AMD GPU** acceleration is enabled via `/dev/dri` passthrough when available.
 - `docker.sh` runs the container and **starts the benchmark automatically** inside it with `./launch.sh`.
+- Colcon build might take some time and look like stuck, wait patiently.
 
 Display notes:
 
