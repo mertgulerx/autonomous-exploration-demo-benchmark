@@ -92,6 +92,9 @@ A small environment to test zig-zag path complexity. Custom made & based on the 
 Repository includes automatic [Docker script](docker.sh) for convenience. Could be installed on any system in sandbox. Recommended.
 For manual setups please make sure to install all of the dependencies.
 
+> [!WARNING]
+> If SLAM and odometry fails in a exploration run, use End - Map Reset - Return Start functions to reset exploration. 
+
 ### Docker Quick Start
 
 Package runtime entrypoint remains `./launch.sh`. **(Defaults to `Bookstore` world)**
