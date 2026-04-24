@@ -127,7 +127,7 @@ frontier_explorer:
     escape_enabled: true
 
     # Return to the recorded start pose once no frontiers remain.
-    return_to_start_on_complete: true
+    return_to_start_on_complete: false
 
     # Minimum distance before a frontier is considered a valid target.
     frontier_selection_min_distance: 0.5
