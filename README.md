@@ -212,7 +212,7 @@ Use included RViz Panel to control simulation.
 
 - Start desired exploration package
 - Track benchmark metrics
-- Use `End` to end current exploration run. **(Cleans all old proccesses)**
+- Use `End` to end current exploration run. **(Cleans all old processes)**
 - Use `Path Reset` to reset path tracks of previous exploration or not to compare different paths of explaration packages **(Each of them has different colors)**.
 - Use `Map Reset` to reset SLAM data after each exploration run.
 - Use `Return Start` to return starting point if the exploration package doesn't support or stuck somewhere.
