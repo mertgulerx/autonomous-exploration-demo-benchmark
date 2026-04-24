@@ -57,6 +57,16 @@ def generate_launch_description():
     use_rviz = LaunchConfiguration("use_rviz")
     headless = LaunchConfiguration("headless")
     world = LaunchConfiguration("world")
+    pose = {
+        "x": LaunchConfiguration("x_pose", default="-2.00"),
+        "y": LaunchConfiguration("y_pose", default="-0.50"),
+        "z": LaunchConfiguration("z_pose", default="0.01"),
+        "R": LaunchConfiguration("roll", default="0.00"),
+        "P": LaunchConfiguration("pitch", default="0.00"),
+        "Y": LaunchConfiguration("yaw", default="0.00"),
+    }
+    robot_name = LaunchConfiguration("robot_name")
+    robot_sdf = LaunchConfiguration("robot_sdf")
 
     # Map fully qualified names to relative ones so the node's namespace can be prepended.
     # In case of the transforms (tf), currently, there doesn't seem to be a better alternative
@@ -149,6 +159,37 @@ def generate_launch_description():
         description="Full path to world model file to load",
     )
 
+    declare_robot_name_cmd = DeclareLaunchArgument(
+        "robot_name",
+        default_value="turtlebot3_waffle",
+        description="Gazebo entity name for the spawned robot model",
+    )
+
+    declare_robot_sdf_cmd = DeclareLaunchArgument(
+        "robot_sdf",
+        default_value=os.path.join(bringup_dir, "worlds", "waffle.model"),
+        description="Full path to robot SDF file to spawn in Gazebo",
+    )
+
+    declare_x_pose_cmd = DeclareLaunchArgument(
+        "x_pose", default_value="-2.00", description="Spawn x coordinate"
+    )
+    declare_y_pose_cmd = DeclareLaunchArgument(
+        "y_pose", default_value="-0.50", description="Spawn y coordinate"
+    )
+    declare_z_pose_cmd = DeclareLaunchArgument(
+        "z_pose", default_value="0.01", description="Spawn z coordinate"
+    )
+    declare_roll_cmd = DeclareLaunchArgument(
+        "roll", default_value="0.00", description="Spawn roll"
+    )
+    declare_pitch_cmd = DeclareLaunchArgument(
+        "pitch", default_value="0.00", description="Spawn pitch"
+    )
+    declare_yaw_cmd = DeclareLaunchArgument(
+        "yaw", default_value="0.00", description="Spawn yaw"
+    )
+
     # Specify the actions
     start_gazebo_server_cmd = ExecuteProcess(
         condition=IfCondition(use_simulator),
@@ -169,6 +210,32 @@ def generate_launch_description():
         cmd=["gzclient"],
         cwd=[launch_dir],
         output="screen",
+    )
+
+    start_gazebo_spawner_cmd = Node(
+        package="gazebo_ros",
+        executable="spawn_entity.py",
+        output="screen",
+        arguments=[
+            "-entity",
+            robot_name,
+            "-file",
+            robot_sdf,
+            "-robot_namespace",
+            namespace,
+            "-x",
+            pose["x"],
+            "-y",
+            pose["y"],
+            "-z",
+            pose["z"],
+            "-R",
+            pose["R"],
+            "-P",
+            pose["P"],
+            "-Y",
+            pose["Y"],
+        ],
     )
 
     urdf = os.path.join(bringup_dir, "urdf", "turtlebot3_waffle.urdf")
@@ -232,10 +299,19 @@ def generate_launch_description():
     ld.add_action(declare_use_rviz_cmd)
     ld.add_action(declare_simulator_cmd)
     ld.add_action(declare_world_cmd)
+    ld.add_action(declare_robot_name_cmd)
+    ld.add_action(declare_robot_sdf_cmd)
+    ld.add_action(declare_x_pose_cmd)
+    ld.add_action(declare_y_pose_cmd)
+    ld.add_action(declare_z_pose_cmd)
+    ld.add_action(declare_roll_cmd)
+    ld.add_action(declare_pitch_cmd)
+    ld.add_action(declare_yaw_cmd)
 
     # Add any conditioned actions
     ld.add_action(start_gazebo_server_cmd)
     ld.add_action(start_gazebo_client_cmd)
+    ld.add_action(start_gazebo_spawner_cmd)
 
     # Add the actions to launch all of the navigation nodes
     ld.add_action(start_robot_state_publisher_cmd)

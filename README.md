@@ -57,10 +57,10 @@ For any inquiries or concerns related to these, please [contact me](#maintainer)
    - License: `Apache-2.0`
    - Source: [mertgulerx/frontier_exploration_ros2](https://github.com/mertgulerx/frontier_exploration_ros2)
    - Commit: [bc84d69451c3479b8ddcb3066b3734073ee66c88](https://github.com/mertgulerx/frontier_exploration_ros2/commit/bc84d69451c3479b8ddcb3066b3734073ee66c88)
-2. `m-explore-ros2` 
+2. `m-explore-ros2 (slam_toolbox branch)`
    - License: `BSD`
    - Source: [robo-friends/m-explore-ros2](https://github.com/robo-friends/m-explore-ros2)
-   - Commit: [86742bff6edd53fcce16f99dbc8c06ed5d7eed22](https://github.com/robo-friends/m-explore-ros2/commit/86742bff6edd53fcce16f99dbc8c06ed5d7eed22)
+   - Commit: [9b64d8d35213dd50bc44f1b5b4959c1f58c32d2e](https://github.com/robo-friends/m-explore-ros2/commit/9b64d8d35213dd50bc44f1b5b4959c1f58c32d2e)
 3. `nav2_wavefront_frontier_exploration`
    - License: `MIT`
    - Source: [SeanReg/nav2_wavefront_frontier_exploration](https://github.com/SeanReg/nav2_wavefront_frontier_exploration)
@@ -93,7 +93,7 @@ Repository includes automatic [Docker script](docker.sh) for convenience. Could 
 For manual setups please make sure to install all of the dependencies.
 
 > [!WARNING]
-> If SLAM, odometry or Nav2 fails in a exploration run, use End - Map Reset - Return Start functions to reset exploration. 
+> If SLAM, odometry or Nav2 fails in a exploration run, use End - Map Reset - Return Start functions to reset exploration.
 
 ### Docker Quick Start
 
@@ -110,7 +110,8 @@ Examples:
 ```
 
 Docker notes:
-- If you see extremely high CPU usage, it is caused because your GPU is not used by Docker. Install [required tools for own GPU brand.](https://docs.nvidia.com/ai-enterprise/deployment/vmware/latest/docker.html) 
+
+- If you see extremely high CPU usage, it is caused because your GPU is not used by Docker. Install [required tools for own GPU brand.](https://docs.nvidia.com/ai-enterprise/deployment/vmware/latest/docker.html)
 - The image installs ROS 2 Jazzy, Gazebo Harmonic support through `ros-jazzy-ros-gz`, Nav2, SLAM Toolbox, RViz, and project dependencies.
 - The built image is stored with the default tag `autonomous-exploration-benchmark:jazzy-harmonic` (override with `BENCHMARK_DOCKER_IMAGE`).
 - The image is rebuilt automatically on each Docker run unless `BENCHMARK_DOCKER_SKIP_BUILD=1` is set. **Cache is enabled.**
