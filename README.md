@@ -108,6 +108,7 @@ Examples:
 
 Docker notes:
 
+- Performance is worse because it is not native (ROS 2 and Gazebo are heavy). Packages must be benchmarked with a native setup for fair results.
 - The image installs ROS 2 Jazzy, Gazebo Harmonic support through `ros-jazzy-ros-gz`, Nav2, SLAM Toolbox, RViz, and project dependencies.
 - The built image is stored with the default tag `autonomous-exploration-benchmark:jazzy-harmonic` (override with `BENCHMARK_DOCKER_IMAGE`).
 - The image is rebuilt automatically on each Docker run unless `BENCHMARK_DOCKER_SKIP_BUILD=1` is set. **Cache is enabled.**
