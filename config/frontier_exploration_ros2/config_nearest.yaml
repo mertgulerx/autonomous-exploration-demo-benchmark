@@ -156,10 +156,10 @@ frontier_explorer:
     goal_skip_on_blocked_goal: true
 
     # Minimum seconds between consecutive goal preemption attempts.
-    goal_preemption_min_interval_s: 0.5
+    goal_preemption_min_interval_s: 1.0
 
-    # When visible-gain preemption is enabled, treat the current frontier as complete once the robot is this close to it; 0.0 disables this shortcut.
-    # This can make the visible-gain path less aggressive near arrival, but obstacle-avoidance-heavy robots should use it carefully because large values can end a frontier too early and trigger wrong exploration choices.
+    # Treat the current frontier as complete once the robot is this close to it; 0.0 disables this shortcut.
+    # This close-enough guard also works when visible-gain preemption is disabled, but obstacle-avoidance-heavy robots should use it carefully because large values can end a frontier too early and trigger wrong exploration choices.
     goal_preemption_complete_if_within_m: 0.50
 
     # LiDAR range in meters used by the map-based visible reveal gate above.
