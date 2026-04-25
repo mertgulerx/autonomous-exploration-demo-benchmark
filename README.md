@@ -56,7 +56,7 @@ For any inquiries or concerns related to these, please [contact me](#maintainer)
 1. `frontier_exploration_ros2`
    - License: `Apache-2.0`
    - Source: [mertgulerx/frontier_exploration_ros2](https://github.com/mertgulerx/frontier_exploration_ros2)
-   - Commit: [bc84d69451c3479b8ddcb3066b3734073ee66c88](https://github.com/mertgulerx/frontier_exploration_ros2/commit/bc84d69451c3479b8ddcb3066b3734073ee66c88)
+   - Commit: [6655b3a3a765051e865f3e2544dfa8a21368d8a1](https://github.com/mertgulerx/frontier_exploration_ros2/commit/6655b3a3a765051e865f3e2544dfa8a21368d8a1)
 2. `m-explore-ros2 (slam_toolbox branch)`
    - License: `BSD`
    - Source: [robo-friends/m-explore-ros2](https://github.com/robo-friends/m-explore-ros2)
