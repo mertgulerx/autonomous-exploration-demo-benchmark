@@ -74,6 +74,13 @@ if [[ "${WORLD}" == "bookstore" ]]; then
   SPAWN_YAW="-3.10"
 fi
 
+if [[ "${WORLD}" == "corridor" ]]; then
+  SPAWN_X="-8.11"
+  SPAWN_Y="0.31"
+  SPAWN_Z="0.10"
+  SPAWN_YAW="0.00"
+fi
+
 # Verify critical overlay packages before launching anything.
 if ! ros2 pkg prefix bme_ros2_navigation >/dev/null 2>&1; then
   echo "Workspace overlay is not available. Expected package 'bme_ros2_navigation' was not found." >&2

@@ -166,14 +166,14 @@
         <collision name="collision">
           <geometry>
             <box>
-              <size>1.5 0.12 1.6</size>
+              <size>1.4 0.12 1.6</size>
             </box>
           </geometry>
         </collision>
         <visual name="visual">
           <geometry>
             <box>
-              <size>1.5 0.12 1.6</size>
+              <size>1.4 0.12 1.6</size>
             </box>
           </geometry>
           <material>
@@ -210,14 +210,14 @@
         <collision name="collision">
           <geometry>
             <box>
-              <size>1.5 0.12 1.6</size>
+              <size>1.4 0.12 1.6</size>
             </box>
           </geometry>
         </collision>
         <visual name="visual">
           <geometry>
             <box>
-              <size>1.5 0.12 1.6</size>
+              <size>1.4 0.12 1.6</size>
             </box>
           </geometry>
           <material>
