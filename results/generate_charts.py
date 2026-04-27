@@ -14,14 +14,13 @@ algorithms = [
     'fer2\n(mrtsp)',
     'fer2\n(nearest)',
     'm_explore\n_ros2',
-    'nav2_wfe',
     'roadmap\n-explorer'
 ]
 
-cpu      = [11.8, 7.4, 5.2, 35.8, 37.4]       # %
-ram      = [60.3, 60.0, 54.5, 102.9, 110.0]    # MB
-distance = [44.95, 41.47, 58.44, 68.64, 46.39] # m
-time_s   = [113, 113, 155, 211, 117]            # seconds
+cpu      = [17.6, 7.7, 4.4, 47.8]       # %
+ram      = [85.2, 85.0, 54.0, 142.4]    # MB
+distance = [273.52, 283.74, 338.61, 286.28] # m
+time_s   = [499, 524, 587, 641]            # seconds
 
 # ── Colors (pastel with contrast) ────────────────────────
 colors = [
@@ -60,11 +59,11 @@ def style_ax(ax, ylabel, title, ymax):
 fig, ax = plt.subplots(figsize=(14, 7))
 bars = ax.bar(algorithms, cpu, color=colors, width=0.55, edgecolor='white', linewidth=1.5, zorder=3)
 add_bar_labels(ax, bars, fmt='{:.1f}%')
-style_ax(ax, 'Single Core CPU Usage (%)', 'Single Core CPU Usage Comparison', max(cpu)*1.25)
+style_ax(ax, 'Single Core CPU Usage (%)', 'Single Core CPU Usage Comparison — (Warehouse - 1500 sqm)', max(cpu)*1.25)
 ax.yaxis.set_major_formatter(ticker.FormatStrFormatter('%.0f%%'))
-fig.text(0.01, 0.01, 'Source: bookstore world simulation', fontsize=8, color='#999999', ha='left')
+fig.text(0.01, 0.01, 'Source: warehouse world simulation', fontsize=8, color='#999999', ha='left')
 plt.tight_layout()
-plt.savefig('/home/z/my-project/download/BarChart_SingleCoreCPU_Comparison_2026-04-23.png', dpi=150, bbox_inches='tight', facecolor='white')
+plt.savefig('Chart_SingleCoreCPU.png', dpi=150, bbox_inches='tight', facecolor='white')
 plt.close()
 
 # ══════════════════════════════════════════════════════════
@@ -73,11 +72,11 @@ plt.close()
 fig, ax = plt.subplots(figsize=(14, 7))
 bars = ax.bar(algorithms, ram, color=colors, width=0.55, edgecolor='white', linewidth=1.5, zorder=3)
 add_bar_labels(ax, bars, fmt='{:.1f} MB')
-style_ax(ax, 'RAM Usage (MB)', 'RAM Usage Comparison', max(ram)*1.25)
+style_ax(ax, 'RAM Usage (MB)', 'RAM Usage Comparison — (Warehouse - 1500 sqm)', max(ram)*1.25)
 ax.yaxis.set_major_formatter(ticker.FormatStrFormatter('%.0f'))
-fig.text(0.01, 0.01, 'Source: bookstore world simulation', fontsize=8, color='#999999', ha='left')
+fig.text(0.01, 0.01, 'Source: warehouse world simulation', fontsize=8, color='#999999', ha='left')
 plt.tight_layout()
-plt.savefig('BarChart_RAM_Comparison_2026-04-23.png', dpi=150, bbox_inches='tight', facecolor='white')
+plt.savefig('Chart_RAM_Comparison.png', dpi=150, bbox_inches='tight', facecolor='white')
 plt.close()
 
 # ══════════════════════════════════════════════════════════
@@ -86,11 +85,11 @@ plt.close()
 fig, ax = plt.subplots(figsize=(14, 7))
 bars = ax.bar(algorithms, distance, color=colors, width=0.55, edgecolor='white', linewidth=1.5, zorder=3)
 add_bar_labels(ax, bars, fmt='{:.2f} m')
-style_ax(ax, 'Distance Traveled (m)', 'Distance Traveled Comparison', max(distance)*1.25)
+style_ax(ax, 'Distance Traveled (m)', 'Distance Traveled Comparison — (Warehouse - 1500 sqm)', max(distance)*1.25)
 ax.yaxis.set_major_formatter(ticker.FormatStrFormatter('%.0f'))
-fig.text(0.01, 0.01, 'Source: bookstore world simulation', fontsize=8, color='#999999', ha='left')
+fig.text(0.01, 0.01, 'Source: warehouse world simulation', fontsize=8, color='#999999', ha='left')
 plt.tight_layout()
-plt.savefig('BarChart_Distance_Comparison_2026-04-23.png', dpi=150, bbox_inches='tight', facecolor='white')
+plt.savefig('Chart_Distance_Comparison.png', dpi=150, bbox_inches='tight', facecolor='white')
 plt.close()
 
 # ══════════════════════════════════════════════════════════
@@ -103,18 +102,18 @@ for bar, t in zip(bars, time_s):
     ax.text(bar.get_x() + bar.get_width() / 2., bar.get_height() + 0.03 * bar.get_height(),
             f'{int(mins):02d}:{int(secs):02d} ({t}s)',
             ha='center', va='bottom', fontsize=11, fontweight='bold', color='#333333')
-style_ax(ax, 'Time Elapsed (s)', 'Time Elapsed Comparison', max(time_s)*1.25)
+style_ax(ax, 'Time Elapsed (s)', 'Time Elapsed Comparison — (Warehouse - 1500 sqm)', max(time_s)*1.25)
 ax.yaxis.set_major_formatter(ticker.FormatStrFormatter('%.0f'))
-fig.text(0.01, 0.01, 'Source: bookstore world simulation', fontsize=8, color='#999999', ha='left')
+fig.text(0.01, 0.01, 'Source: warehouse world simulation', fontsize=8, color='#999999', ha='left')
 plt.tight_layout()
-plt.savefig('BarChart_Time_Comparison_2026-04-23.png', dpi=150, bbox_inches='tight', facecolor='white')
+plt.savefig('Chart_Time_Comparison.png', dpi=150, bbox_inches='tight', facecolor='white')
 plt.close()
 
 # ══════════════════════════════════════════════════════════
 # Chart 5: Combined Overview (2×2)
 # ══════════════════════════════════════════════════════════
 fig, axes = plt.subplots(2, 2, figsize=(20, 14))
-fig.suptitle('ROS2 Exploration Algorithms — Performance Comparison (Bookstore World)',
+fig.suptitle('ROS2 Exploration Algorithms — Performance Comparison — (Warehouse - 1500 sqm)',
              fontsize=22, fontweight='bold', y=1.01, color='#1a1a1a')
 
 # CPU
@@ -153,9 +152,9 @@ style_ax(ax, 'Time Elapsed (s)', 'Time Elapsed', max(time_s)*1.35)
 ax.title.set_fontsize(14)
 ax.yaxis.set_major_formatter(ticker.FormatStrFormatter('%.0f'))
 
-fig.text(0.01, 0.01, 'Source: bookstore world simulation', fontsize=8, color='#999999', ha='left')
+fig.text(0.01, 0.01, 'Source: warehouse world simulation', fontsize=8, color='#999999', ha='left')
 plt.tight_layout()
-plt.savefig('BarChart_AllMetrics_Comparison_2026-04-23.png', dpi=150, bbox_inches='tight', facecolor='white')
+plt.savefig('Chart_AllMetrics_Comparison.png', dpi=150, bbox_inches='tight', facecolor='white')
 plt.close()
 
-print("All 5 charts updated — removed 'Across Exploration Algorithms' from single charts")
+print("All 5 charts updated")
