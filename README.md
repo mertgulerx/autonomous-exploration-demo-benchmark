@@ -97,7 +97,7 @@ A **1,500 m² (16,000 sq ft)** warehouse facility. Complex, large and resource c
 Closest environment to evaluate realistic performance. Great for testing scalability.
 **Requires a powerful CPU to simulate.**
 
-![Corridor world](assets/warehouse.png)
+![Warehouse world](assets/warehouse.png)
 
 ## Corridor
 
