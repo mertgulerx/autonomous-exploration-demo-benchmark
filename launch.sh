@@ -63,10 +63,6 @@ SPAWN_Z="0.5"
 SPAWN_YAW="-1.5707"
 
 # Map-specific spawn overrides reduce initial collisions and improve reproducibility.
-if [[ "${WORLD}" == "corridor" || "${WORLD}" == "bookstore" ]]; then
-  SPAWN_X="0.0"
-  SPAWN_Y="0.0"
-fi
 if [[ "${WORLD}" == "bookstore" ]]; then
   SPAWN_X="1.23"
   SPAWN_Y="6.35"
@@ -79,6 +75,13 @@ if [[ "${WORLD}" == "corridor" ]]; then
   SPAWN_Y="0.31"
   SPAWN_Z="0.10"
   SPAWN_YAW="0.00"
+fi
+
+if [[ "${WORLD}" == "warehouse" ]]; then
+  SPAWN_X="-12.97"
+  SPAWN_Y="8.23"
+  SPAWN_Z="0.10"
+  SPAWN_YAW="1.58"
 fi
 
 # Verify critical overlay packages before launching anything.
