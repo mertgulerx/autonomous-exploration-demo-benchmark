@@ -15,9 +15,10 @@ An extra purpose of this repository is testing stability and correctness of the 
 
 - [Overview](#overview)
 - [Resources and Citation](#resources-and-citation)
+- [World Inventory](#world-inventory)
+- [Benchmark Results](#benchmark-results)
 - [Build and Run](#build-and-run)
 - [Usage](#usage)
-- [Results](#results)
 - [Contributing](#contributing)
 - [frontier_exploration_ros2 Integration](#frontier_exploration_ros2-integration)
 
@@ -72,20 +73,324 @@ For any inquiries or concerns related to these, please [contact me](#maintainer)
    - Source: [suchetanrs/roadmap-explorer](https://github.com/suchetanrs/roadmap-explorer)
    - Commit: [68859c51a94628507edbce16b20ba4d8c52e3208](https://github.com/suchetanrs/roadmap-explorer/commit/68859c51a94628507edbce16b20ba4d8c52e3208)
 
-### Benchmark World Inventory
+### Worlds
+
+1. `warehouse`
+   - License: `BSD-3-Clause`
+   - Source: [clearpathrobotics/clearpath_simulator](https://github.com/clearpathrobotics/clearpath_simulator)
+   - Commit: [7b9930bd5b4ca1136a5a03982cd6269e9a2f75e9](https://github.com/clearpathrobotics/clearpath_simulator/commit/7b9930bd5b4ca1136a5a03982cd6269e9a2f75e9)
+
+## World Inventory
 
 The current benchmark includes two different worlds with unique properties to test packages extensively.
 Custom worlds are also supported and can be used easily.
 
-**Main benchmark world: `bookstore`**
+### Bookstore
+
 A complex maze like environment. Slightly modified and Gazebo Harmonic ported version of the [AWS RoboMaker Bookstore](https://github.com/aws-robotics/aws-robomaker-bookstore-world) world.
 
 ![Bookstore world](assets/bookstore.png)
 
-**Secondary benchmark world: `corridor`**
-A small environment to test zig-zag path complexity. Custom made & based on the [research paper](https://www.nature.com/articles/s41598-025-97231-9).
+## Warehouse
+
+A **1,500 m² (16,000 sq ft)** warehouse facility. Complex, large and resource consuming.
+Closest environment to evaluate realistic performance. Great for testing scalability.
+**Requires a powerful CPU to simulate.**
+
+![Corridor world](assets/warehouse.png)
+
+## Corridor
+
+A small algorithm confusing environment to test zig-zag path complexity. Custom made and based on the [research paper](https://www.nature.com/articles/s41598-025-97231-9).
 
 ![Corridor world](assets/corridor.png)
+
+## Benchmark Results
+
+Benchmark results were obtained using the default configurations provided in the repository. Results may vary depending on custom parameters and environments.
+
+### Bookstore
+
+The `Bookstore` environment demonstrates how exploration behaves in a **medium size and dense maze-like environment**.
+
+Spanning **225 m² (2,400 sq ft)**.
+
+#### Path Complexity Results
+
+<table width="74%" align="center">
+  <tr>
+    <td width="50%" align="center">
+      <img src="/results/bookstore-sqm225/bookstore-sqm225-fer2-mrtsp-map.png" alt="bookstore-sqm225-fer2-mrtsp-map.png" width="100%" />
+    </td>
+    <td width="50%" align="center">
+      <img src="/results/bookstore-sqm225/bookstore-sqm225-fer2-nearest-map.png" alt="bookstore-sqm225-fer2-nearest-map.png" width="100%" />
+    </td>
+  </tr>
+  <tr>
+    <td align="center"><small>frontier_exploration_ros2 (MRTSP)</small></td>
+    <td align="center"><small>frontier_exploration_ros2 (nearest)</</small></td>
+  </tr>
+</table>
+
+<table width="74%" align="center">
+  <tr>
+    <td width="50%" align="center">
+      <img src="/results/bookstore-sqm225/bookstore-sqm225-mexploreros2-map.png" alt="bookstore-sqm225-mexploreros2-map.png" width="100%" />
+    </td>
+    <td width="50%" align="center">
+      <img src="/results/bookstore-sqm225/bookstore-sqm225-nav2wfe-map.png" alt="bookstore-sqm225-nav2wfe-map.png" width="100%" />
+    </td>
+  </tr>
+  <tr>
+    <td align="center"><small>m_explore_ros2</small></td>
+    <td align="center"><small>nav2_wavefront_frontier_exploration</small></td>
+  </tr>
+
+  <table width="74%" align="center">
+  <tr>
+    <td width="50%" align="center">
+      <img src="/results/bookstore-sqm225/bookstore-sqm225-roadmapexplorer-map.png" alt="bookstore-sqm225-roadmapexplorer-map.png" width="100%" />
+    </td>
+    <td width="50%" align="center">
+      <img src="" alt="" width="100%" />
+    </td>
+  </tr>
+  <tr>
+    <td align="center"><small>m_explore_ros2</small></td>
+    <td align="center"><small></small></td>
+  </tr>
+</table>
+
+#### Benchmark Metrics
+
+| Package                               | Single Core CPU Usage (%) | RAM Usage (MB) | Distance Traveled (m) | Time Elapsed (mm:ss) | Time Elapsed (s) |
+| ------------------------------------- | ------------------------- | -------------- | --------------------- | -------------------- | ---------------- |
+| `frontier_exploration_ros2 (mrtsp)`   | 7.4                       | 56.5           | 36.60                 | 01:03                | 63               |
+| `frontier_exploration_ros2 (nearest)` | 4.0                       | 56.6           | 37.72                 | 01:13                | 73               |
+| `m_explore_ros2`                      | 2.4                       | 51.9           | 50.73                 | 01:36                | 96               |
+| `nav2_wavefront_frontier_exploration` | 10.3                      | 100.7          | 52.85                 | 02:49                | 169              |
+| `roadmap-explorer`                    | 32.8                      | 111.8          | 39.28                 | 01:12                | 72               |
+
+<br>
+
+<table width="74%" align="center">
+  <tr>
+    <td width="50%" align="center">
+      <img src="/results/bookstore-sqm225/Chart_AllMetrics.png" alt="bookstore-sqm225/Chart_AllMetrics.png" width="100%" />
+    </td>
+  </tr>
+</table>
+
+<table width="74%" align="center">
+  <tr>
+    <td width="50%" align="center">
+      <img src="/results/bookstore-sqm225/Chart_Time.png" alt="bookstore-sqm225/Chart_Time.png" width="100%" />
+    </td>
+  </tr>
+</table>
+
+<table width="74%" align="center">
+  <tr>
+    <td width="50%" align="center">
+      <img src="/results/bookstore-sqm225/Chart_Distance.png" alt="bookstore-sqm225/Chart_Distance.png" width="100%" />
+    </td>
+  </tr>
+</table>
+
+<table width="74%" align="center">
+  <tr>
+    <td width="50%" align="center">
+      <img src="/results/bookstore-sqm225/Chart_SingleCoreCPU.png" alt="bookstore-sqm225/Chart_SingleCoreCPU.png" width="100%" />
+    </td>
+  </tr>
+</table>
+
+<table width="74%" align="center">
+  <tr>
+    <td width="50%" align="center">
+      <img src="/results/bookstore-sqm225/Chart_RAM.png" alt="bookstore-sqm225/Chart_RAM.png" width="100%" />
+    </td>
+  </tr>
+</table>
+
+## Warehouse
+
+The `Warehouse` environment demonstrates how exploration behaves in a **large size, complex and realistic environment**.
+
+Spanning **1,500 m² (16,000 sq ft)**.
+
+> [!NOTE]
+> This simulation requires a powerful CPU to run SLAM.
+
+#### Path Complexity Results
+
+<table width="74%" align="center">
+  <tr>
+    <td width="50%" align="center">
+      <img src="/results/warehouse-sqm1500/warehouse-sqm1500-fer2-mrtsp-map.png" alt="warehouse-sqm1500-fer2-mrtsp-map.png" width="100%" />
+    </td>
+    <td width="50%" align="center">
+      <img src="/results/warehouse-sqm1500/warehouse-sqm1500-fer2-nearest-map.png" alt="warehouse-sqm1500-fer2-nearest-map.png" width="100%" />
+    </td>
+  </tr>
+  <tr>
+    <td align="center"><small>frontier_exploration_ros2 (MRTSP)</small></td>
+    <td align="center"><small>frontier_exploration_ros2 (nearest)</</small></td>
+  </tr>
+</table>
+
+<table width="74%" align="center">
+  <tr>
+    <td width="50%" align="center">
+      <img src="/results/warehouse-sqm1500/warehouse-sqm1500-mexploreros2-map.png" alt="warehouse-sqm1500-mexploreros2-map.png" width="100%" />
+    </td>
+    <td width="50%" align="center">
+      <img src="/results/warehouse-sqm1500/warehouse-sqm1500-roadmapexplorer-map.png" alt="warehouse-sqm1500-roadmapexplorer-map.png" width="100%" />
+    </td>
+  </tr>
+  <tr>
+    <td align="center"><small>m_explore_ros2</small></td>
+    <td align="center"><small>roadmap-explorer</small></td>
+  </tr>
+</table>
+
+#### Benchmark Metrics
+
+| Package                               | Single Core CPU Usage (%) | RAM Usage (MB) | Distance Traveled (m) | Time Elapsed (mm:ss) | Time Elapsed (s) |
+| ------------------------------------- | ------------------------- | -------------- | --------------------- | -------------------- | ---------------- |
+| `frontier_exploration_ros2 (mrtsp)`   | 17.6                      | 85.2           | 273.52                | 08:19                | 499              |
+| `frontier_exploration_ros2 (nearest)` | 7.7                       | 85.0           | 283.74                | 08:44                | 524              |
+| `m_explore_ros2`                      | 4.4                       | 54.0           | 338.61                | 09:47                | 587              |
+| `roadmap-explorer`                    | 47.8                      | 142.4          | 286.28                | 10:41                | 641              |
+
+<br>
+
+<table width="74%" align="center">
+  <tr>
+    <td width="50%" align="center">
+      <img src="/results/warehouse-sqm1500/Chart_AllMetrics.png" alt="warehouse-sqm1500/Chart_AllMetrics.png" width="100%" />
+    </td>
+  </tr>
+</table>
+
+<table width="74%" align="center">
+  <tr>
+    <td width="50%" align="center">
+      <img src="/results/warehouse-sqm1500/Chart_Time.png" alt="warehouse-sqm1500/Chart_Time.png" width="100%" />
+    </td>
+  </tr>
+</table>
+
+<table width="74%" align="center">
+  <tr>
+    <td width="50%" align="center">
+      <img src="/results/warehouse-sqm1500/Chart_Distance.png" alt="warehouse-sqm1500/Chart_Distance.png" width="100%" />
+    </td>
+  </tr>
+</table>
+
+<table width="74%" align="center">
+  <tr>
+    <td width="50%" align="center">
+      <img src="/results/warehouse-sqm1500/Chart_SingleCoreCPU.png" alt="warehouse-sqm1500/Chart_SingleCoreCPU.png" width="100%" />
+    </td>
+  </tr>
+</table>
+
+<table width="74%" align="center">
+  <tr>
+    <td width="50%" align="center">
+      <img src="/results/warehouse-sqm1500/Chart_RAM.png" alt="warehouse-sqm1500/Chart_RAM.png" width="100%" />
+    </td>
+  </tr>
+</table>
+
+## Corridor
+
+The `Corridor` environment demonstrates exploration challenges in a **confusing layout, characterized by deep recessed rooms and narrow openings**.
+
+#### Path Complexity Results
+
+<table width="74%" align="center">
+  <tr>
+    <td width="50%" align="center">
+      <img src="/results/corridor/corridor-fer2-mrtsp-map.png" alt="corridor/corridor-fer2-mrtsp-map.png" width="100%" />
+    </td>
+    <td width="50%" align="center">
+      <img src="/results/corridor/corridor-fer2-nearest-map.png" alt="corridor/corridor-fer2-nearest-map.png" width="100%" />
+    </td>
+  </tr>
+  <tr>
+    <td align="center"><small>frontier_exploration_ros2 (MRTSP)</small></td>
+    <td align="center"><small>frontier_exploration_ros2 (nearest)</</small></td>
+  </tr>
+</table>
+
+<table width="74%" align="center">
+  <tr>
+    <td width="50%" align="center">
+      <img src="/results/corridor/corridor-mexploreros2-map.png" alt="corridor/corridor-mexploreros2-map.png" width="100%" />
+    </td>
+    <td width="50%" align="center">
+      <img src="/results/corridor/corridor-roadmapexplorer-map.png" alt="corridor/corridor-roadmapexplorer-map.png" width="100%" />
+    </td>
+  </tr>
+  <tr>
+    <td align="center"><small>m_explore_ros2</small></td>
+    <td align="center"><small>roadmap-explorer</small></td>
+  </tr>
+</table>
+
+#### Benchmark Metrics
+
+| Package                               | Single Core CPU Usage (%) | RAM Usage (MB) | Distance Traveled (m) | Time Elapsed (mm:ss) | Time Elapsed (s) |
+| ------------------------------------- | ------------------------- | -------------- | --------------------- | -------------------- | ---------------- |
+| `frontier_exploration_ros2 (mrtsp)`   | 7.1                       | 56.2           | 26.12                 | 00:50                | 50               |
+| `frontier_exploration_ros2 (nearest)` | 3.6                       | 55.3           | 21.48                 | 00:49                | 49               |
+| `m_explore_ros2`                      | 2.2                       | 51.9           | 31.15                 | 00:58                | 58               |
+| `roadmap-explorer`                    | 26.1                      | 100.0          | 23.61                 | 00:56                | 56               |
+
+<br>
+
+<table width="74%" align="center">
+  <tr>
+    <td width="50%" align="center">
+      <img src="/results/corridor/Chart_AllMetrics.png" alt="corridor/Chart_AllMetrics.png" width="100%" />
+    </td>
+  </tr>
+</table>
+
+<table width="74%" align="center">
+  <tr>
+    <td width="50%" align="center">
+      <img src="/results/corridor/Chart_Time.png" alt="corridor/Chart_Time.png" width="100%" />
+    </td>
+  </tr>
+</table>
+
+<table width="74%" align="center">
+  <tr>
+    <td width="50%" align="center">
+      <img src="/results/corridor/Chart_Distance.png" alt="corridor/Chart_Distance.png" width="100%" />
+    </td>
+  </tr>
+</table>
+
+<table width="74%" align="center">
+  <tr>
+    <td width="50%" align="center">
+      <img src="/results/corridor/Chart_SingleCoreCPU.png" alt="corridor/Chart_SingleCoreCPU.png" width="100%" />
+    </td>
+  </tr>
+</table>
+
+<table width="74%" align="center">
+  <tr>
+    <td width="50%" align="center">
+      <img src="/results/corridor/Chart_RAM.png" alt="corridor/Chart_RAM.png" width="100%" />
+    </td>
+  </tr>
+</table>
 
 ## Build and Run
 
@@ -218,113 +523,6 @@ Use included RViz Panel to control simulation.
 - Use `Return Start` to return starting point if the exploration package doesn't support or stuck somewhere.
 
 ![RViz exploration control panel](assets/rviz_panel.png)
-
-## Results
-
-Current measured dataset is tested in world `Bookstore`.
-
-### Benchmark Results
-
-These benchmark results were obtained using the default configurations provided in the repository. Results may vary depending on custom parameters and environments.
-
-| Package                               | Single Core CPU Usage (%) | RAM Usage (MB) | Distance Traveled (m) | Time Elapsed (mm:ss) | Time Elapsed (s) |
-| ------------------------------------- | ------------------------- | -------------- | --------------------- | -------------------- | ---------------- |
-| `frontier_exploration_ros2 (nearest)` | 7.4                       | 60.0           | 41.47                 | 01:53                | 113              |
-| `frontier_exploration_ros2 (mrtsp)`   | 11.8                      | 60.3           | 44.95                 | 01:53                | 113              |
-| `m_explore_ros2`                      | 5.2                       | 54.5           | 58.44                 | 02:35                | 155              |
-| `nav2_wavefront_frontier_exploration` | 35.8                      | 102.9          | 68.64                 | 03:31                | 211              |
-| `roadmap-explorer`                    | 37.4                      | 110.0          | 46.39                 | 01:57                | 117              |
-
-- `frontier_exploration_ros2`: Performed as expected, **achieving the best overall results** and securing first place.
-  - The MRTSP mode delivered the best results, with slightly higher CPU usage due to complex calculations.
-    <br>
-- `roadmap-explorer`: Performed well but the expensive CPU and RAM usage is unacceptable for most stacks. This happened because of **heavy computations**. **Explored whole area without stucking.**
-  <br>
-- `m_explore_ros2`: While it offered the **most efficient CPU and RAM usage**, it suffered from **poor exploration reliability**. Had **instability**, **path complexity** and often **failed to explore the whole area**. It is currently unusable without **significant modifications** to the **source code**.
-  <br>
-- `nav2_wavefront_frontier_exploration (nav2_wfe)`: Performed the worst. The CPU and RAM usage were remarkably high. Because of the **bad optimization and implementation of the algorithms.** Similar to `m_explore_ros2`, it **frequently failed to achieve full area coverage** and was prone to becoming **unresponsive in complex scenarios**.
-
-Check out [results folder](results) for RViz screenshots of these results.
-
-## Chart Comparisons
-
-### All Metrics
-
-<p align="left">
-  <img src="results/BarChart_AllMetrics_Comparison.png" alt="Bookstore world all metrics" width="100%" />
-</p>
-  <br>
-
-### Single Core CPU Usage
-
-<p align="left">
-  <img src="results/BarChart_SingleCoreCPU_Comparison.png" alt="Bookstore world single core cpu usage comparison" width="100%" />
-</p>
-  <br>
-
-### RAM Usage
-
-<p align="left">
-  <img src="results/BarChart_RAM_Comparison.png" alt="Bookstore world ram usage comparison" width="100%" />
-</p>
-  <br>
-
-### Distance Traveled
-
-<p align="left">
-  <img src="results/BarChart_Distance_Comparison.png" alt="Bookstore world distance comparison" width="100%" />
-</p>
-  <br>
-
-### Time
-
-Time taken by **one complete exploration run.** Start-point to start-point.
-
-<p align="left">
-  <img src="results/BarChart_Time_Comparison.png" alt="Bookstore world time comparison" width="100%" />
-</p>
-
-  <br>
-
-## Path Complexity Results
-
-### frontier_exploration_ros2 (MRTSP)
-
-<p align="left">
-  <img src="results/bookstore-fer2-mrtsp-map.png" alt="Bookstore world frontier_exploration_ros2 (MRTSP)" width="100%" />
-</p>
-
-  <br>
-
-### frontier_exploration_ros2 (nearest)
-
-<p align="left">
-  <img src="results/bookstore-fer2-nearest-map.png" alt="Bookstore world frontier_exploration_ros2 (nearest)" width="100%" />
-</p>
-
-  <br>
-
-### m_explore_ros2
-
-<p align="left">
-  <img src="results/bookstore-mexploreros2-map.png" alt="Bookstore world m_explore_ros2" width="100%" />
-</p>
-
-  <br>
-
-### nav2_wavefront_frontier_exploration
-
-<p align="left">
-  <img src="results/bookstore-nav2wfe-map.png" alt="Bookstore world nav2_wavefront_frontier_exploration" width="100%" />
-</p>
-
-  <br>
-
-### roadmap-explorer
-
-<p align="left">
-  <img src="results/bookstore-roadmapexplorer-map.png" alt="Bookstore world roadmap-explorer" width="100%" />
-</p>
 
 ## Contributing
 
