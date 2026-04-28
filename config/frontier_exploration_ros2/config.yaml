@@ -39,6 +39,12 @@ frontier_explorer:
     # Keep the wavefront configuration on the local greedy strategy path.
     strategy: mrtsp
 
+    mrtsp_solver: dp
+    # Maximum number of scored frontier candidates passed into the bounded-horizon solver.
+    dp_solver_candidate_limit: 15
+    # Number of distinct frontier visits evaluated in the candidate pool before dispatching sequence[0].
+    dp_planning_horizon: 10
+
     # Map QoS profile selection.
     map_qos_durability: transient_local
     map_qos_reliability: reliable
@@ -61,7 +67,7 @@ frontier_explorer:
     # Increasing this makes the explorer more distance-sensitive and conservative.
     # Decreasing it makes information gain dominate more often.
     # Example: 2.0 prefers closer frontiers, 0.5 allows farther high-gain picks.
-    weight_distance_wd: 2.0
+    weight_distance_wd: 0.2
 
     # Weight applied to the frontier information-gain term.
     # Larger values favor large frontier clusters that promise more map expansion.

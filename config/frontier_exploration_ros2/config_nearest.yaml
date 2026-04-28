@@ -39,6 +39,12 @@ frontier_explorer:
     # Keep the wavefront configuration on the local greedy strategy path.
     strategy: nearest
 
+    mrtsp_solver: dp
+    # Maximum number of scored frontier candidates passed into the bounded-horizon solver.
+    dp_solver_candidate_limit: 15
+    # Number of distinct frontier visits evaluated in the candidate pool before dispatching sequence[0].
+    dp_planning_horizon: 10
+
     # Map QoS profile selection.
     map_qos_durability: transient_local
     map_qos_reliability: reliable
