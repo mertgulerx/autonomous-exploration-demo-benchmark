@@ -74,6 +74,29 @@ void set_rect(nav_msgs::msg::OccupancyGrid & msg, int x0, int y0, int x1, int y1
   }
 }
 
+void set_origin(nav_msgs::msg::OccupancyGrid & msg, double x, double y)
+{
+  msg.info.origin.position.x = x;
+  msg.info.origin.position.y = y;
+}
+
+void copy_grid_into(
+  nav_msgs::msg::OccupancyGrid & target,
+  const nav_msgs::msg::OccupancyGrid & source,
+  int x_offset,
+  int y_offset)
+{
+  const int source_width = static_cast<int>(source.info.width);
+  const int source_height = static_cast<int>(source.info.height);
+  const int target_width = static_cast<int>(target.info.width);
+  for (int y = 0; y < source_height; ++y) {
+    for (int x = 0; x < source_width; ++x) {
+      target.data[static_cast<std::size_t>((y + y_offset) * target_width + (x + x_offset))] =
+        source.data[static_cast<std::size_t>(y * source_width + x)];
+    }
+  }
+}
+
 std::vector<float> reference_bilateral_filter(
   const PaperImage & image,
   double sigma_s,
@@ -208,6 +231,15 @@ std::vector<int8_t> paper_image_to_occupancy_costs(const PaperImage & image)
   return data;
 }
 
+void expect_workspace_matches_full_result(
+  const DecisionMapWorkspace & workspace,
+  const DecisionMapResult & full_result)
+{
+  EXPECT_EQ(workspace.raw_image.data, full_result.raw_image.data);
+  EXPECT_EQ(workspace.threshold_image.data, full_result.threshold_image.data);
+  EXPECT_EQ(workspace.optimized_map_msg->data, full_result.optimized_map_msg.data);
+}
+
 TEST(DecisionMapTests, OccupancyToPaperMappingPreservesThresholdSemantics)
 {
   auto map_msg = build_grid(6, 1, -1);
@@ -247,7 +279,6 @@ TEST(DecisionMapTests, OptimizationReducesFrontierCountWhilePreservingOccupiedCe
 
   FrontierSearchOptions options;
   options.min_frontier_size_cells = 1;
-  options.build_navigation_goal_point = false;
 
   const auto raw_frontiers = get_frontier(
     make_pose(3.0, 3.0),
@@ -309,7 +340,6 @@ TEST(DecisionMapTests, OptimizationKeepsNarrowDoorwayTraversable)
 
   FrontierSearchOptions options;
   options.min_frontier_size_cells = 1;
-  options.build_navigation_goal_point = false;
   const auto decision_frontiers = get_frontier(
     make_pose(6.0, 3.0),
     decision_map_result.decision_map,
@@ -409,11 +439,7 @@ TEST(DecisionMapTests, DirtyRegionWorkspaceRecomputeMatchesFullRecompute)
   const auto full_result = build_decision_map(OccupancyGrid2d(second_map_msg), config);
 
   EXPECT_FALSE(incremental_status.geometry_changed);
-  EXPECT_EQ(workspace.raw_image.data, full_result.raw_image.data);
-  EXPECT_EQ(workspace.filtered_image, full_result.filtered_image);
-  EXPECT_EQ(workspace.threshold_image.data, full_result.threshold_image.data);
-  EXPECT_EQ(workspace.optimized_image.data, full_result.optimized_image.data);
-  EXPECT_EQ(workspace.optimized_map_msg->data, full_result.optimized_map_msg.data);
+  expect_workspace_matches_full_result(workspace, full_result);
 }
 
 TEST(DecisionMapTests, DisjointDirtyRegionsRecomputeMatchesFullRecompute)
@@ -443,11 +469,7 @@ TEST(DecisionMapTests, DisjointDirtyRegionsRecomputeMatchesFullRecompute)
   const auto full_result = build_decision_map(OccupancyGrid2d(second_map_msg), config);
 
   EXPECT_FALSE(incremental_status.geometry_changed);
-  EXPECT_EQ(workspace.raw_image.data, full_result.raw_image.data);
-  EXPECT_EQ(workspace.filtered_image, full_result.filtered_image);
-  EXPECT_EQ(workspace.threshold_image.data, full_result.threshold_image.data);
-  EXPECT_EQ(workspace.optimized_image.data, full_result.optimized_image.data);
-  EXPECT_EQ(workspace.optimized_map_msg->data, full_result.optimized_map_msg.data);
+  expect_workspace_matches_full_result(workspace, full_result);
 }
 
 TEST(DecisionMapTests, BorderDirtySpansRecomputeMatchesFullRecompute)
@@ -476,14 +498,572 @@ TEST(DecisionMapTests, BorderDirtySpansRecomputeMatchesFullRecompute)
   const auto full_result = build_decision_map(OccupancyGrid2d(second_map_msg), config);
 
   EXPECT_FALSE(incremental_status.geometry_changed);
-  EXPECT_EQ(workspace.raw_image.data, full_result.raw_image.data);
-  EXPECT_EQ(workspace.filtered_image, full_result.filtered_image);
-  EXPECT_EQ(workspace.threshold_image.data, full_result.threshold_image.data);
-  EXPECT_EQ(workspace.optimized_image.data, full_result.optimized_image.data);
-  EXPECT_EQ(workspace.optimized_map_msg->data, full_result.optimized_map_msg.data);
+  expect_workspace_matches_full_result(workspace, full_result);
 }
 
-TEST(MrtspOrderingTests, GreedyOrderingCanPreferHighGainFrontierOverNearest)
+TEST(DecisionMapTests, LargeMapIdenticalContentReusesExistingOutputAcrossMultipleChunks)
+{
+  auto map_msg = build_grid(70, 70, -1);
+  set_rect(map_msg, 3, 3, 66, 66, 0);
+  set_cell(map_msg, 10, 10, 100);
+  set_cell(map_msg, 40, 40, -1);
+  set_cell(map_msg, 55, 20, 100);
+
+  DecisionMapConfig config;
+  config.optimization_enabled = true;
+  config.occ_threshold = 50;
+  config.sigma_s = 2.0;
+  config.sigma_r = 30.0;
+  config.dilation_kernel_radius_cells = 1;
+
+  DecisionMapWorkspace workspace;
+  const auto first = build_decision_map(OccupancyGrid2d(map_msg), config, workspace);
+  const auto second = build_decision_map(OccupancyGrid2d(map_msg), config, workspace);
+
+  EXPECT_TRUE(first.output_changed);
+  EXPECT_FALSE(first.reused_existing_output);
+  EXPECT_FALSE(second.output_changed);
+  EXPECT_TRUE(second.reused_existing_output);
+  EXPECT_EQ(workspace.chunk_cols, 3);
+  EXPECT_EQ(workspace.chunk_rows, 3);
+}
+
+TEST(DecisionMapTests, UnknownObstacleChunkIgnoresSmallObstacleJitter)
+{
+  auto first_map_msg = build_grid(32, 32, -1);
+
+  auto second_map_msg = first_map_msg;
+  set_rect(second_map_msg, 2, 2, 4, 4, 100);
+
+  DecisionMapConfig config;
+  config.optimization_enabled = true;
+  config.occ_threshold = 50;
+  config.sigma_s = 2.0;
+  config.sigma_r = 30.0;
+  config.dilation_kernel_radius_cells = 1;
+
+  DecisionMapWorkspace workspace;
+  (void)build_decision_map(OccupancyGrid2d(first_map_msg), config, workspace);
+  const auto second_status =
+    build_decision_map(OccupancyGrid2d(second_map_msg), config, workspace);
+
+  EXPECT_FALSE(second_status.geometry_changed);
+  EXPECT_EQ(
+    second_status.geometry_transition,
+    DecisionMapGeometryTransition::SameGeometry);
+  EXPECT_TRUE(second_status.reused_existing_output);
+  EXPECT_EQ(second_status.dirty_chunks, 0U);
+}
+
+TEST(DecisionMapTests, UnknownFreeChunkStillRebuildsOnSemanticChange)
+{
+  auto first_map_msg = build_grid(32, 32, -1);
+  set_rect(first_map_msg, 4, 4, 20, 20, 0);
+
+  auto second_map_msg = first_map_msg;
+  set_cell(second_map_msg, 21, 10, 100);
+
+  DecisionMapConfig config;
+  config.optimization_enabled = true;
+  config.occ_threshold = 50;
+  config.sigma_s = 2.0;
+  config.sigma_r = 30.0;
+  config.dilation_kernel_radius_cells = 1;
+
+  DecisionMapWorkspace workspace;
+  (void)build_decision_map(OccupancyGrid2d(first_map_msg), config, workspace);
+  const auto second_status =
+    build_decision_map(OccupancyGrid2d(second_map_msg), config, workspace);
+  const auto full_result = build_decision_map(OccupancyGrid2d(second_map_msg), config);
+
+  EXPECT_FALSE(second_status.geometry_changed);
+  EXPECT_FALSE(second_status.reused_existing_output);
+  EXPECT_GT(second_status.dirty_chunks, 0U);
+  expect_workspace_matches_full_result(workspace, full_result);
+}
+
+TEST(DecisionMapTests, SingleDirtyChunkOnLargeMapMatchesFullRecompute)
+{
+  auto first_map_msg = build_grid(64, 64, -1);
+  set_rect(first_map_msg, 4, 4, 59, 59, 0);
+  set_cell(first_map_msg, 12, 12, -1);
+  set_cell(first_map_msg, 40, 40, 100);
+
+  auto second_map_msg = first_map_msg;
+  set_cell(second_map_msg, 10, 10, 100);
+  set_cell(second_map_msg, 11, 10, -1);
+
+  DecisionMapConfig config;
+  config.optimization_enabled = true;
+  config.occ_threshold = 50;
+  config.sigma_s = 2.0;
+  config.sigma_r = 30.0;
+  config.dilation_kernel_radius_cells = 1;
+
+  DecisionMapWorkspace workspace;
+  (void)build_decision_map(OccupancyGrid2d(first_map_msg), config, workspace);
+  const auto incremental_status = build_decision_map(OccupancyGrid2d(second_map_msg), config, workspace);
+  const auto full_result = build_decision_map(OccupancyGrid2d(second_map_msg), config);
+
+  EXPECT_FALSE(incremental_status.geometry_changed);
+  EXPECT_EQ(workspace.chunk_cols, 2);
+  EXPECT_EQ(workspace.chunk_rows, 2);
+  expect_workspace_matches_full_result(workspace, full_result);
+}
+
+TEST(DecisionMapTests, ChunkBoundaryChangesMatchFullRecompute)
+{
+  auto first_map_msg = build_grid(70, 70, -1);
+  set_rect(first_map_msg, 2, 2, 67, 67, 0);
+  set_cell(first_map_msg, 31, 20, -1);
+  set_cell(first_map_msg, 32, 20, -1);
+  set_cell(first_map_msg, 20, 31, -1);
+  set_cell(first_map_msg, 20, 32, -1);
+
+  auto second_map_msg = first_map_msg;
+  set_cell(second_map_msg, 31, 20, 0);
+  set_cell(second_map_msg, 32, 20, 100);
+  set_cell(second_map_msg, 20, 31, 100);
+  set_cell(second_map_msg, 20, 32, 0);
+
+  DecisionMapConfig config;
+  config.optimization_enabled = true;
+  config.occ_threshold = 50;
+  config.sigma_s = 2.0;
+  config.sigma_r = 30.0;
+  config.dilation_kernel_radius_cells = 1;
+
+  DecisionMapWorkspace workspace;
+  (void)build_decision_map(OccupancyGrid2d(first_map_msg), config, workspace);
+  const auto incremental_status = build_decision_map(OccupancyGrid2d(second_map_msg), config, workspace);
+  const auto full_result = build_decision_map(OccupancyGrid2d(second_map_msg), config);
+
+  EXPECT_FALSE(incremental_status.geometry_changed);
+  expect_workspace_matches_full_result(workspace, full_result);
+}
+
+TEST(DecisionMapTests, SameGeometryMapResetMatchesFullRecompute)
+{
+  auto first_map_msg = build_grid(64, 64, -1);
+  set_rect(first_map_msg, 3, 3, 60, 60, 0);
+  set_cell(first_map_msg, 8, 8, 100);
+  set_cell(first_map_msg, 48, 48, 100);
+
+  auto second_map_msg = build_grid(64, 64, -1);
+  set_rect(second_map_msg, 20, 20, 43, 43, 0);
+  set_cell(second_map_msg, 30, 30, 100);
+
+  DecisionMapConfig config;
+  config.optimization_enabled = true;
+  config.occ_threshold = 50;
+  config.sigma_s = 2.0;
+  config.sigma_r = 30.0;
+  config.dilation_kernel_radius_cells = 1;
+
+  DecisionMapWorkspace workspace;
+  (void)build_decision_map(OccupancyGrid2d(first_map_msg), config, workspace);
+  const auto incremental_status = build_decision_map(OccupancyGrid2d(second_map_msg), config, workspace);
+  const auto full_result = build_decision_map(OccupancyGrid2d(second_map_msg), config);
+
+  EXPECT_FALSE(incremental_status.geometry_changed);
+  expect_workspace_matches_full_result(workspace, full_result);
+}
+
+TEST(DecisionMapTests, SemanticallyInconsistentShiftFallsBackToFullRebuild)
+{
+  auto first_map_msg = build_grid(40, 40, -1);
+  set_rect(first_map_msg, 4, 4, 18, 18, 0);
+  set_rect(first_map_msg, 22, 22, 30, 30, 100);
+
+  auto second_map_msg = build_grid(40, 40, -1);
+  second_map_msg.info.origin.position.x = 5.0;
+  second_map_msg.info.origin.position.y = -2.0;
+  set_rect(second_map_msg, 20, 4, 35, 18, 0);
+  set_rect(second_map_msg, 4, 22, 16, 34, 100);
+
+  DecisionMapConfig config;
+  config.optimization_enabled = true;
+  config.occ_threshold = 50;
+  config.sigma_s = 2.0;
+  config.sigma_r = 30.0;
+  config.dilation_kernel_radius_cells = 1;
+
+  DecisionMapWorkspace workspace;
+  (void)build_decision_map(OccupancyGrid2d(first_map_msg), config, workspace);
+  const auto incremental_status = build_decision_map(OccupancyGrid2d(second_map_msg), config, workspace);
+  const auto full_result = build_decision_map(OccupancyGrid2d(second_map_msg), config);
+
+  EXPECT_TRUE(incremental_status.geometry_changed);
+  EXPECT_EQ(
+    incremental_status.geometry_transition,
+    DecisionMapGeometryTransition::FullRebuildFallback);
+  EXPECT_DOUBLE_EQ(workspace.origin_x, 5.0);
+  EXPECT_DOUBLE_EQ(workspace.origin_y, -2.0);
+  expect_workspace_matches_full_result(workspace, full_result);
+}
+
+TEST(DecisionMapTests, MostlyUnknownShiftUsesOverlapReuseAndMatchesFullRecompute)
+{
+  auto first_map_msg = build_grid(40, 40, -1);
+  set_rect(first_map_msg, 10, 10, 14, 14, 0);
+  set_cell(first_map_msg, 12, 12, 100);
+
+  auto second_map_msg = first_map_msg;
+  second_map_msg.info.origin.position.x = 2.0;
+  second_map_msg.info.origin.position.y = -1.0;
+  set_cell(second_map_msg, 18, 16, 100);
+
+  DecisionMapConfig config;
+  config.optimization_enabled = true;
+  config.occ_threshold = 50;
+  config.sigma_s = 2.0;
+  config.sigma_r = 30.0;
+  config.dilation_kernel_radius_cells = 1;
+
+  DecisionMapWorkspace workspace;
+  (void)build_decision_map(OccupancyGrid2d(first_map_msg), config, workspace);
+  const auto incremental_status =
+    build_decision_map(OccupancyGrid2d(second_map_msg), config, workspace);
+  const auto full_result = build_decision_map(OccupancyGrid2d(second_map_msg), config);
+
+  EXPECT_TRUE(incremental_status.geometry_changed);
+  EXPECT_EQ(
+    incremental_status.geometry_transition,
+    DecisionMapGeometryTransition::OverlapReuse);
+  EXPECT_GT(incremental_status.dirty_chunks, 0U);
+  EXPECT_LT(incremental_status.dirty_chunks, incremental_status.total_chunks);
+  expect_workspace_matches_full_result(workspace, full_result);
+}
+
+TEST(DecisionMapTests, SmallOriginJitterDoesNotForceGeometryReset)
+{
+  auto first_map_msg = build_grid(40, 40, -1);
+  set_rect(first_map_msg, 4, 4, 35, 35, 0);
+  set_cell(first_map_msg, 12, 12, 100);
+
+  auto second_map_msg = first_map_msg;
+  second_map_msg.info.origin.position.x = 0.2;
+  second_map_msg.info.origin.position.y = -0.2;
+
+  DecisionMapConfig config;
+  config.optimization_enabled = true;
+  config.occ_threshold = 50;
+  config.sigma_s = 2.0;
+  config.sigma_r = 30.0;
+  config.dilation_kernel_radius_cells = 1;
+
+  DecisionMapWorkspace workspace;
+  (void)build_decision_map(OccupancyGrid2d(first_map_msg), config, workspace);
+  const auto incremental_status =
+    build_decision_map(OccupancyGrid2d(second_map_msg), config, workspace);
+
+  EXPECT_FALSE(incremental_status.geometry_changed);
+  EXPECT_EQ(
+    incremental_status.geometry_transition,
+    DecisionMapGeometryTransition::SameGeometry);
+  EXPECT_TRUE(incremental_status.reused_existing_output);
+}
+
+TEST(DecisionMapTests, SameOriginGrowthReusesOverlapAndMatchesFullRecompute)
+{
+  auto first_map_msg = build_grid(40, 40, -1);
+  set_rect(first_map_msg, 4, 4, 35, 35, 0);
+  set_cell(first_map_msg, 12, 12, 100);
+  set_cell(first_map_msg, 28, 18, 100);
+
+  auto second_map_msg = build_grid(56, 52, -1);
+  copy_grid_into(second_map_msg, first_map_msg, 0, 0);
+  set_rect(second_map_msg, 42, 6, 51, 15, 0);
+  set_rect(second_map_msg, 8, 44, 20, 49, 0);
+  set_cell(second_map_msg, 48, 10, 100);
+  set_cell(second_map_msg, 10, 46, 100);
+
+  DecisionMapConfig config;
+  config.optimization_enabled = true;
+  config.occ_threshold = 50;
+  config.sigma_s = 2.0;
+  config.sigma_r = 30.0;
+  config.dilation_kernel_radius_cells = 1;
+
+  DecisionMapWorkspace workspace;
+  (void)build_decision_map(OccupancyGrid2d(first_map_msg), config, workspace);
+  const auto incremental_status =
+    build_decision_map(OccupancyGrid2d(second_map_msg), config, workspace);
+  const auto full_result = build_decision_map(OccupancyGrid2d(second_map_msg), config);
+
+  EXPECT_TRUE(incremental_status.geometry_changed);
+  EXPECT_EQ(
+    incremental_status.geometry_transition,
+    DecisionMapGeometryTransition::GrowthReuse);
+  EXPECT_LT(incremental_status.dirty_chunks, incremental_status.total_chunks);
+  EXPECT_EQ(workspace.width, 56);
+  EXPECT_EQ(workspace.height, 52);
+  expect_workspace_matches_full_result(workspace, full_result);
+}
+
+TEST(DecisionMapTests, ShiftedGrowthReusesOverlapAndMatchesFullRecompute)
+{
+  auto first_map_msg = build_grid(40, 40, -1);
+  set_rect(first_map_msg, 3, 3, 36, 34, 0);
+  set_cell(first_map_msg, 14, 14, 100);
+  set_cell(first_map_msg, 24, 18, -1);
+
+  auto second_map_msg = build_grid(54, 50, -1);
+  set_origin(second_map_msg, -4.0, -3.0);
+  copy_grid_into(second_map_msg, first_map_msg, 4, 3);
+  set_rect(second_map_msg, 0, 0, 2, 20, 0);
+  set_rect(second_map_msg, 41, 42, 52, 48, 0);
+  set_cell(second_map_msg, 1, 1, 100);
+  set_cell(second_map_msg, 50, 46, 100);
+
+  DecisionMapConfig config;
+  config.optimization_enabled = true;
+  config.occ_threshold = 50;
+  config.sigma_s = 2.0;
+  config.sigma_r = 30.0;
+  config.dilation_kernel_radius_cells = 1;
+
+  DecisionMapWorkspace workspace;
+  (void)build_decision_map(OccupancyGrid2d(first_map_msg), config, workspace);
+  const auto incremental_status =
+    build_decision_map(OccupancyGrid2d(second_map_msg), config, workspace);
+  const auto full_result = build_decision_map(OccupancyGrid2d(second_map_msg), config);
+
+  EXPECT_TRUE(incremental_status.geometry_changed);
+  EXPECT_EQ(
+    incremental_status.geometry_transition,
+    DecisionMapGeometryTransition::GrowthReuse);
+  EXPECT_DOUBLE_EQ(workspace.origin_x, -4.0);
+  EXPECT_DOUBLE_EQ(workspace.origin_y, -3.0);
+  expect_workspace_matches_full_result(workspace, full_result);
+}
+
+TEST(DecisionMapTests, GrowthReuseRecomputesPreviousBorderHaloExactly)
+{
+  auto first_map_msg = build_grid(32, 32, -1);
+  set_rect(first_map_msg, 26, 12, 30, 18, 0);
+
+  auto second_map_msg = build_grid(40, 32, -1);
+  copy_grid_into(second_map_msg, first_map_msg, 0, 0);
+  set_rect(second_map_msg, 32, 12, 35, 18, 0);
+
+  DecisionMapConfig config;
+  config.optimization_enabled = true;
+  config.occ_threshold = 50;
+  config.sigma_s = 2.0;
+  config.sigma_r = 30.0;
+  config.dilation_kernel_radius_cells = 1;
+
+  DecisionMapWorkspace workspace;
+  (void)build_decision_map(OccupancyGrid2d(first_map_msg), config, workspace);
+  const auto incremental_status =
+    build_decision_map(OccupancyGrid2d(second_map_msg), config, workspace);
+  const auto full_result = build_decision_map(OccupancyGrid2d(second_map_msg), config);
+
+  EXPECT_TRUE(incremental_status.geometry_changed);
+  EXPECT_EQ(
+    incremental_status.geometry_transition,
+    DecisionMapGeometryTransition::GrowthReuse);
+  expect_workspace_matches_full_result(workspace, full_result);
+  EXPECT_EQ(
+    workspace.optimized_map_msg->data[static_cast<std::size_t>(15 * 40 + 31)],
+    full_result.optimized_map_msg.data[static_cast<std::size_t>(15 * 40 + 31)]);
+}
+
+TEST(DecisionMapTests, GrowthReuseKeepsLaterOverlapEditsIncremental)
+{
+  auto first_map_msg = build_grid(40, 40, -1);
+  set_rect(first_map_msg, 4, 4, 35, 35, 0);
+  set_cell(first_map_msg, 12, 12, 100);
+
+  auto grown_map_msg = build_grid(56, 52, -1);
+  copy_grid_into(grown_map_msg, first_map_msg, 0, 0);
+  set_rect(grown_map_msg, 42, 6, 51, 15, 0);
+  set_cell(grown_map_msg, 48, 10, 100);
+
+  auto edited_grown_map_msg = grown_map_msg;
+  set_cell(edited_grown_map_msg, 14, 14, 100);
+  set_cell(edited_grown_map_msg, 15, 14, -1);
+
+  DecisionMapConfig config;
+  config.optimization_enabled = true;
+  config.occ_threshold = 50;
+  config.sigma_s = 2.0;
+  config.sigma_r = 30.0;
+  config.dilation_kernel_radius_cells = 1;
+
+  DecisionMapWorkspace workspace;
+  (void)build_decision_map(OccupancyGrid2d(first_map_msg), config, workspace);
+  (void)build_decision_map(OccupancyGrid2d(grown_map_msg), config, workspace);
+  const auto incremental_status =
+    build_decision_map(OccupancyGrid2d(edited_grown_map_msg), config, workspace);
+  const auto full_result = build_decision_map(OccupancyGrid2d(edited_grown_map_msg), config);
+
+  EXPECT_FALSE(incremental_status.geometry_changed);
+  EXPECT_EQ(
+    incremental_status.geometry_transition,
+    DecisionMapGeometryTransition::SameGeometry);
+  EXPECT_GT(incremental_status.dirty_chunks, 0U);
+  EXPECT_LT(incremental_status.dirty_chunks, incremental_status.total_chunks);
+  expect_workspace_matches_full_result(workspace, full_result);
+}
+
+TEST(DecisionMapTests, ShrinkCanUseOverlapReuseWhenSemanticallyConsistent)
+{
+  auto first_map_msg = build_grid(40, 40, -1);
+  set_rect(first_map_msg, 4, 4, 35, 35, 0);
+
+  auto second_map_msg = build_grid(32, 32, -1);
+  set_rect(second_map_msg, 2, 2, 29, 29, 0);
+
+  DecisionMapConfig config;
+  config.optimization_enabled = true;
+  config.occ_threshold = 50;
+  config.sigma_s = 2.0;
+  config.sigma_r = 30.0;
+  config.dilation_kernel_radius_cells = 1;
+
+  DecisionMapWorkspace workspace;
+  (void)build_decision_map(OccupancyGrid2d(first_map_msg), config, workspace);
+  const auto incremental_status =
+    build_decision_map(OccupancyGrid2d(second_map_msg), config, workspace);
+  const auto full_result = build_decision_map(OccupancyGrid2d(second_map_msg), config);
+
+  EXPECT_TRUE(incremental_status.geometry_changed);
+  EXPECT_EQ(
+    incremental_status.geometry_transition,
+    DecisionMapGeometryTransition::OverlapReuse);
+  expect_workspace_matches_full_result(workspace, full_result);
+}
+
+TEST(DecisionMapTests, ResolutionChangeForcesFullRebuildFallback)
+{
+  auto first_map_msg = build_grid(40, 40, -1);
+  set_rect(first_map_msg, 4, 4, 35, 35, 0);
+
+  auto second_map_msg = first_map_msg;
+  second_map_msg.info.resolution = 0.5;
+
+  DecisionMapConfig config;
+  config.optimization_enabled = true;
+  config.occ_threshold = 50;
+  config.sigma_s = 2.0;
+  config.sigma_r = 30.0;
+  config.dilation_kernel_radius_cells = 1;
+
+  DecisionMapWorkspace workspace;
+  (void)build_decision_map(OccupancyGrid2d(first_map_msg), config, workspace);
+  const auto incremental_status =
+    build_decision_map(OccupancyGrid2d(second_map_msg), config, workspace);
+  const auto full_result = build_decision_map(OccupancyGrid2d(second_map_msg), config);
+
+  EXPECT_TRUE(incremental_status.geometry_changed);
+  EXPECT_EQ(
+    incremental_status.geometry_transition,
+    DecisionMapGeometryTransition::FullRebuildFallback);
+  expect_workspace_matches_full_result(workspace, full_result);
+}
+
+TEST(DecisionMapTests, OccThresholdChangeForcesFullRawRebuildAndMatchesFullRecompute)
+{
+  auto map_msg = build_grid(48, 48, -1);
+  set_rect(map_msg, 4, 4, 43, 43, 0);
+  set_cell(map_msg, 10, 10, 55);
+  set_cell(map_msg, 20, 20, 65);
+  set_cell(map_msg, 30, 30, 75);
+
+  DecisionMapConfig first_config;
+  first_config.optimization_enabled = true;
+  first_config.occ_threshold = 50;
+  first_config.sigma_s = 2.0;
+  first_config.sigma_r = 30.0;
+  first_config.dilation_kernel_radius_cells = 1;
+
+  DecisionMapConfig second_config = first_config;
+  second_config.occ_threshold = 70;
+
+  DecisionMapWorkspace workspace;
+  (void)build_decision_map(OccupancyGrid2d(map_msg), first_config, workspace);
+  const auto incremental_status = build_decision_map(OccupancyGrid2d(map_msg), second_config, workspace);
+  const auto full_result = build_decision_map(OccupancyGrid2d(map_msg), second_config);
+
+  EXPECT_FALSE(incremental_status.geometry_changed);
+  expect_workspace_matches_full_result(workspace, full_result);
+}
+
+TEST(DecisionMapTests, ChunkStatusCountsReflectHitDirtyAndGeometryResetCases)
+{
+  auto first_map_msg = build_grid(64, 64, -1);
+  set_rect(first_map_msg, 4, 4, 59, 59, 0);
+  set_cell(first_map_msg, 12, 12, 100);
+  set_cell(first_map_msg, 40, 40, -1);
+
+  auto second_map_msg = first_map_msg;
+  set_cell(second_map_msg, 10, 10, 100);
+
+  auto third_map_msg = second_map_msg;
+  third_map_msg.info.origin.position.x = 1.0;
+
+  auto growth_map_msg = build_grid(72, 72, -1);
+  copy_grid_into(growth_map_msg, second_map_msg, 0, 0);
+  set_rect(growth_map_msg, 66, 4, 70, 12, 0);
+
+  DecisionMapConfig config;
+  config.optimization_enabled = true;
+  config.occ_threshold = 50;
+  config.sigma_s = 2.0;
+  config.sigma_r = 30.0;
+  config.dilation_kernel_radius_cells = 1;
+
+  DecisionMapWorkspace workspace;
+  const auto first_status = build_decision_map(OccupancyGrid2d(first_map_msg), config, workspace);
+  const auto second_status = build_decision_map(OccupancyGrid2d(first_map_msg), config, workspace);
+  const auto third_status = build_decision_map(OccupancyGrid2d(second_map_msg), config, workspace);
+  const auto fourth_status = build_decision_map(OccupancyGrid2d(third_map_msg), config, workspace);
+  DecisionMapWorkspace growth_workspace;
+  (void)build_decision_map(OccupancyGrid2d(second_map_msg), config, growth_workspace);
+  const auto fifth_status =
+    build_decision_map(OccupancyGrid2d(growth_map_msg), config, growth_workspace);
+
+  EXPECT_EQ(first_status.total_chunks, 4U);
+  EXPECT_EQ(first_status.dirty_chunks, 4U);
+  EXPECT_TRUE(first_status.geometry_changed);
+  EXPECT_EQ(
+    first_status.geometry_transition,
+    DecisionMapGeometryTransition::FullRebuildFallback);
+
+  EXPECT_EQ(second_status.total_chunks, 4U);
+  EXPECT_EQ(second_status.dirty_chunks, 0U);
+  EXPECT_FALSE(second_status.geometry_changed);
+  EXPECT_TRUE(second_status.reused_existing_output);
+  EXPECT_EQ(
+    second_status.geometry_transition,
+    DecisionMapGeometryTransition::SameGeometry);
+
+  EXPECT_EQ(third_status.total_chunks, 4U);
+  EXPECT_EQ(third_status.dirty_chunks, 1U);
+  EXPECT_FALSE(third_status.geometry_changed);
+  EXPECT_EQ(
+    third_status.geometry_transition,
+    DecisionMapGeometryTransition::SameGeometry);
+
+  EXPECT_EQ(fourth_status.total_chunks, 4U);
+  EXPECT_EQ(fourth_status.dirty_chunks, 4U);
+  EXPECT_TRUE(fourth_status.geometry_changed);
+  EXPECT_EQ(
+    fourth_status.geometry_transition,
+    DecisionMapGeometryTransition::OverlapReuse);
+
+  EXPECT_EQ(fifth_status.total_chunks, 9U);
+  EXPECT_GT(fifth_status.dirty_chunks, 0U);
+  EXPECT_LT(fifth_status.dirty_chunks, fifth_status.total_chunks);
+  EXPECT_TRUE(fifth_status.geometry_changed);
+  EXPECT_EQ(
+    fifth_status.geometry_transition,
+    DecisionMapGeometryTransition::GrowthReuse);
+}
+
+TEST(MrtspOrderingTests, GreedyOrderingCanPreferHighGainFrontierOverCloserCandidate)
 {
   const FrontierCandidate near_small_gain{
     {1.0, 0.0},
@@ -527,7 +1107,7 @@ TEST(MrtspOrderingTests, GreedyOrderingCanPreferHighGainFrontierOverNearest)
 
 TEST(MrtspOrderingTests, FrontierDispatchPointFallsBackToCenterPointWithoutGoalPoint)
 {
-  const FrontierCandidate nearest_candidate{
+  const FrontierCandidate candidate_with_goal_point{
     {4.0, 4.0},
     {3.0, 4.0},
     {3, 4},
@@ -544,11 +1124,11 @@ TEST(MrtspOrderingTests, FrontierDispatchPointFallsBackToCenterPointWithoutGoalP
     std::nullopt,
     8};
 
-  EXPECT_EQ(frontier_position(FrontierLike{nearest_candidate}), (std::pair<double, double>{2.0, 4.0}));
-  EXPECT_EQ(frontier_position(FrontierLike{mrtsp_candidate}), (std::pair<double, double>{3.0, 4.0}));
+  EXPECT_EQ(frontier_position(candidate_with_goal_point), (std::pair<double, double>{2.0, 4.0}));
+  EXPECT_EQ(frontier_position(mrtsp_candidate), (std::pair<double, double>{3.0, 4.0}));
 }
 
-TEST(MrtspOrderingTests, MinGoalDistanceFiltersMrtspCandidateByCenterPointDistance)
+TEST(MrtspOrderingTests, MinGoalDistancePrefersFarEnoughGoalPointWhenAvailable)
 {
   auto map_msg = build_grid(8, 8, 0);
   auto costmap_msg = build_grid(8, 8, 0);
@@ -561,36 +1141,31 @@ TEST(MrtspOrderingTests, MinGoalDistanceFiltersMrtspCandidateByCenterPointDistan
     frontier_cache.getPoint(1, 2),
     frontier_cache.getPoint(2, 1),
     frontier_cache.getPoint(2, 2),
+    frontier_cache.getPoint(3, 1),
+    frontier_cache.getPoint(3, 2),
+    frontier_cache.getPoint(4, 1),
+    frontier_cache.getPoint(4, 2),
   };
 
   FrontierSearchOptions options;
   options.min_frontier_size_cells = 1;
   options.candidate_min_goal_distance_m = 2.0;
-  options.build_navigation_goal_point = false;
 
-  const auto rejected_candidate = build_frontier_candidate(
+  const auto candidate = build_frontier_candidate(
     frontier_points,
     {1, 1},
     occupancy_map,
     costmap,
     std::nullopt,
     frontier_cache,
-    make_pose(2.0, 2.0),
+    make_pose(1.5, 1.5),
     0.0,
     options);
-  EXPECT_FALSE(rejected_candidate.has_value());
-
-  const auto accepted_candidate = build_frontier_candidate(
-    frontier_points,
-    {1, 1},
-    occupancy_map,
-    costmap,
-    std::nullopt,
-    frontier_cache,
-    make_pose(5.0, 5.0),
-    0.0,
-    options);
-  ASSERT_TRUE(accepted_candidate.has_value());
+  ASSERT_TRUE(candidate.has_value());
+  ASSERT_TRUE(candidate->goal_point.has_value());
+  const double dx = candidate->goal_point->first - 1.5;
+  const double dy = candidate->goal_point->second - 1.5;
+  EXPECT_GE(std::hypot(dx, dy), 2.0);
 }
 
 TEST(MrtspOrderingTests, CenterPointTieBreakMatchesSortedCellOrder)
@@ -610,7 +1185,6 @@ TEST(MrtspOrderingTests, CenterPointTieBreakMatchesSortedCellOrder)
 
   FrontierSearchOptions options;
   options.min_frontier_size_cells = 1;
-  options.build_navigation_goal_point = false;
 
   const auto candidate = build_frontier_candidate(
     frontier_points,
@@ -626,6 +1200,111 @@ TEST(MrtspOrderingTests, CenterPointTieBreakMatchesSortedCellOrder)
   ASSERT_TRUE(candidate.has_value());
   EXPECT_EQ(candidate->center_cell, (std::pair<int, int>{2, 1}));
   EXPECT_EQ(candidate->center_point, (std::pair<double, double>{2.5, 1.5}));
+}
+
+TEST(MrtspOrderingTests, CandidateCarriesApproxRobotCenterDistanceFromSelectedCenterFrontier)
+{
+  auto map_msg = build_grid(8, 8, 0);
+  auto costmap_msg = build_grid(8, 8, 0);
+  const OccupancyGrid2d occupancy_map(map_msg);
+  const OccupancyGrid2d costmap(costmap_msg);
+
+  FrontierCache frontier_cache(8, 8);
+  FrontierPoint * point_a = frontier_cache.getPoint(3, 2);
+  FrontierPoint * point_b = frontier_cache.getPoint(2, 3);
+  FrontierPoint * point_c = frontier_cache.getPoint(1, 2);
+  FrontierPoint * point_d = frontier_cache.getPoint(2, 1);
+  point_a->robot_distance_m = 4.0;
+  point_b->robot_distance_m = 3.0;
+  point_c->robot_distance_m = 2.0;
+  point_d->robot_distance_m = 1.0;
+
+  std::vector<FrontierPoint *> frontier_points{point_a, point_b, point_c, point_d};
+
+  FrontierSearchOptions options;
+  options.min_frontier_size_cells = 1;
+
+  const auto candidate = build_frontier_candidate(
+    frontier_points,
+    {3, 2},
+    occupancy_map,
+    costmap,
+    std::nullopt,
+    frontier_cache,
+    make_pose(0.0, 0.0),
+    0.0,
+    options);
+
+  ASSERT_TRUE(candidate.has_value());
+  ASSERT_TRUE(candidate->robot_center_distance_m.has_value());
+  EXPECT_EQ(candidate->center_cell, (std::pair<int, int>{2, 1}));
+  EXPECT_DOUBLE_EQ(*candidate->robot_center_distance_m, 1.0);
+}
+
+TEST(MrtspOrderingTests, StartCostUsesApproxRobotCenterDistanceForPathAndTranslation)
+{
+  constexpr double kHalfPi = 1.57079632679489661923;
+  const FrontierCandidate candidate{
+    {0.0, 1.0},
+    {0.0, 1.0},
+    {0, 1},
+    {0, 1},
+    {0.0, 1.0},
+    std::make_optional(std::pair<double, double>{0.0, 1.0}),
+    4,
+    std::nullopt,
+    5.0};
+
+  RobotState robot_state;
+  robot_state.position = {0.0, 0.0};
+  robot_state.yaw = 0.0;
+
+  const double path_cost = initial_frontier_path_cost(
+    robot_state.position,
+    candidate,
+    candidate.start_world_point,
+    0.0);
+  const double motion_time_cost = lower_bound_time_cost(
+    robot_state,
+    candidate.center_point,
+    candidate.robot_center_distance_m,
+    2.0,
+    1.0);
+
+  EXPECT_DOUBLE_EQ(path_cost, 5.0);
+  EXPECT_NEAR(motion_time_cost, 2.5 + kHalfPi, 1e-9);
+}
+
+TEST(MrtspOrderingTests, StartCostFallsBackToEuclideanWithoutApproxRobotCenterDistance)
+{
+  constexpr double kHalfPi = 1.57079632679489661923;
+  const FrontierCandidate candidate{
+    {0.0, 1.0},
+    {0.0, 1.0},
+    {0, 1},
+    {0, 1},
+    {0.0, 1.0},
+    std::make_optional(std::pair<double, double>{0.0, 1.0}),
+    4};
+
+  RobotState robot_state;
+  robot_state.position = {0.0, 0.0};
+  robot_state.yaw = 0.0;
+
+  const double path_cost = initial_frontier_path_cost(
+    robot_state.position,
+    candidate,
+    candidate.start_world_point,
+    0.0);
+  const double motion_time_cost = lower_bound_time_cost(
+    robot_state,
+    candidate.center_point,
+    candidate.robot_center_distance_m,
+    2.0,
+    1.0);
+
+  EXPECT_DOUBLE_EQ(path_cost, 1.0);
+  EXPECT_NEAR(motion_time_cost, 0.5 + kHalfPi, 1e-9);
 }
 
 }  // namespace

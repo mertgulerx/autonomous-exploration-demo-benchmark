@@ -53,11 +53,6 @@ visualization_msgs::msg::MarkerArray make_optimized_frontier_markers(
   const FrontierDebugSnapshot & snapshot,
   const DebugMarkerConfig & config);
 
-// Nearest strategy explanation: candidate pool, rank, mode, and distances.
-visualization_msgs::msg::MarkerArray make_nearest_score_markers(
-  const FrontierDebugSnapshot & snapshot,
-  const DebugMarkerConfig & config);
-
 // MRTSP start-row score explanation: rank, gain, path cost, and time cost.
 visualization_msgs::msg::MarkerArray make_mrtsp_score_markers(
   const FrontierDebugSnapshot & snapshot,
@@ -73,6 +68,13 @@ visualization_msgs::msg::MarkerArray make_mrtsp_order_markers(
 // DP pruning visualization. Orange points are passed into bounded-horizon DP;
 // grey points are outside the pruned candidate pool.
 visualization_msgs::msg::MarkerArray make_dp_pruning_markers(
+  const FrontierDebugSnapshot & snapshot,
+  const DebugMarkerConfig & config);
+
+// Decision-map chunk-cache overlay. Green borders mean raw chunk cache hit,
+// red borders mean that chunk was rebuilt, and yellow borders mark true
+// full-rebuild fallbacks when geometry reuse was not possible.
+visualization_msgs::msg::MarkerArray make_decision_map_chunk_cache_markers(
   const FrontierDebugSnapshot & snapshot,
   const DebugMarkerConfig & config);
 

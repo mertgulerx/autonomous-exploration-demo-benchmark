@@ -16,7 +16,6 @@ limitations under the License.
 
 #include <algorithm>
 #include <chrono>
-#include <cctype>
 #include <cstddef>
 #include <functional>
 #include <memory>
@@ -45,18 +44,7 @@ namespace frontier_exploration_ros2::debug
 namespace
 {
 
-FrontierStrategy parse_strategy(std::string value)
-{
-  // The observer accepts the same strategy names as the explorer. Unknown values
-  // fall back to nearest analysis so the debug node still starts with a baseline.
-  for (auto & ch : value) {
-    ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
-  }
-  if (value == "mrtsp") {
-    return FrontierStrategy::MRTSP;
-  }
-  return FrontierStrategy::NEAREST;
-}
+constexpr const char * kChunkCacheTopic = "explore/debug/chunk_cache";
 
 std::size_t positive_size_parameter(
   const rclcpp::Node & node,
@@ -87,11 +75,10 @@ public:
     create_ros_interfaces();
     RCLCPP_INFO(
       get_logger(),
-      "Frontier debug observer ready: map='%s', costmap='%s', local_costmap='%s', strategy='%s'",
+      "Frontier debug observer ready: map='%s', costmap='%s', local_costmap='%s'",
       map_topic_.c_str(),
       costmap_topic_.c_str(),
-      local_costmap_topic_.c_str(),
-      analyzer_config_.strategy == FrontierStrategy::MRTSP ? "mrtsp" : "nearest");
+      local_costmap_topic_.c_str());
   }
 
 private:
@@ -104,7 +91,6 @@ private:
     declare_parameter<std::string>("local_costmap_topic", "local_costmap/costmap");
     declare_parameter<std::string>("global_frame", "map");
     declare_parameter<std::string>("robot_base_frame", "base_footprint");
-    declare_parameter<std::string>("strategy", "mrtsp");
     declare_parameter<std::string>("map_qos_durability", "transient_local");
     declare_parameter<std::string>("map_qos_reliability", "reliable");
     declare_parameter<int>("map_qos_depth", 1);
@@ -132,7 +118,6 @@ private:
     declare_parameter<double>("frontier_candidate_min_goal_distance_m", 0.0);
     declare_parameter<double>("frontier_selection_min_distance", 0.5);
     declare_parameter<double>("frontier_visit_tolerance", 0.30);
-    declare_parameter<bool>("escape_enabled", true);
 
     // RViz output parameters keep visual density adjustable without changing the
     // score analysis. Top-N limits protect RViz from very dense frontier sets.
@@ -146,14 +131,12 @@ private:
     declare_parameter<double>("debug_text_scale", 0.22);
     declare_parameter<bool>("debug_show_raw_frontiers", true);
     declare_parameter<bool>("debug_show_optimized_frontiers", true);
-    declare_parameter<bool>("debug_show_nearest_scores", true);
     declare_parameter<bool>("debug_show_mrtsp_scores", true);
     declare_parameter<bool>("debug_show_mrtsp_order", true);
     declare_parameter<bool>("debug_show_dp_pruning", true);
     declare_parameter<bool>("debug_show_decision_map", true);
     declare_parameter<std::string>("debug_raw_frontiers_topic", "explore/debug/raw_frontiers");
     declare_parameter<std::string>("debug_optimized_frontiers_topic", "explore/debug/optimized_frontiers");
-    declare_parameter<std::string>("debug_nearest_scores_topic", "explore/debug/nearest_scores");
     declare_parameter<std::string>("debug_mrtsp_scores_topic", "explore/debug/mrtsp_scores");
     declare_parameter<std::string>("debug_mrtsp_order_topic", "explore/debug/mrtsp_order");
     declare_parameter<std::string>("debug_dp_pruning_topic", "explore/debug/dp_pruning");
@@ -170,7 +153,6 @@ private:
     global_frame_ = get_parameter("global_frame").as_string();
     robot_base_frame_ = get_parameter("robot_base_frame").as_string();
 
-    analyzer_config_.strategy = parse_strategy(get_parameter("strategy").as_string());
     analyzer_config_.frontier_map_optimization_enabled =
       get_parameter("frontier_map_optimization_enabled").as_bool();
     analyzer_config_.sigma_s = get_parameter("sigma_s").as_double();
@@ -196,7 +178,6 @@ private:
       get_parameter("frontier_selection_min_distance").as_double();
     analyzer_config_.frontier_visit_tolerance =
       get_parameter("frontier_visit_tolerance").as_double();
-    analyzer_config_.escape_enabled = get_parameter("escape_enabled").as_bool();
 
     // Clamp visual scales and update rate to useful ranges. Extreme values can
     // make RViz overlays invisible or unnecessarily expensive to refresh.
@@ -213,21 +194,17 @@ private:
 
     show_raw_frontiers_ = get_parameter("debug_show_raw_frontiers").as_bool();
     show_optimized_frontiers_ = get_parameter("debug_show_optimized_frontiers").as_bool();
-    show_nearest_scores_ = get_parameter("debug_show_nearest_scores").as_bool();
     show_mrtsp_scores_ = get_parameter("debug_show_mrtsp_scores").as_bool();
     show_mrtsp_order_ = get_parameter("debug_show_mrtsp_order").as_bool();
     show_dp_pruning_ = get_parameter("debug_show_dp_pruning").as_bool();
     show_decision_map_ = get_parameter("debug_show_decision_map").as_bool();
 
-    // Only compute optional score families when their overlays need them. MRTSP
-    // order still needs MRTSP scores because it depends on the same cost matrix.
-    analyzer_config_.analyze_nearest_scores = show_nearest_scores_;
+    // MRTSP order still needs MRTSP scores because it depends on the same cost matrix.
     analyzer_config_.analyze_mrtsp_scores = show_mrtsp_scores_ || show_mrtsp_order_;
     analyzer_config_.analyze_dp_pruning = show_dp_pruning_;
 
     raw_frontiers_topic_ = get_parameter("debug_raw_frontiers_topic").as_string();
     optimized_frontiers_topic_ = get_parameter("debug_optimized_frontiers_topic").as_string();
-    nearest_scores_topic_ = get_parameter("debug_nearest_scores_topic").as_string();
     mrtsp_scores_topic_ = get_parameter("debug_mrtsp_scores_topic").as_string();
     mrtsp_order_topic_ = get_parameter("debug_mrtsp_order_topic").as_string();
     dp_pruning_topic_ = get_parameter("debug_dp_pruning_topic").as_string();
@@ -278,9 +255,6 @@ private:
     optimized_frontiers_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>(
       optimized_frontiers_topic_,
       10);
-    nearest_scores_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>(
-      nearest_scores_topic_,
-      10);
     mrtsp_scores_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>(
       mrtsp_scores_topic_,
       10);
@@ -292,6 +266,9 @@ private:
       10);
     decision_map_pub_ = create_publisher<nav_msgs::msg::OccupancyGrid>(
       decision_map_topic_,
+      10);
+    chunk_cache_pub_ = create_publisher<visualization_msgs::msg::MarkerArray>(
+      kChunkCacheTopic,
       10);
 
     // The periodic timer makes debug output predictable and avoids running heavy
@@ -373,16 +350,14 @@ private:
         *map,
         *costmap,
         local_costmap,
-        analyzer_config_);
+        analyzer_config_,
+        decision_map_workspace_);
 
       if (show_raw_frontiers_) {
         raw_frontiers_pub_->publish(make_raw_frontier_markers(snapshot, marker_config_));
       }
       if (show_optimized_frontiers_) {
         optimized_frontiers_pub_->publish(make_optimized_frontier_markers(snapshot, marker_config_));
-      }
-      if (show_nearest_scores_) {
-        nearest_scores_pub_->publish(make_nearest_score_markers(snapshot, marker_config_));
       }
       if (show_mrtsp_scores_) {
         mrtsp_scores_pub_->publish(make_mrtsp_score_markers(snapshot, marker_config_));
@@ -396,6 +371,7 @@ private:
       if (show_decision_map_) {
         decision_map_pub_->publish(snapshot.decision_map_msg);
       }
+      chunk_cache_pub_->publish(make_decision_map_chunk_cache_markers(snapshot, marker_config_));
       if (!first_successful_publish_logged_) {
         // A one-time success message confirms that all required inputs were
         // received and at least one complete overlay set reached the publishers.
@@ -426,7 +402,6 @@ private:
   std::string robot_base_frame_;
   std::string raw_frontiers_topic_;
   std::string optimized_frontiers_topic_;
-  std::string nearest_scores_topic_;
   std::string mrtsp_scores_topic_;
   std::string mrtsp_order_topic_;
   std::string dp_pruning_topic_;
@@ -435,7 +410,6 @@ private:
   double update_rate_hz_{1.0};
   bool show_raw_frontiers_{true};
   bool show_optimized_frontiers_{true};
-  bool show_nearest_scores_{true};
   bool show_mrtsp_scores_{true};
   bool show_mrtsp_order_{true};
   bool show_dp_pruning_{true};
@@ -449,17 +423,18 @@ private:
   rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr local_costmap_sub_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr raw_frontiers_pub_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr optimized_frontiers_pub_;
-  rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr nearest_scores_pub_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr mrtsp_scores_pub_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr mrtsp_order_pub_;
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr dp_pruning_pub_;
   rclcpp::Publisher<nav_msgs::msg::OccupancyGrid>::SharedPtr decision_map_pub_;
+  rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr chunk_cache_pub_;
   rclcpp::TimerBase::SharedPtr analysis_timer_;
 
   std::mutex data_mutex_;
   std::optional<OccupancyGrid2d> map_;
   std::optional<OccupancyGrid2d> costmap_;
   std::optional<OccupancyGrid2d> local_costmap_;
+  DecisionMapWorkspace decision_map_workspace_;
   std::unordered_map<std::string, std::optional<int64_t>> warning_times_;
 };
 

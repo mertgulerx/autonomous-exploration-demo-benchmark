@@ -18,6 +18,7 @@ limitations under the License.
 
 #include <array>
 #include <cstddef>
+#include <optional>
 #include <vector>
 
 #include "frontier_exploration_ros2/frontier_types.hpp"
@@ -72,6 +73,7 @@ double initial_frontier_path_cost(
 double lower_bound_time_cost(
   const RobotState & robot_state,
   const std::pair<double, double> & target_point,
+  const std::optional<double> & translation_distance_m,
   double max_linear_speed_vmax,
   double max_angular_speed_wmax);
 

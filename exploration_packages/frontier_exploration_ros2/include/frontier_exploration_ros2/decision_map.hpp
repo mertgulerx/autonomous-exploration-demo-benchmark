@@ -101,12 +101,25 @@ struct DecisionMapResult
   OccupancyGrid2d decision_map;
 };
 
+enum class DecisionMapGeometryTransition : uint8_t
+{
+  SameGeometry = 0,
+  OverlapReuse = 1,
+  GrowthReuse = OverlapReuse,
+  FullRebuildFallback = 2,
+};
+
 // Incremental build outcome used by callers to reason about cache reuse.
 struct DecisionMapBuildStatus
 {
   bool reused_existing_output{false};
   bool output_changed{false};
   bool geometry_changed{false};
+  bool config_changed{false};
+  DecisionMapGeometryTransition geometry_transition{
+    DecisionMapGeometryTransition::FullRebuildFallback};
+  std::size_t total_chunks{0};
+  std::size_t dirty_chunks{0};
 };
 
 // Reusable buffers and caches for incremental decision-map updates.
@@ -124,13 +137,16 @@ struct DecisionMapWorkspace
   double last_build_sigma_r{30.0};
   int last_build_dilation_radius_cells{1};
 
-  // Images for the current raw input, staging copy, and optimization outputs.
+  // Images for the current raw input and optimization outputs.
   PaperImage raw_image;
-  PaperImage raw_scratch_image;
-  std::vector<float> filtered_image;
   PaperImage threshold_image;
-  PaperImage optimized_image;
   PaperImage dilation_scratch;
+
+  // Cached raw occupancy values and chunk metadata for chunk-aware dirty detection.
+  std::vector<int8_t> raw_occupancy_cache;
+  int chunk_cols{0};
+  int chunk_rows{0};
+  std::vector<uint8_t> dirty_chunk_flags;
 
   // Cached occupancy-to-paper conversion for the active threshold.
   int cached_occ_threshold{OCC_THRESHOLD - 1};

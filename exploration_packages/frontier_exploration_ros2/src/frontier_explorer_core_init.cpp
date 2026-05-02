@@ -34,15 +34,8 @@ FrontierExplorerCore::FrontierExplorerCore(
 {
   params.all_frontiers_suppressed_behavior = detail::normalize_suppressed_behavior(
     params.all_frontiers_suppressed_behavior);
-  // Clamp settle configuration to safe minimums only when the settle gate is enabled.
-  if (params.post_goal_settle_enabled) {
-    params.post_goal_min_settle = std::max(0.0, params.post_goal_min_settle);
-    params.post_goal_required_map_updates = std::max(1, params.post_goal_required_map_updates);
-    params.post_goal_stable_updates = std::max(1, params.post_goal_stable_updates);
-    params.post_goal_required_map_updates = std::max(
-      params.post_goal_required_map_updates,
-      params.post_goal_stable_updates);
-  }
+  params.post_goal_min_settle = std::max(0.0, params.post_goal_min_settle);
+  params.map_processing_rate_hz = std::max(0.0, params.map_processing_rate_hz);
   params.frontier_suppression_attempt_threshold = std::max(
     1,
     params.frontier_suppression_attempt_threshold);
@@ -100,8 +93,6 @@ FrontierExplorerCore::FrontierExplorerCore(
   params.goal_preemption_lidar_min_reveal_length_m = std::max(
     0.0,
     params.goal_preemption_lidar_min_reveal_length_m);
-
-  escape_active = params.escape_enabled;
 
   // Defensive defaults keep unit tests and partial hosts from crashing.
   if (!callbacks.now_ns) {
@@ -187,14 +178,9 @@ bool FrontierExplorerCore::debug_outputs_enabled() const
   return callbacks.debug_outputs_enabled();
 }
 
-bool FrontierExplorerCore::mrtsp_enabled() const
-{
-  return params.strategy == FrontierStrategy::MRTSP;
-}
-
 bool FrontierExplorerCore::frontier_map_optimization_enabled() const
 {
-  return mrtsp_enabled() || params.frontier_map_optimization_enabled;
+  return params.frontier_map_optimization_enabled;
 }
 
 FrontierSearchOptions FrontierExplorerCore::frontier_search_options() const
@@ -203,9 +189,6 @@ FrontierSearchOptions FrontierExplorerCore::frontier_search_options() const
   options.occ_threshold = params.occ_threshold;
   options.min_frontier_size_cells = params.min_frontier_size_cells;
   options.candidate_min_goal_distance_m = params.frontier_candidate_min_goal_distance_m;
-  options.use_local_costmap_for_frontier_eligibility = !mrtsp_enabled();
-  options.out_of_bounds_costmap_is_blocked = mrtsp_enabled();
-  options.build_navigation_goal_point = !mrtsp_enabled();
   return options;
 }
 

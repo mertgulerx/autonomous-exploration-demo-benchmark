@@ -75,6 +75,7 @@ void FrontierExplorerCore::refresh_decision_map()
     decision_map_generation += 1;
     decision_map_cache_misses += 1;
     frontier_snapshot.reset();
+    decision_map_dirty = false;
     if (debug_outputs_enabled() && decision_map_msg) {
       callbacks.publish_optimized_map(*decision_map_msg);
       callbacks.log_debug(
@@ -87,6 +88,7 @@ void FrontierExplorerCore::refresh_decision_map()
   }
 
   decision_map_cache_hits += 1;
+  decision_map_dirty = false;
   if (debug_outputs_enabled()) {
     callbacks.log_debug(
       "decision_map: hit, raw_generation=" + std::to_string(map_generation) +
@@ -96,15 +98,83 @@ void FrontierExplorerCore::refresh_decision_map()
   }
 }
 
+void FrontierExplorerCore::ingestRawMapUpdate(const OccupancyGrid2d & map_msg)
+{
+  map = map_msg;
+  map_generation += 1;
+  decision_map_dirty = true;
+}
+
+bool FrontierExplorerCore::active_frontier_goal_in_progress() const
+{
+  return goal_in_progress && active_goal_kind == "frontier";
+}
+
+void FrontierExplorerCore::commit_deferred_costmap_search_input_updates()
+{
+  bool committed_update = false;
+
+  if (pending_costmap_search_input_update) {
+    costmap_generation += 1;
+    pending_costmap_search_input_update = false;
+    committed_update = true;
+  }
+
+  if (pending_local_costmap_search_input_update) {
+    local_costmap_generation += 1;
+    pending_local_costmap_search_input_update = false;
+    committed_update = true;
+  }
+
+  if (committed_update) {
+    frontier_snapshot.reset();
+    raw_frontier_debug_cache.reset();
+  }
+}
+
+void FrontierExplorerCore::handleUrgentRawMapUpdateForActiveGoal()
+{
+  // if (goal_in_progress && active_goal_kind == "frontier") {
+  //   consider_preempt_active_goal("map");
+  //   return;
+  // }
+
+  if (goal_in_progress && active_goal_kind == "suppressed_return_to_start") {
+    consider_cancel_suppressed_return_to_start();
+  }
+}
+
+void FrontierExplorerCore::processPendingMapUpdate()
+{
+  const bool had_dirty_map = decision_map_dirty;
+
+  // if (decision_map_dirty) {
+  //   refresh_decision_map();
+  // }
+
+  if (goal_in_progress) {
+    if (had_dirty_map && active_goal_kind == "frontier") {
+      consider_preempt_active_goal("map");
+    } 
+    
+    else if (had_dirty_map && active_goal_kind == "suppressed_return_to_start") {
+      consider_cancel_suppressed_return_to_start();
+    }
+
+    return;
+  }
+
+  if (!had_dirty_map) {
+    return;
+  }
+
+  try_send_next_goal();
+}
+
 void FrontierExplorerCore::occupancyGridCallback(const OccupancyGrid2d & map_msg)
 {
-  // Map updates are authoritative for frontier discovery and settle progression.
-  map = map_msg;
-  // Generation is monotonic and used to invalidate frontier snapshots.
-  map_generation += 1;
+  ingestRawMapUpdate(map_msg);
   refresh_decision_map();
-  // Any map update satisfies the first settle precondition.
-  map_updated = true;
   if (goal_in_progress && active_goal_kind == "frontier") {
     // While navigating a frontier, map updates are routed through preemption policy first.
     consider_preempt_active_goal("map");
@@ -114,49 +184,87 @@ void FrontierExplorerCore::occupancyGridCallback(const OccupancyGrid2d & map_msg
     consider_cancel_suppressed_return_to_start();
     return;
   }
-  observe_post_goal_settle_update();
   try_send_next_goal();
 }
 
 void FrontierExplorerCore::costmapCallback(const OccupancyGrid2d & map_msg)
 {
-  // Costmaps can trigger preemption while goal is active and advance settle while idle.
-  const bool costmap_changed = !same_costmap_search_input(costmap, map_msg);
-  costmap = map_msg;
-  // Costmap generation participates in snapshot-cache key; unchanged repeated messages are reused.
-  if (costmap_changed) {
-    costmap_generation += 1;
-  }
-  if (goal_in_progress && active_goal_kind == "frontier") {
-    consider_preempt_active_goal("costmap");
+  if (active_frontier_goal_in_progress()) {
+    costmap = map_msg;
+    pending_costmap_search_input_update = true;
+
+    const auto active_goal_cost_status = params.goal_skip_on_blocked_goal ?
+      frontier_cost_status(active_goal_frontier) : std::optional<std::string>{};
+
+    if (active_goal_cost_status.has_value()) {
+      active_goal_blocked_reason = *active_goal_cost_status;
+      request_active_goal_cancel(*active_goal_cost_status);
+    } else {
+      active_goal_blocked_reason.reset();
+    }
+
     return;
   }
+
   if (goal_in_progress && active_goal_kind == "suppressed_return_to_start") {
+    costmap = map_msg;
+    pending_costmap_search_input_update = true;
     consider_cancel_suppressed_return_to_start();
     return;
   }
-  observe_post_goal_settle_update(false);
-  try_send_next_goal();
+
+  const bool costmap_changed = !same_costmap_search_input(costmap, map_msg);
+  costmap = map_msg;
+
+  if (costmap_changed) {
+    pending_costmap_search_input_update = true;
+  }
+
+  commit_deferred_costmap_search_input_updates();
+
+  if (params.map_processing_rate_hz <= 0.0 || !decision_map_dirty) {
+    try_send_next_goal();
+  }
 }
 
 void FrontierExplorerCore::localCostmapCallback(const OccupancyGrid2d & map_msg)
 {
-  const bool local_costmap_changed = !same_costmap_search_input(local_costmap, map_msg);
-  local_costmap = map_msg;
-  // Local costmap generation also invalidates cached frontier snapshot when search input changes.
-  if (local_costmap_changed) {
-    local_costmap_generation += 1;
-  }
-  if (goal_in_progress && active_goal_kind == "frontier") {
-    consider_preempt_active_goal("costmap");
+  if (active_frontier_goal_in_progress()) {
+    local_costmap = map_msg;
+    pending_local_costmap_search_input_update = true;
+
+    const auto active_goal_cost_status = params.goal_skip_on_blocked_goal ?
+      frontier_cost_status(active_goal_frontier) : std::optional<std::string>{};
+
+    if (active_goal_cost_status.has_value()) {
+      active_goal_blocked_reason = *active_goal_cost_status;
+      request_active_goal_cancel(*active_goal_cost_status);
+    } else {
+      active_goal_blocked_reason.reset();
+    }
+
     return;
   }
+
   if (goal_in_progress && active_goal_kind == "suppressed_return_to_start") {
+    local_costmap = map_msg;
+    pending_local_costmap_search_input_update = true;
     consider_cancel_suppressed_return_to_start();
     return;
   }
-  observe_post_goal_settle_update(false);
-  try_send_next_goal();
+
+  const bool local_costmap_changed = !same_costmap_search_input(local_costmap, map_msg);
+  local_costmap = map_msg;
+
+  if (local_costmap_changed) {
+    pending_local_costmap_search_input_update = true;
+  }
+
+  commit_deferred_costmap_search_input_updates();
+
+  if (params.map_processing_rate_hz <= 0.0 || !decision_map_dirty) {
+    try_send_next_goal();
+  }
 }
 
 }  // namespace frontier_exploration_ros2

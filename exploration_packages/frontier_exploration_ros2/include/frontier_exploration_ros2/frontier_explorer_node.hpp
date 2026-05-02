@@ -21,6 +21,7 @@ limitations under the License.
 #include <mutex>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include <geometry_msgs/msg/pose.hpp>
 #include <nav2_msgs/action/navigate_to_pose.hpp>
@@ -65,6 +66,9 @@ private:
   void publishOptimizedMap(const nav_msgs::msg::OccupancyGrid & map_msg);
   bool frontierMapOptimizationEnabled() const;
   bool debugOutputsEnabled() const;
+  void ensureMapProcessingTimer();
+  void resetMapProcessingCalibrationWindow();
+  bool maybeFinalizeMapProcessingRateEstimate();
 
   void dispatchGoalRequest(const GoalDispatchRequest & request);
   void createMapSubscription(rclcpp::DurabilityPolicy map_durability);
@@ -75,6 +79,7 @@ private:
     const std::string & result,
     rclcpp::DurabilityPolicy selected_durability);
   double mapAutodetectElapsedSeconds() const;
+  void mapProcessingTimerCallback();
   void suppressionWatchdogCallback();
   void controlTimerCallback();
   void stopCompletionPollCallback();
@@ -142,6 +147,7 @@ private:
   rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr costmap_sub_;
   rclcpp::Subscription<nav_msgs::msg::OccupancyGrid>::SharedPtr local_costmap_sub_;
   rclcpp::TimerBase::SharedPtr map_autodetect_timer_;
+  rclcpp::TimerBase::SharedPtr map_processing_timer_;
   rclcpp::TimerBase::SharedPtr suppression_watchdog_timer_;
   rclcpp::TimerBase::SharedPtr control_timer_;
   rclcpp::TimerBase::SharedPtr stop_completion_timer_;
@@ -155,10 +161,16 @@ private:
 
   // Startup-only map QoS autodetect state.
   std::mutex map_autodetect_mutex_;
+  std::mutex pending_map_mutex_;
   bool map_received_once_{false};
   bool map_autodetect_complete_logged_{false};
   std::chrono::steady_clock::time_point map_autodetect_started_at_;
   std::optional<MapQosStartupAutodetect> map_qos_autodetect_;
+  nav_msgs::msg::OccupancyGrid::ConstSharedPtr latest_pending_map_msg_;
+  bool pending_map_update_{false};
+  std::optional<double> effective_map_processing_rate_hz_;
+  std::optional<std::chrono::steady_clock::time_point> last_map_arrival_at_;
+  std::vector<double> startup_map_interval_samples_s_;
 
   // Completion can be observed multiple times while the frontier set stays empty.
   bool completion_event_published_{false};

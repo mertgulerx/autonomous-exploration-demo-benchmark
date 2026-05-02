@@ -17,6 +17,7 @@ limitations under the License.
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <optional>
 #include <string>
 #include <vector>
@@ -24,6 +25,7 @@ limitations under the License.
 #include <geometry_msgs/msg/pose.hpp>
 #include <nav_msgs/msg/occupancy_grid.hpp>
 
+#include "frontier_exploration_ros2/decision_map.hpp"
 #include "frontier_exploration_ros2/frontier_search.hpp"
 #include "frontier_exploration_ros2/frontier_types.hpp"
 
@@ -37,7 +39,6 @@ struct DebugAnalyzerConfig
 {
   // Frontier extraction and map optimization settings must match the explorer
   // node so raw and optimized overlays explain the same candidate set.
-  FrontierStrategy strategy{FrontierStrategy::NEAREST};
   bool frontier_map_optimization_enabled{true};
   double sigma_s{2.0};
   double sigma_r{30.0};
@@ -47,7 +48,6 @@ struct DebugAnalyzerConfig
   double frontier_candidate_min_goal_distance_m{0.0};
   double frontier_selection_min_distance{0.5};
   double frontier_visit_tolerance{0.30};
-  bool escape_enabled{true};
 
   // MRTSP and DP parameters are only used for analysis. They build the same
   // cost matrix, pruning pool, and bounded-horizon sequence shown in RViz.
@@ -59,28 +59,18 @@ struct DebugAnalyzerConfig
   double weight_gain_ws{1.0};
   double max_linear_speed_vmax{0.5};
   double max_angular_speed_wmax{1.0};
-  bool analyze_nearest_scores{true};
   bool analyze_mrtsp_scores{true};
   bool analyze_dp_pruning{true};
 };
 
-// Per-candidate explanation data used by the RViz marker layer. The candidate
-// itself stays intact while this struct adds nearest, MRTSP, and DP annotations.
+// Per-candidate explanation data used by the RViz marker layer.
 struct FrontierDebugCandidate
 {
   std::size_t id{};
   FrontierCandidate candidate;
 
-  // Nearest selection uses the centroid as the ordering reference and the
-  // dispatch point for visit-tolerance checks.
   std::pair<double, double> reference_point{0.0, 0.0};
   std::pair<double, double> dispatch_point{0.0, 0.0};
-  double nearest_reference_distance{0.0};
-  double nearest_goal_distance{0.0};
-  bool nearest_visit_tolerance_skip{false};
-  bool nearest_preferred_pool{false};
-  bool nearest_selected{false};
-  std::string nearest_mode;
 
   // MRTSP score breakdown mirrors the start-row cost used by the matrix. Keeping
   // the parts separate makes weight, gain, path, and time effects visible.
@@ -98,6 +88,20 @@ struct FrontierDebugCandidate
   bool active_order_selected{false};
 };
 
+enum class DecisionMapChunkDebugState : uint8_t
+{
+  CacheHit = 0,
+  DirtyRebuild = 1,
+  GeometryReset = 2,
+};
+
+struct DecisionMapChunkDebugCell
+{
+  int chunk_x{0};
+  int chunk_y{0};
+  DecisionMapChunkDebugState state{DecisionMapChunkDebugState::CacheHit};
+};
+
 // Full analysis result for one observer tick. Marker publishers consume this
 // snapshot directly, keeping visualization formatting separate from scoring.
 struct FrontierDebugSnapshot
@@ -105,11 +109,19 @@ struct FrontierDebugSnapshot
   std::vector<FrontierCandidate> raw_frontiers;
   std::vector<FrontierCandidate> optimized_frontiers;
   std::vector<FrontierDebugCandidate> candidates;
-  std::vector<std::size_t> nearest_order;
   std::vector<std::size_t> mrtsp_greedy_order;
   std::vector<std::size_t> dp_pruned_indices;
   std::vector<std::size_t> dp_order;
   std::vector<std::size_t> active_order;
+  std::vector<DecisionMapChunkDebugCell> decision_map_chunks;
+  std::size_t decision_map_total_chunks{0};
+  std::size_t decision_map_dirty_chunks{0};
+  bool decision_map_geometry_changed{false};
+  DecisionMapGeometryTransition decision_map_geometry_transition{
+    DecisionMapGeometryTransition::FullRebuildFallback};
+  bool decision_map_config_changed{false};
+  bool decision_map_output_reused{false};
+  bool decision_map_output_changed{false};
   nav_msgs::msg::OccupancyGrid decision_map_msg;
   std::string active_selection_mode;
 };
@@ -122,6 +134,7 @@ FrontierDebugSnapshot analyze_frontier_debug_snapshot(
   const OccupancyGrid2d & map,
   const OccupancyGrid2d & costmap,
   const std::optional<OccupancyGrid2d> & local_costmap,
-  const DebugAnalyzerConfig & config);
+  const DebugAnalyzerConfig & config,
+  DecisionMapWorkspace & decision_map_workspace);
 
 }  // namespace frontier_exploration_ros2::debug

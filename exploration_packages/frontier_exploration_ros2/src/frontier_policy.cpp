@@ -18,52 +18,24 @@ limitations under the License.
 
 #include <algorithm>
 #include <cmath>
-#include <limits>
 #include <sstream>
 
 namespace frontier_exploration_ros2
 {
 
-namespace
-{
-
-// Unified helper for variant access in policy functions.
-const FrontierCandidate * as_candidate(const FrontierLike & frontier)
-{
-  return std::get_if<FrontierCandidate>(&frontier);
-}
-
-}  // namespace
-
 std::pair<double, double> frontier_position(const FrontierLike & frontier)
 {
-  // Candidate frontiers dispatch the nearest-specific goal point when available;
-  // faithful MRTSP candidates fall back to center_point because no goal_point is materialized.
-  if (const auto * candidate = as_candidate(frontier)) {
-    return candidate->goal_point.value_or(candidate->center_point);
-  }
-  // Primitive frontiers encode one point that is both reference and goal.
-  return std::get<PrimitiveFrontier>(frontier);
+  return frontier.goal_point.value_or(frontier.center_point);
 }
 
 std::pair<double, double> frontier_reference_point(const FrontierLike & frontier)
 {
-  // Candidate frontiers separate "centroid for ranking" from "goal for navigation".
-  if (const auto * candidate = as_candidate(frontier)) {
-    return candidate->centroid;
-  }
-  // Primitive frontier has no centroid/goal distinction.
-  return std::get<PrimitiveFrontier>(frontier);
+  return frontier.centroid;
 }
 
 int frontier_size(const FrontierLike & frontier)
 {
-  // Candidate keeps measured cluster size from extraction stage.
-  if (const auto * candidate = as_candidate(frontier)) {
-    return candidate->size;
-  }
-  // Primitive single-point representation is treated as size 1.
-  return 1;
+  return frontier.size;
 }
 
 std::string describe_frontier(const FrontierLike & frontier)
@@ -105,69 +77,6 @@ FrontierSignature frontier_signature(
   // Sorted signature allows order-independent "same frontier set" comparison.
   std::sort(signature.begin(), signature.end());
   return signature;
-}
-
-FrontierSelectionResult select_primitive_frontier(
-  const FrontierSequence & frontiers,
-  const geometry_msgs::msg::Pose & current_pose,
-  double frontier_selection_min_distance,
-  double frontier_visit_tolerance,
-  bool escape_active)
-{
-  // Preferred frontier = closest candidate that still respects min distance.
-  // Fallback frontier = farthest candidate to escape local traps/congestion.
-  std::optional<FrontierLike> preferred_frontier;
-  double closest_distance = std::numeric_limits<double>::infinity();
-  std::optional<FrontierLike> close_range_fallback;
-  double farthest_distance = -std::numeric_limits<double>::infinity();
-
-  for (const auto & frontier : frontiers) {
-    // Selection uses reference point for distance ranking.
-    const auto [frontier_x, frontier_y] = frontier_reference_point(frontier);
-    // Goal point check avoids re-dispatching a target already within visit tolerance.
-    const auto [goal_x, goal_y] = frontier_position(frontier);
-    const double distance = std::hypot(
-      frontier_x - current_pose.position.x,
-      frontier_y - current_pose.position.y);
-    const double goal_distance = std::hypot(
-      goal_x - current_pose.position.x,
-      goal_y - current_pose.position.y);
-
-    // Skip any frontier whose actual goal point is essentially already visited.
-    if (goal_distance < frontier_visit_tolerance) {
-      continue;
-    }
-
-    // Preferred candidate: nearest frontier that still satisfies min distance.
-    if (distance >= frontier_selection_min_distance && distance < closest_distance) {
-      closest_distance = distance;
-      preferred_frontier = frontier;
-    }
-
-    // Keep farthest fallback for escape and close-range fallback modes.
-    if (distance > farthest_distance) {
-      farthest_distance = distance;
-      close_range_fallback = frontier;
-    }
-  }
-
-  // Normal path: preferred frontier available.
-  if (preferred_frontier.has_value()) {
-    return {preferred_frontier, "preferred"};
-  }
-
-  // Escape path: move away from local minima when no preferred frontier exists.
-  if (escape_active && close_range_fallback.has_value()) {
-    return {close_range_fallback, "escape"};
-  }
-
-  // Last-resort path: still pick a frontier to keep exploration moving.
-  if (close_range_fallback.has_value()) {
-    return {close_range_fallback, "close-range-fallback"};
-  }
-
-  // No valid frontier survived filtering.
-  return {std::nullopt, ""};
 }
 
 bool are_frontiers_equivalent(

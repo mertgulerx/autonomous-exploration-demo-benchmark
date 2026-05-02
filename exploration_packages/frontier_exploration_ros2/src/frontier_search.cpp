@@ -238,7 +238,7 @@ bool FrontierSearchContext::is_cost_blocked(
       map_x < 0 || map_y < 0 ||
       map_x >= costmap->getSizeX() || map_y >= costmap->getSizeY())
     {
-      return search_options_.out_of_bounds_costmap_is_blocked;
+      return true;
     }
     return costmap->getCost(map_x, map_y) >= search_options_.occ_threshold;
   }
@@ -248,7 +248,7 @@ bool FrontierSearchContext::is_cost_blocked(
   int cost_x = 0;
   int cost_y = 0;
   if (!costmap->worldToMapNoThrow(world.first, world.second, cost_x, cost_y)) {
-    return search_options_.out_of_bounds_costmap_is_blocked;
+    return true;
   }
   return costmap->getCost(cost_x, cost_y) >= search_options_.occ_threshold;
 }
@@ -321,7 +321,7 @@ std::optional<std::pair<double, double>> choose_accessible_frontier_goal(
     return std::nullopt;
   }
 
-  // When a minimum robot distance is requested, prefer the nearest far-enough goal.
+  // When a minimum robot distance is requested, prefer the closest far-enough goal.
   const bool apply_min_distance = current_pose.has_value() && min_robot_distance > 0.0;
   const double min_robot_distance_sq = min_robot_distance * min_robot_distance;
 
@@ -345,7 +345,7 @@ std::optional<std::pair<double, double>> choose_accessible_frontier_goal(
       if ((robot_dx * robot_dx) + (robot_dy * robot_dy) >= min_robot_distance_sq &&
         centroid_distance < best_far_distance)
       {
-        // Keep nearest point to centroid among points outside the robot-distance exclusion radius.
+        // Keep the closest point to the centroid among points outside the robot-distance exclusion radius.
         best_far_distance = centroid_distance;
         best_far_point = world;
       }
@@ -390,7 +390,8 @@ std::optional<FrontierCandidate> build_frontier_candidate(
     context = &(*owned_context);
   }
 
-  // Frontier geometry is computed once here so both nearest and MRTSP can share one candidate model.
+  // Frontier geometry is computed once here so dispatch, preemption, and MRTSP scoring
+  // all share one candidate model.
   std::vector<std::pair<double, double>> frontier_world_points;
   frontier_world_points.reserve(new_frontier.size());
   double centroid_sum_x = 0.0;
@@ -407,8 +408,26 @@ std::optional<FrontierCandidate> build_frontier_candidate(
     centroid_sum_y / static_cast<double>(new_frontier.size()),
   };
 
+  int min_frontier_x = new_frontier.front()->mapX;
+  int max_frontier_x = new_frontier.front()->mapX;
+  int min_frontier_y = new_frontier.front()->mapY;
+  int max_frontier_y = new_frontier.front()->mapY;
+  for (auto * frontier_point : new_frontier) {
+    min_frontier_x = std::min(min_frontier_x, frontier_point->mapX);
+    max_frontier_x = std::max(max_frontier_x, frontier_point->mapX);
+    min_frontier_y = std::min(min_frontier_y, frontier_point->mapY);
+    max_frontier_y = std::max(max_frontier_y, frontier_point->mapY);
+  }
+  const FrontierCandidate::CellBounds visible_reveal_bounds{
+    std::max(0, min_frontier_x - 1),
+    std::max(0, min_frontier_y - 1),
+    std::min(occupancy_map.getSizeX() - 1, max_frontier_x + 1),
+    std::min(occupancy_map.getSizeY() - 1, max_frontier_y + 1),
+  };
+
   std::pair<int, int> center_cell = {new_frontier.front()->mapX, new_frontier.front()->mapY};
   std::pair<double, double> center_point = frontier_world_points.front();
+  FrontierPoint * center_frontier_point = new_frontier.front();
   double center_distance_sq = std::numeric_limits<double>::infinity();
   constexpr double kCenterTieEpsilon = 1e-12;
   for (std::size_t i = 0; i < new_frontier.size(); ++i) {
@@ -424,7 +443,13 @@ std::optional<FrontierCandidate> build_frontier_candidate(
       center_distance_sq = distance_sq;
       center_cell = candidate_cell;
       center_point = frontier_world_points[i];
+      center_frontier_point = new_frontier[i];
     }
+  }
+
+  std::optional<double> robot_center_distance_m;
+  if (center_frontier_point->robot_distance_m >= 0.0) {
+    robot_center_distance_m = center_frontier_point->robot_distance_m;
   }
 
   const auto start_world_point = context->world_point(start_cell.first, start_cell.second);
@@ -434,28 +459,6 @@ std::optional<FrontierCandidate> build_frontier_candidate(
   const bool apply_min_goal_distance = effective_candidate_min_goal_distance > 0.0;
   const double min_goal_distance_sq =
     effective_candidate_min_goal_distance * effective_candidate_min_goal_distance;
-
-  if (!options.build_navigation_goal_point) {
-    if (apply_min_goal_distance) {
-      const double dx = center_point.first - current_pose.position.x;
-      const double dy = center_point.second - current_pose.position.y;
-      const double robot_distance_sq = (dx * dx) + (dy * dy);
-      if (robot_distance_sq < min_goal_distance_sq) {
-        // MRTSP reference filters candidates using center-point distance to the robot.
-        return std::nullopt;
-      }
-    }
-
-    return FrontierCandidate{
-      frontier_centroid,
-      center_point,
-      center_cell,
-      start_cell,
-      start_world_point,
-      std::nullopt,
-      static_cast<int>(new_frontier.size()),
-    };
-  }
 
   context->begin_candidate_accessible_scan();
 
@@ -481,9 +484,7 @@ std::optional<FrontierCandidate> build_frontier_candidate(
       }
 
       if (
-        context->global_cost_blocked(neighbor->mapX, neighbor->mapY) ||
-        (options.use_local_costmap_for_frontier_eligibility &&
-        context->local_cost_blocked(neighbor->mapX, neighbor->mapY)))
+        context->global_cost_blocked(neighbor->mapX, neighbor->mapY))
       {
         // A blocked neighbor cannot be used as frontier goal candidate.
         return;
@@ -524,6 +525,8 @@ std::optional<FrontierCandidate> build_frontier_candidate(
     start_world_point,
     *goal_point,
     static_cast<int>(new_frontier.size()),
+    visible_reveal_bounds,
+    robot_center_distance_m,
   };
 }
 
@@ -539,7 +542,7 @@ std::pair<int, int> find_free_with_cache(
   const OccupancyGrid2d & occupancy_map,
   FrontierCache & frontier_cache)
 {
-  // If robot starts in unknown/occupied cell, recover nearest reachable free seed for BFS.
+  // If robot starts in unknown/occupied cell, recover the closest reachable free seed for BFS.
   std::deque<FrontierPoint *> bfs;
   bfs.push_back(frontier_cache.getPoint(mx, my));
 
@@ -548,7 +551,7 @@ std::pair<int, int> find_free_with_cache(
     bfs.pop_front();
 
     if (occupancy_map.getCost(location->mapX, location->mapY) == static_cast<int>(OccupancyGrid2d::CostValues::FreeSpace)) {
-      // First free hit in BFS radius is the nearest by grid distance.
+      // First free hit in BFS radius is the closest by grid distance.
       return {location->mapX, location->mapY};
     }
 
@@ -582,11 +585,13 @@ FrontierSearchResult get_frontier(
   FrontierSearchContext search_context(occupancy_map, costmap, local_costmap, options);
 
   const auto [mx, my] = occupancy_map.worldToMap(current_pose.position.x, current_pose.position.y);
-  // If robot projects into unknown space, find_free_with_cache nudges start to nearest free seed.
+  // If robot projects into unknown space, find_free_with_cache nudges start to the closest free seed.
   const auto free_point = find_free_with_cache(mx, my, occupancy_map, frontier_cache);
   FrontierPoint * start = frontier_cache.getPoint(free_point.first, free_point.second);
   // Seed map BFS from a guaranteed free (or best effort) cell.
   start->classification = classification_flag(PointClassification::MapOpen);
+  start->robot_distance_m = 0.0;
+  const double resolution_m = occupancy_map.map().info.resolution;
 
   std::deque<FrontierPoint *> map_point_queue;
   map_point_queue.push_back(start);
@@ -645,6 +650,9 @@ FrontierSearchResult get_frontier(
               !has_classification(neighbor, PointClassification::FrontierClosed) &&
               !has_classification(neighbor, PointClassification::MapClosed))
             {
+              if (candidate->robot_distance_m >= 0.0) {
+                neighbor->robot_distance_m = candidate->robot_distance_m + resolution_m;
+              }
               // FrontierOpen marks queued frontier candidates.
               set_classification(neighbor, PointClassification::FrontierOpen);
               frontier_queue.push_back(neighbor);
@@ -696,6 +704,9 @@ FrontierSearchResult get_frontier(
         });
 
         if (has_free_neighbor) {
+          if (point->robot_distance_m >= 0.0) {
+            neighbor->robot_distance_m = point->robot_distance_m + resolution_m;
+          }
           // MapOpen marks node eligible for future map-queue expansion.
           set_classification(neighbor, PointClassification::MapOpen);
           map_point_queue.push_back(neighbor);
@@ -773,14 +784,6 @@ bool is_frontier_point(
       return;
     }
 
-    if (
-      context->search_options_.use_local_costmap_for_frontier_eligibility &&
-      context->local_cost_blocked(neighbor->mapX, neighbor->mapY))
-    {
-      blocked_neighbor = true;
-      return;
-    }
-
     if (map_cost == static_cast<int>(OccupancyGrid2d::CostValues::FreeSpace)) {
       has_free_neighbor = true;
     }
@@ -803,7 +806,8 @@ std::optional<VisibleRevealGain> compute_visible_reveal_gain(
   const std::optional<OccupancyGrid2d> & local_costmap,
   double range_m,
   double fov_deg,
-  double ray_step_deg)
+  double ray_step_deg,
+  const std::optional<FrontierCandidate::CellBounds> & visible_reveal_bounds)
 {
   // Invalid geometry means the caller should skip this optimization and keep the fallback path.
   if (range_m < 0.1 || fov_deg < 1.0 || fov_deg > 360.0 || ray_step_deg < 0.25 || ray_step_deg > 45.0) {
@@ -857,6 +861,15 @@ std::optional<VisibleRevealGain> compute_visible_reveal_gain(
       int map_y = 0;
       if (!occupancy_map.worldToMapNoThrow(sample_x, sample_y, map_x, map_y)) {
         // Leaving the map bounds is equivalent to exhausting that ray.
+        break;
+      }
+      if (visible_reveal_bounds.has_value() &&
+        (map_x < visible_reveal_bounds->min_x ||
+        map_x > visible_reveal_bounds->max_x ||
+        map_y < visible_reveal_bounds->min_y ||
+        map_y > visible_reveal_bounds->max_y))
+      {
+        // Treat the local frontier-cluster bounds as a virtual wall for visible-gain estimation.
         break;
       }
 

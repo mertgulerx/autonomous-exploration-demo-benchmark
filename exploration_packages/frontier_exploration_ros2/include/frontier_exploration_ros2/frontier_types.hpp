@@ -25,7 +25,6 @@ limitations under the License.
 #include <stdexcept>
 #include <string>
 #include <utility>
-#include <variant>
 #include <vector>
 
 #include <geometry_msgs/msg/pose_stamped.hpp>
@@ -182,6 +181,7 @@ struct FrontierPoint
   int classification{0};
   int mapX{0};
   int mapY{0};
+  double robot_distance_m{-1.0};
 
   FrontierPoint() = default;
   FrontierPoint(int x, int y)
@@ -235,6 +235,7 @@ public:
       point.classification = 0;
       point.mapX = x;
       point.mapY = y;
+      point.robot_distance_m = -1.0;
     }
     return &points_[idx];
   }
@@ -266,9 +267,17 @@ private:
 // Frontier output used by policy and goal dispatch.
 struct FrontierCandidate
 {
+  struct CellBounds
+  {
+    int min_x{0};
+    int min_y{0};
+    int max_x{0};
+    int max_y{0};
+  };
+
   FrontierCandidate() = default;
 
-  // Compatibility constructor for existing nearest-style tests and simple callers.
+  // Compatibility constructor for tests and simple callers.
   FrontierCandidate(
     std::pair<double, double> centroid_in,
     std::pair<double, double> goal_or_center_point_in,
@@ -288,14 +297,18 @@ struct FrontierCandidate
     std::pair<int, int> start_cell_in,
     std::pair<double, double> start_world_point_in,
     std::optional<std::pair<double, double>> goal_point_in,
-    int size_in)
+    int size_in,
+    std::optional<CellBounds> visible_reveal_bounds_in = std::nullopt,
+    std::optional<double> robot_center_distance_m_in = std::nullopt)
   : centroid(std::move(centroid_in)),
     center_point(std::move(center_point_in)),
     center_cell(std::move(center_cell_in)),
     start_cell(std::move(start_cell_in)),
     start_world_point(std::move(start_world_point_in)),
     goal_point(std::move(goal_point_in)),
-    size(size_in)
+    size(size_in),
+    visible_reveal_bounds(std::move(visible_reveal_bounds_in)),
+    robot_center_distance_m(std::move(robot_center_distance_m_in))
   {
   }
 
@@ -309,23 +322,18 @@ struct FrontierCandidate
   std::pair<int, int> start_cell{0, 0};
   // start_cell converted to world coordinates for MRTSP path-cost calculations.
   std::pair<double, double> start_world_point;
-  // Optional reachable goal point used by nearest-style navigation dispatch.
+  // Reachable dispatch goal selected near the cluster.
   std::optional<std::pair<double, double>> goal_point;
   // Number of cells in the underlying frontier cluster.
   int size{0};
+  // Conservative local bounds used to limit target-pose visible-reveal estimation around this cluster.
+  std::optional<CellBounds> visible_reveal_bounds;
+  // Approximate robot-to-center frontier distance accumulated during BFS traversal.
+  std::optional<double> robot_center_distance_m;
 };
 
-enum class FrontierStrategy
-{
-  NEAREST,
-  MRTSP,
-};
-
-// Primitive representation used by legacy/simple selection paths.
-using PrimitiveFrontier = std::pair<double, double>;
-// Unified frontier representation consumed by policy/core layers.
-using FrontierLike = std::variant<PrimitiveFrontier, FrontierCandidate>;
-using FrontierSequence = std::vector<FrontierLike>;
+using FrontierLike = FrontierCandidate;
+using FrontierSequence = std::vector<FrontierCandidate>;
 // Deterministic, quantized signature used for cache/publish equivalence checks.
 using FrontierSignature = std::vector<std::array<int64_t, 4>>;
 
@@ -340,7 +348,6 @@ struct FrontierSnapshot
   int local_costmap_generation{0};
   std::pair<int, int> robot_map_cell{0, 0};
   double min_goal_distance{0.0};
-  FrontierStrategy strategy{FrontierStrategy::NEAREST};
 };
 
 // Bit flags used while exploring map/frontier queues.

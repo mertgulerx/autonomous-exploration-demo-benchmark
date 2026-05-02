@@ -46,6 +46,11 @@ geometry_msgs::msg::Pose make_pose(double x = 0.0, double y = 0.0)
   return pose;
 }
 
+FrontierCandidate make_frontier(double x, double y, int size = 1)
+{
+  return FrontierCandidate{{x, y}, {x, y}, size};
+}
+
 nav_msgs::msg::OccupancyGrid build_grid(int width, int height, int default_value)
 {
   nav_msgs::msg::OccupancyGrid msg;
@@ -96,8 +101,8 @@ TEST(ControlCoreSessionTests, StartExplorationSessionResetsSessionState)
   geometry_msgs::msg::PoseStamped persistent_start_pose;
   persistent_start_pose.pose = make_pose(2.0, 3.0);
   core.start_pose = persistent_start_pose;
-  core.pending_frontier_sequence = {PrimitiveFrontier{1.0, 1.0}};
-  core.pending_frontier_selection_mode = "preferred";
+  core.pending_frontier_sequence = {make_frontier(1.0, 1.0)};
+  core.pending_frontier_selection_mode = "mrtsp";
   core.return_to_start_completed = true;
   core.no_frontiers_reported = true;
   core.frontier_suppression_ = std::make_unique<FrontierSuppression>(FrontierSuppressionConfig{});

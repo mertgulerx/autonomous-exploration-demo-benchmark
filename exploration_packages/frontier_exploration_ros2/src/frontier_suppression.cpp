@@ -255,7 +255,7 @@ void FrontierSuppression::promote_attempt_to_region(
   int64_t now_ns,
   const std::function<void(const std::string &)> & log_warn)
 {
-  // Prefer expanding the nearest compatible region so repeated failures coalesce spatially.
+  // Prefer expanding the closest compatible region so repeated failures coalesce spatially.
   // This avoids creating many overlapping squares for what is effectively the same hard area.
   auto chosen_it = state_.regions.end();
   double best_distance_sq = std::numeric_limits<double>::infinity();

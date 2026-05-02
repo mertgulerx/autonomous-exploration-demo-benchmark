@@ -51,9 +51,6 @@ struct FrontierSearchOptions
   int occ_threshold{OCC_THRESHOLD};
   int min_frontier_size_cells{MIN_FRONTIER_SIZE};
   double candidate_min_goal_distance_m{0.0};
-  bool use_local_costmap_for_frontier_eligibility{true};
-  bool out_of_bounds_costmap_is_blocked{false};
-  bool build_navigation_goal_point{true};
 };
 
 // Scratch context for one search pass. Stores reusable caches keyed by map cell.
@@ -174,7 +171,7 @@ std::optional<FrontierCandidate> build_frontier_candidate(
   const FrontierSearchOptions & options = {},
   FrontierSearchContext * search_context = nullptr);
 
-// Finds nearest free occupancy cell from a seed cell.
+// Finds the closest free occupancy cell from a seed cell.
 std::pair<int, int> find_free(int mx, int my, const OccupancyGrid2d & occupancy_map);
 
 // Cached variant of find_free that reuses a provided FrontierCache.
@@ -219,6 +216,7 @@ std::optional<VisibleRevealGain> compute_visible_reveal_gain(
   const std::optional<OccupancyGrid2d> & local_costmap,
   double range_m,
   double fov_deg,
-  double ray_step_deg);
+  double ray_step_deg,
+  const std::optional<FrontierCandidate::CellBounds> & visible_reveal_bounds = std::nullopt);
 
 }  // namespace frontier_exploration_ros2

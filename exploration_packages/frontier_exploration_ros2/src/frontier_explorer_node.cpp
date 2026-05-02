@@ -28,6 +28,7 @@ limitations under the License.
 #include <cctype>
 #include <chrono>
 #include <cstddef>
+#include <cmath>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -40,6 +41,9 @@ namespace frontier_exploration_ros2
 
 namespace
 {
+
+constexpr std::size_t kStartupMapRateSampleCount = 3;
+constexpr double kStartupMapRateStabilityTolerance = 0.25;
 
 // Adapts Nav2 goal handle API to the core's transport-agnostic interface.
 class NavigateGoalHandleAdapter : public GoalHandleInterface
@@ -68,19 +72,6 @@ private:
   CancelRequester cancel_requester_;
 };
 
-FrontierStrategy parse_strategy(std::string value)
-{
-  std::transform(
-    value.begin(),
-    value.end(),
-    value.begin(),
-    [](unsigned char ch) {return static_cast<char>(std::tolower(ch));});
-  if (value == "mrtsp") {
-    return FrontierStrategy::MRTSP;
-  }
-  return FrontierStrategy::NEAREST;
-}
-
 }  // namespace
 
 FrontierExplorerNode::FrontierExplorerNode(const rclcpp::NodeOptions & options)
@@ -97,7 +88,6 @@ FrontierExplorerNode::FrontierExplorerNode(const rclcpp::NodeOptions & options)
   this->declare_parameter<std::string>("frontier_marker_topic", "explore/frontiers");
   this->declare_parameter<std::string>("selected_frontier_topic", "explore/selected_frontier");
   this->declare_parameter<std::string>("optimized_map_topic", "explore/optimized_map");
-  this->declare_parameter<std::string>("strategy", "nearest");
   this->declare_parameter<std::string>("map_qos_durability", "transient_local");
   this->declare_parameter<std::string>("map_qos_reliability", "reliable");
   this->declare_parameter<int>("map_qos_depth", 1);
@@ -128,6 +118,7 @@ FrontierExplorerNode::FrontierExplorerNode(const rclcpp::NodeOptions & options)
   this->declare_parameter<int>("min_frontier_size_cells", 5);
   this->declare_parameter<double>("frontier_candidate_min_goal_distance_m", 0.0);
   this->declare_parameter<double>("frontier_selection_min_distance", 0.5);
+  this->declare_parameter<bool>("escape_enabled", false);
   this->declare_parameter<double>("frontier_visit_tolerance", 0.30);
   this->declare_parameter<bool>("goal_preemption_enabled", false);
   this->declare_parameter<bool>("goal_skip_on_blocked_goal", false);
@@ -138,11 +129,9 @@ FrontierExplorerNode::FrontierExplorerNode(const rclcpp::NodeOptions & options)
   this->declare_parameter<double>("goal_preemption_complete_if_within_m", 0.0);
   this->declare_parameter<double>("goal_preemption_lidar_min_reveal_length_m", 0.5);
   this->declare_parameter<double>("goal_preemption_lidar_yaw_offset_deg", 0.0);
-  this->declare_parameter<bool>("escape_enabled", true);
   this->declare_parameter<bool>("post_goal_settle_enabled", true);
   this->declare_parameter<double>("post_goal_min_settle", 0.80);
-  this->declare_parameter<int>("post_goal_required_map_updates", 3);
-  this->declare_parameter<int>("post_goal_stable_updates", 2);
+  this->declare_parameter<double>("map_processing_rate_hz", 1.0);
   this->declare_parameter<bool>("return_to_start_on_complete", true);
   this->declare_parameter<std::string>("all_frontiers_suppressed_behavior", "stay");
   this->declare_parameter<bool>("frontier_suppression_enabled", false);
@@ -168,7 +157,6 @@ FrontierExplorerNode::FrontierExplorerNode(const rclcpp::NodeOptions & options)
   params_.frontier_marker_topic = this->get_parameter("frontier_marker_topic").as_string();
   params_.selected_frontier_topic = this->get_parameter("selected_frontier_topic").as_string();
   params_.optimized_map_topic = this->get_parameter("optimized_map_topic").as_string();
-  params_.strategy = parse_strategy(this->get_parameter("strategy").as_string());
   params_.frontier_marker_scale = this->get_parameter("frontier_marker_scale").as_double();
   autostart_ = this->get_parameter("autostart").as_bool();
   control_service_enabled_ = this->get_parameter("control_service_enabled").as_bool();
@@ -204,6 +192,7 @@ FrontierExplorerNode::FrontierExplorerNode(const rclcpp::NodeOptions & options)
     "frontier_candidate_min_goal_distance_m").as_double();
   params_.frontier_selection_min_distance = this->get_parameter(
     "frontier_selection_min_distance").as_double();
+  params_.escape_enabled = this->get_parameter("escape_enabled").as_bool();
   params_.frontier_visit_tolerance = this->get_parameter("frontier_visit_tolerance").as_double();
   params_.goal_preemption_enabled = this->get_parameter(
     "goal_preemption_enabled").as_bool();
@@ -221,11 +210,9 @@ FrontierExplorerNode::FrontierExplorerNode(const rclcpp::NodeOptions & options)
     "goal_preemption_lidar_min_reveal_length_m").as_double();
   params_.goal_preemption_lidar_yaw_offset_deg = this->get_parameter(
     "goal_preemption_lidar_yaw_offset_deg").as_double();
-  params_.escape_enabled = this->get_parameter("escape_enabled").as_bool();
   params_.post_goal_settle_enabled = this->get_parameter("post_goal_settle_enabled").as_bool();
   params_.post_goal_min_settle = this->get_parameter("post_goal_min_settle").as_double();
-  params_.post_goal_required_map_updates = this->get_parameter("post_goal_required_map_updates").as_int();
-  params_.post_goal_stable_updates = this->get_parameter("post_goal_stable_updates").as_int();
+  params_.map_processing_rate_hz = this->get_parameter("map_processing_rate_hz").as_double();
   params_.return_to_start_on_complete = this->get_parameter("return_to_start_on_complete").as_bool();
   params_.all_frontiers_suppressed_behavior = this->get_parameter(
     "all_frontiers_suppressed_behavior").as_string();
@@ -364,8 +351,7 @@ FrontierExplorerNode::FrontierExplorerNode(const rclcpp::NodeOptions & options)
 
   RCLCPP_INFO(
     this->get_logger(),
-    "Frontier explorer initialized with strategy='%s', autostart=%s, control_service_enabled=%s, map '%s', global costmap '%s', local costmap '%s', frontier action '%s'",
-    params_.strategy == FrontierStrategy::MRTSP ? "mrtsp" : "nearest",
+    "Frontier explorer initialized with autostart=%s, control_service_enabled=%s, map '%s', global costmap '%s', local costmap '%s', frontier action '%s'",
     autostart_ ? "true" : "false",
     control_service_enabled_ ? "true" : "false",
     params_.map_topic.c_str(),
@@ -383,28 +369,23 @@ FrontierExplorerNode::FrontierExplorerNode(const rclcpp::NodeOptions & options)
     params_.min_frontier_size_cells,
     params_.frontier_candidate_min_goal_distance_m,
     debugOutputsEnabled() ? "debug-log-level" : "disabled");
-  if (params_.strategy == FrontierStrategy::MRTSP) {
-    // Print solver bounds only for MRTSP startup so non-MRTSP strategies keep their
-    // initialization log focused on the controls they actually consume.
-    RCLCPP_INFO(
-      this->get_logger(),
-      "MRTSP config: solver='%s', dp_candidate_limit=%zu, dp_planning_horizon=%zu, sensor_effective_range_m=%.2f, weight_distance_wd=%.2f, weight_gain_ws=%.2f, max_linear_speed_vmax=%.2f, max_angular_speed_wmax=%.2f",
-      core_->params.mrtsp_solver.c_str(),
-      core_->params.dp_solver_candidate_limit,
-      core_->params.dp_planning_horizon,
-      params_.sensor_effective_range_m,
-      params_.weight_distance_wd,
-      params_.weight_gain_ws,
-      params_.max_linear_speed_vmax,
-      params_.max_angular_speed_wmax);
-  }
   RCLCPP_INFO(
     this->get_logger(),
-    "Using post-goal settle config: enabled=%s, post_goal_min_settle=%.2fs, post_goal_required_map_updates=%d, post_goal_stable_updates=%d, all_frontiers_suppressed_behavior=%s",
+    "MRTSP config: solver='%s', dp_candidate_limit=%zu, dp_planning_horizon=%zu, sensor_effective_range_m=%.2f, weight_distance_wd=%.2f, weight_gain_ws=%.2f, max_linear_speed_vmax=%.2f, max_angular_speed_wmax=%.2f",
+    core_->params.mrtsp_solver.c_str(),
+    core_->params.dp_solver_candidate_limit,
+    core_->params.dp_planning_horizon,
+    params_.sensor_effective_range_m,
+    params_.weight_distance_wd,
+    params_.weight_gain_ws,
+    params_.max_linear_speed_vmax,
+    params_.max_angular_speed_wmax);
+  RCLCPP_INFO(
+    this->get_logger(),
+    "Using post-goal settle config: enabled=%s, post_goal_min_settle=%.2fs, map_processing_rate_hz=%.2f, all_frontiers_suppressed_behavior=%s",
     params_.post_goal_settle_enabled ? "true" : "false",
     params_.post_goal_min_settle,
-    params_.post_goal_required_map_updates,
-    params_.post_goal_stable_updates,
+    params_.map_processing_rate_hz,
     params_.all_frontiers_suppressed_behavior.c_str());
   RCLCPP_INFO(
     this->get_logger(),
@@ -482,6 +463,83 @@ void FrontierExplorerNode::createMapSubscription(rclcpp::DurabilityPolicy map_du
   // Reassigning map_sub_ replaces previous subscription instance.
 }
 
+void FrontierExplorerNode::ensureMapProcessingTimer()
+{
+  if (params_.map_processing_rate_hz <= 0.0) {
+    return;
+  }
+
+  if (!effective_map_processing_rate_hz_.has_value() || *effective_map_processing_rate_hz_ <= 0.0) {
+    return;
+  }
+
+  if (map_processing_timer_) {
+    return;
+  }
+
+  map_processing_timer_ = this->create_wall_timer(
+    std::chrono::duration_cast<std::chrono::nanoseconds>(
+      std::chrono::duration<double>(1.0 / *effective_map_processing_rate_hz_)),
+    std::bind(&FrontierExplorerNode::mapProcessingTimerCallback, this));
+}
+
+void FrontierExplorerNode::resetMapProcessingCalibrationWindow()
+{
+  last_map_arrival_at_.reset();
+  startup_map_interval_samples_s_.clear();
+}
+
+bool FrontierExplorerNode::maybeFinalizeMapProcessingRateEstimate()
+{
+  if (params_.map_processing_rate_hz <= 0.0) {
+    return false;
+  }
+
+  if (effective_map_processing_rate_hz_.has_value()) {
+    return false;
+  }
+
+  if (startup_map_interval_samples_s_.size() < kStartupMapRateSampleCount) {
+    return false;
+  }
+
+  auto sorted_samples = startup_map_interval_samples_s_;
+  const auto middle = sorted_samples.begin() + static_cast<std::ptrdiff_t>(sorted_samples.size() / 2U);
+  std::nth_element(sorted_samples.begin(), middle, sorted_samples.end());
+  const double median_interval_s = *middle;
+  const auto [min_it, max_it] = std::minmax_element(sorted_samples.begin(), sorted_samples.end());
+  const bool invalid_interval = median_interval_s <= 0.0 || !std::isfinite(median_interval_s);
+  const bool unstable_samples =
+    !invalid_interval &&
+    *min_it > 0.0 &&
+    ((*max_it - *min_it) / median_interval_s) > kStartupMapRateStabilityTolerance;
+
+  if (invalid_interval || unstable_samples) {
+    effective_map_processing_rate_hz_ = params_.map_processing_rate_hz;
+    if (unstable_samples) {
+      RCLCPP_WARN(
+        this->get_logger(),
+        "Startup /map timing samples were unstable; using configured map_processing_rate_hz=%.2f Hz",
+        params_.map_processing_rate_hz);
+    }
+  } else {
+    const double observed_hz = 1.0 / median_interval_s;
+    const double capped_observed_hz = observed_hz >= 1.0 ? std::floor(observed_hz) : observed_hz;
+    effective_map_processing_rate_hz_ = std::min(
+      params_.map_processing_rate_hz,
+      std::max(0.1, capped_observed_hz));
+    RCLCPP_INFO(
+      this->get_logger(),
+      "Calibrated /map processing rate from startup samples: observed=%.2f Hz, configured=%.2f Hz, effective=%.2f Hz",
+      observed_hz,
+      params_.map_processing_rate_hz,
+      *effective_map_processing_rate_hz_);
+  }
+
+  ensureMapProcessingTimer();
+  return true;
+}
+
 void FrontierExplorerNode::startExplorationRuntime()
 {
   completion_event_published_ = false;
@@ -516,6 +574,13 @@ void FrontierExplorerNode::startExplorationRuntime()
     params_.local_costmap_topic,
     topic_qos_profiles_.make_local_costmap_qos(),
     std::bind(&FrontierExplorerNode::localCostmapCallback, this, std::placeholders::_1));
+  if (params_.map_processing_rate_hz > 0.0) {
+    if (effective_map_processing_rate_hz_.has_value()) {
+      ensureMapProcessingTimer();
+    } else {
+      resetMapProcessingCalibrationWindow();
+    }
+  }
 
   {
     std::lock_guard<std::mutex> lock(map_autodetect_mutex_);
@@ -561,6 +626,7 @@ void FrontierExplorerNode::enterColdIdle()
   costmap_sub_.reset();
   local_costmap_sub_.reset();
   map_autodetect_timer_.reset();
+  map_processing_timer_.reset();
   suppression_watchdog_timer_.reset();
   suppression_activation_logged_ = false;
   suppression_activation_at_.reset();
@@ -569,6 +635,11 @@ void FrontierExplorerNode::enterColdIdle()
     map_qos_autodetect_.reset();
     map_received_once_ = false;
     map_autodetect_complete_logged_ = false;
+  }
+  {
+    std::lock_guard<std::mutex> lock(pending_map_mutex_);
+    latest_pending_map_msg_.reset();
+    pending_map_update_ = false;
   }
 }
 
@@ -960,6 +1031,21 @@ double FrontierExplorerNode::mapAutodetectElapsedSeconds() const
     std::chrono::steady_clock::now() - map_autodetect_started_at_).count();
 }
 
+void FrontierExplorerNode::mapProcessingTimerCallback()
+{
+  if (runtime_state_ != RuntimeState::RUNNING || !core_) {
+    return;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(pending_map_mutex_);
+    pending_map_update_ = false;
+    latest_pending_map_msg_.reset();
+  }
+
+  core_->processPendingMapUpdate();
+}
+
 void FrontierExplorerNode::suppressionWatchdogCallback()
 {
   if (runtime_state_ != RuntimeState::RUNNING) {
@@ -1011,7 +1097,35 @@ void FrontierExplorerNode::occupancyGridCallback(const nav_msgs::msg::OccupancyG
     logMapAutodetectComplete(complete_result, selected_durability);
   }
 
-  core_->occupancyGridCallback(OccupancyGrid2d(msg));
+  const OccupancyGrid2d map_msg(msg);
+  if (params_.map_processing_rate_hz <= 0.0) {
+    core_->occupancyGridCallback(map_msg);
+    return;
+  }
+
+  const auto arrival_at = std::chrono::steady_clock::now();
+  if (!effective_map_processing_rate_hz_.has_value()) {
+    if (last_map_arrival_at_.has_value()) {
+      const double interval_s = std::chrono::duration<double>(arrival_at - *last_map_arrival_at_).count();
+      if (interval_s > 0.0) {
+        startup_map_interval_samples_s_.push_back(interval_s);
+      }
+    }
+    last_map_arrival_at_ = arrival_at;
+  }
+
+  {
+    std::lock_guard<std::mutex> lock(pending_map_mutex_);
+    latest_pending_map_msg_ = msg;
+    pending_map_update_ = true;
+  }
+
+  core_->ingestRawMapUpdate(map_msg);
+  maybeFinalizeMapProcessingRateEstimate();
+  //   core_->handleUrgentRawMapUpdateForActiveGoal();
+  // if (maybeFinalizeMapProcessingRateEstimate()) {
+  //   mapProcessingTimerCallback();
+  // }
 }
 
 void FrontierExplorerNode::costmapCallback(const nav_msgs::msg::OccupancyGrid::ConstSharedPtr msg)
@@ -1143,7 +1257,7 @@ void FrontierExplorerNode::publishOptimizedMap(const nav_msgs::msg::OccupancyGri
 
 bool FrontierExplorerNode::frontierMapOptimizationEnabled() const
 {
-  return params_.strategy == FrontierStrategy::MRTSP || params_.frontier_map_optimization_enabled;
+  return params_.frontier_map_optimization_enabled;
 }
 
 bool FrontierExplorerNode::debugOutputsEnabled() const

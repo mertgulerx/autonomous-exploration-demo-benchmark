@@ -43,14 +43,6 @@ FrontierSignature frontier_signature(
   const FrontierSequence & frontiers,
   double frontier_visit_tolerance);
 
-// Applies primitive selection policy (preferred, escape, close-range fallback).
-FrontierSelectionResult select_primitive_frontier(
-  const FrontierSequence & frontiers,
-  const geometry_msgs::msg::Pose & current_pose,
-  double frontier_selection_min_distance,
-  double frontier_visit_tolerance,
-  bool escape_active);
-
 // Compares two frontiers with visit-tolerance semantics.
 bool are_frontiers_equivalent(
   const std::optional<FrontierLike> & first_frontier,

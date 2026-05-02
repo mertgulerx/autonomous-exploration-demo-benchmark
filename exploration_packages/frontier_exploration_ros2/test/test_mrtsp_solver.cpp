@@ -280,7 +280,6 @@ TEST(MrtspSolverTests, GreedyModePreservesFullCandidateOrderingAndBypassesCacheR
   // Changing the solver mode must invalidate the cache because the same frontier set
   // can produce a shorter receding-horizon sequence in DP mode.
   FrontierExplorerCoreParams params;
-  params.strategy = FrontierStrategy::MRTSP;
   params.mrtsp_solver = "greedy";
   params.dp_solver_candidate_limit = 1U;
   params.dp_planning_horizon = 1U;

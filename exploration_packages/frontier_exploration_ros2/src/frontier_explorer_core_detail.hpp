@@ -46,11 +46,6 @@ inline std::string normalize_suppressed_behavior(std::string value)
   return "stay";
 }
 
-inline std::string strategy_to_string(FrontierStrategy strategy)
-{
-  return strategy == FrontierStrategy::MRTSP ? "mrtsp" : "nearest";
-}
-
 inline std::string status_to_string(int status)
 {
   // Keep status logging allocation/localized in one helper.
