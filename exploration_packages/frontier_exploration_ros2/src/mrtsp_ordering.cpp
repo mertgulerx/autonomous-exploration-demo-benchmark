@@ -117,9 +117,14 @@ double compute_mrtsp_start_cost(
 {
   // This helper intentionally mirrors the row-zero branch in build_cost_matrix().
   // Keeping it separate lets pruning evaluate candidates without building a full matrix.
-  const double gain = weights.gain_ws * frontier_information_gain(candidate);
+  double gain = frontier_information_gain(candidate);
+
   if (gain <= 0.0) {
     return std::numeric_limits<double>::infinity();
+  }
+
+  if (weights.gain_ws != 1.0){
+    gain = std::pow(gain, weights.gain_ws);
   }
 
   const double path_cost = initial_frontier_path_cost(
@@ -162,9 +167,15 @@ MrtspCostMatrix build_cost_matrix(
       }
 
       const FrontierCandidate & target_frontier = frontiers[column - 1U];
-      const double gain = weights.gain_ws * frontier_information_gain(target_frontier);
+
+      double gain = frontier_information_gain(target_frontier);
+
       if (gain <= 0.0) {
         continue;
+      }
+
+      if (weights.gain_ws != 1.0){
+        gain = std::pow(gain, weights.gain_ws);
       }
 
       if (row == 0U) {

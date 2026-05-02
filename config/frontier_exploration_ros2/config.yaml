@@ -135,7 +135,7 @@ frontier_explorer:
     # It does not command the robot directly; it estimates how fast a frontier
     # can be reached when building the first row of the cost matrix.
     # Larger values reduce the time penalty of distant frontiers.
-    max_linear_speed_vmax: 1.0
+    max_linear_speed_vmax: 0.5
 
     # Max angular speed used in the heading-change part of time lower bound.
     # This matters most when candidate frontiers require large initial turns.
