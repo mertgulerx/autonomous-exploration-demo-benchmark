@@ -26,3 +26,9 @@ __pycache__/
 .DS_Store
 Thumbs.db
 logs/
+# Generated benchmark resources (export or archive explicitly for research).
+/results/runs/
+core
+core.*
+/docs
+AGENTS.md

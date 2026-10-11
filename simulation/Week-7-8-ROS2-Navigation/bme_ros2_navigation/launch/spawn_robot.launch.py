@@ -97,6 +97,8 @@ def generate_launch_description():
         ),
         launch_arguments={
             'world': LaunchConfiguration('world'),
+            'headless': LaunchConfiguration('headless'),
+            'seed': LaunchConfiguration('seed'),
         }.items(),
     )
 
@@ -132,7 +134,7 @@ def generate_launch_description():
         executable="parameter_bridge",
         arguments=[
             '--ros-args', '-p',
-            f'config_file:={gz_bridge_params_path}'
+            ['config_file:=', LaunchConfiguration('bridge_params_file')]
         ],
         output="screen",
         parameters=[
@@ -211,6 +213,9 @@ def generate_launch_description():
     launchDescriptionObject.add_action(yaw_arg)
     launchDescriptionObject.add_action(sim_time_arg)
     launchDescriptionObject.add_action(world_arg)
+    launchDescriptionObject.add_action(DeclareLaunchArgument('headless', default_value='false'))
+    launchDescriptionObject.add_action(DeclareLaunchArgument('seed', default_value=''))
+    launchDescriptionObject.add_action(DeclareLaunchArgument('bridge_params_file', default_value=gz_bridge_params_path))
     launchDescriptionObject.add_action(world_launch)
     #launchDescriptionObject.add_action(rviz_node)
     launchDescriptionObject.add_action(spawn_urdf_node)

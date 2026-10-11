@@ -59,7 +59,7 @@
     <!-- Base -->
     <include>
       <uri>
-        https://fuel.gazebosim.org/1.0/OpenRobotics/models/Warehouse
+        https://fuel.gazebosim.org/1.0/OpenRobotics/models/Warehouse/5
       </uri>
       <name>warehouse</name>
       <pose>0 0 -0.1 0 0 0</pose>
@@ -78,56 +78,56 @@
     <!-- Shelves -->
     <include>
       <uri>
-        https://fuel.gazebosim.org/1.0/MovAi/models/shelf_big
+        https://fuel.gazebosim.org/1.0/MovAi/models/shelf_big/2
       </uri>
       <name>shelf_big_0</name>
       <pose>-8.5 -13 0 0 -0 0</pose>
     </include>
     <include>
       <uri>
-        https://fuel.gazebosim.org/1.0/MovAi/models/shelf_big
+        https://fuel.gazebosim.org/1.0/MovAi/models/shelf_big/2
       </uri>
       <name>shelf_big_1</name>
       <pose>6.5 -13 0 0 -0 0</pose>
     </include>
     <include>
       <uri>
-        https://fuel.gazebosim.org/1.0/MovAi/models/shelf_big
+        https://fuel.gazebosim.org/1.0/MovAi/models/shelf_big/2
       </uri>
       <name>shelf_big_2</name>
       <pose>-1.5 -13 0 0 -0 0</pose>
     </include>
     <include>
       <uri>
-        https://fuel.gazebosim.org/1.0/MovAi/models/shelf
+        https://fuel.gazebosim.org/1.0/MovAi/models/shelf/1
       </uri>
       <name>shelf_3</name>
       <pose>13.5 4.5 0 0 -0 0</pose>
     </include>
     <include>
       <uri>
-        https://fuel.gazebosim.org/1.0/MovAi/models/shelf
+        https://fuel.gazebosim.org/1.0/MovAi/models/shelf/1
       </uri>
       <name>shelf_4</name>
       <pose>10 4.5 0 0 -0 0</pose>
     </include>
     <include>
       <uri>
-        https://fuel.gazebosim.org/1.0/MovAi/models/shelf
+        https://fuel.gazebosim.org/1.0/MovAi/models/shelf/1
       </uri>
       <name>shelf_5</name>
       <pose>13.5 -21 0 0 -0 0</pose>
     </include>
     <include>
       <uri>
-        https://fuel.gazebosim.org/1.0/MovAi/models/shelf
+        https://fuel.gazebosim.org/1.0/MovAi/models/shelf/1
       </uri>
       <name>shelf_6</name>
       <pose>13.5 -15 0 0 -0 0</pose>
     </include>
     <include>
       <uri>
-        https://fuel.gazebosim.org/1.0/MovAi/models/shelf
+        https://fuel.gazebosim.org/1.0/MovAi/models/shelf/1
       </uri>
       <name>shelf_7</name>
       <pose>0.4 -2 0 0 -0 0</pose>
@@ -137,35 +137,35 @@
 
     <include>
       <uri>
-        https://fuel.gazebosim.org/1.0/MovAi/models/shelf_big
+        https://fuel.gazebosim.org/1.0/MovAi/models/shelf_big/2
       </uri>
       <name>shelf_big_3</name>
       <pose>3.5 9.5 0 0 0 1.57</pose>
     </include>
     <include>
       <uri>
-        https://fuel.gazebosim.org/1.0/MovAi/models/shelf_big
+        https://fuel.gazebosim.org/1.0/MovAi/models/shelf_big/2
       </uri>
       <name>shelf_big_4</name>
       <pose>-1.3 18.5 0 0 0 1.57</pose>
     </include>
     <include>
       <uri>
-        https://fuel.gazebosim.org/1.0/MovAi/models/shelf
+        https://fuel.gazebosim.org/1.0/MovAi/models/shelf/1
       </uri>
       <name>shelf_0</name>
       <pose>-10 21.5 0 0 -0 1.57</pose>
     </include>
     <include>
       <uri>
-        https://fuel.gazebosim.org/1.0/MovAi/models/shelf
+        https://fuel.gazebosim.org/1.0/MovAi/models/shelf/1
       </uri>
       <name>shelf_1</name>
       <pose>-7 23.6 0 0 -0 1.57</pose>
     </include>
     <include>
       <uri>
-        https://fuel.gazebosim.org/1.0/MovAi/models/shelf
+        https://fuel.gazebosim.org/1.0/MovAi/models/shelf/1
       </uri>
       <name>shelf_2</name>
       <pose>-4 21.5 0 0 -0 1.57</pose>
@@ -175,63 +175,63 @@
 
     <include>
       <uri>
-      https://fuel.gazebosim.org/1.0/OpenRobotics/models/Jersey Barrier
+      https://fuel.gazebosim.org/1.0/OpenRobotics/models/Jersey Barrier/6
       </uri>
       <name>barrier_0</name>
       <pose>-10.4 14.75 0 0 0 1.57</pose>
     </include>
     <include>
       <uri>
-      https://fuel.gazebosim.org/1.0/OpenRobotics/models/Jersey Barrier
+      https://fuel.gazebosim.org/1.0/OpenRobotics/models/Jersey Barrier/6
       </uri>
       <name>barrier_1</name>
       <pose>-10.4 10.5 0 0 0 1.57</pose>
     </include>
     <include>
       <uri>
-      https://fuel.gazebosim.org/1.0/OpenRobotics/models/Jersey Barrier
+      https://fuel.gazebosim.org/1.0/OpenRobotics/models/Jersey Barrier/6
       </uri>
       <name>barrier_2</name>
       <pose>-10.4 6.5 0 0 0 1.57</pose>
     </include>
     <include>
       <uri>
-      https://fuel.gazebosim.org/1.0/OpenRobotics/models/Jersey Barrier
+      https://fuel.gazebosim.org/1.0/OpenRobotics/models/Jersey Barrier/6
       </uri>
       <name>barrier_3</name>
       <pose>-12.85 4.85 0 0 0 0</pose>
     </include>
     <include>
       <uri>
-      https://fuel.gazebosim.org/1.0/OpenRobotics/models/Jersey Barrier
+      https://fuel.gazebosim.org/1.0/OpenRobotics/models/Jersey Barrier/6
       </uri>
       <name>barrier_4</name>
       <pose>-5.72 -24.90 0 0 0 -0.05</pose>
     </include>
     <include>
       <uri>
-      https://fuel.gazebosim.org/1.0/OpenRobotics/models/Jersey Barrier
+      https://fuel.gazebosim.org/1.0/OpenRobotics/models/Jersey Barrier/6
       </uri>
       <name>barrier_5</name>
       <pose>-2.18 -25.06 0 0 0 -0.05</pose>
     </include>
     <include>
       <uri>
-      https://fuel.gazebosim.org/1.0/OpenRobotics/models/Jersey Barrier
+      https://fuel.gazebosim.org/1.0/OpenRobotics/models/Jersey Barrier/6
       </uri>
       <name>barrier_6</name>
       <pose>1.02 -25.37 0 0 0 -0.05</pose>
     </include>
     <include>
       <uri>
-      https://fuel.gazebosim.org/1.0/OpenRobotics/models/Jersey Barrier
+      https://fuel.gazebosim.org/1.0/OpenRobotics/models/Jersey Barrier/6
       </uri>
       <name>barrier_7</name>
       <pose>4.72 -25.38 0 0 0 -0.05</pose>
     </include> 
     <include>
       <uri>
-      https://fuel.gazebosim.org/1.0/OpenRobotics/models/Jersey Barrier
+      https://fuel.gazebosim.org/1.0/OpenRobotics/models/Jersey Barrier/6
       </uri>
       <name>barrier_8</name>
       <pose>6.95 -25.48 0 0 0 -0.05</pose>
@@ -242,28 +242,28 @@
 
     <include>
       <uri>
-        https://fuel.gazebosim.org/1.0/OpenRobotics/models/Chair
+        https://fuel.gazebosim.org/1.0/OpenRobotics/models/Chair/3
       </uri>
       <name>chair_0</name>
       <pose>14.3 -5.5 0 0 -0 3</pose>
     </include>
     <include>
       <uri>
-        https://fuel.gazebosim.org/1.0/OpenRobotics/models/Chair
+        https://fuel.gazebosim.org/1.0/OpenRobotics/models/Chair/3
       </uri>
       <name>chair_1</name>
       <pose>14.3 -4 0 0 -0 -3</pose>
     </include>
     <include>
       <uri>
-        https://fuel.gazebosim.org/1.0/OpenRobotics/models/foldable_chair
+        https://fuel.gazebosim.org/1.0/OpenRobotics/models/foldable_chair/3
       </uri>
       <name>fchair_0</name>
       <pose>-11.5 6.4 0 0 -0 -1.8</pose>
     </include>
     <include>
       <uri>
-        https://fuel.gazebosim.org/1.0/OpenRobotics/models/foldable_chair
+        https://fuel.gazebosim.org/1.0/OpenRobotics/models/foldable_chair/3
       </uri>
       <name>fchair1</name>
       <pose>-14 6.5 0 0 -0 1.9</pose>
@@ -273,7 +273,7 @@
 
     <include>
       <uri>
-        https://fuel.gazebosim.org/1.0/OpenRobotics/models/Table
+        https://fuel.gazebosim.org/1.0/OpenRobotics/models/Table/4
       </uri>
       <name>table0</name>
       <pose>-12.7 6.5 0 0 0 0</pose>
@@ -291,7 +291,7 @@
 
     <include>
       <uri>
-      https://fuel.gazebosim.org/1.0/OpenRobotics/models/MaleVisitorOnPhone
+      https://fuel.gazebosim.org/1.0/OpenRobotics/models/MaleVisitorOnPhone/2
       </uri>
       <name>Person 1 - Standing</name>
       <pose>1 -1 0 0 0 1.57</pose>
@@ -299,7 +299,7 @@
 
     <include>
       <uri>
-      https://fuel.gazebosim.org/1.0/plateau/models/Casual female
+      https://fuel.gazebosim.org/1.0/plateau/models/Casual female/1
       </uri>
       <name>Person 2 - Walking</name>
       <pose>-12 15 0 0 0 0</pose>

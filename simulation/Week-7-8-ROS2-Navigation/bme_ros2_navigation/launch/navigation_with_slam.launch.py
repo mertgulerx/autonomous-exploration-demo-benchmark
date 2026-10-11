@@ -1,6 +1,6 @@
 import os
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import DeclareLaunchArgument, GroupAction, IncludeLaunchDescription
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution, Command
@@ -39,6 +39,11 @@ def generate_launch_description():
     sim_time_arg = DeclareLaunchArgument(
         'use_sim_time', default_value='True',
         description='Flag to enable use_sim_time'
+    )
+
+    autostart_arg = DeclareLaunchArgument(
+        'nav2_autostart', default_value='true',
+        description='Automatically activate Nav2; benchmark workers supervise startup'
     )
 
     # Generate path to config file
@@ -96,7 +101,7 @@ def generate_launch_description():
         PythonLaunchDescriptionSource(slam_toolbox_launch_path),
         launch_arguments={
                 'use_sim_time': LaunchConfiguration('use_sim_time'),
-                'slam_params_file': slam_toolbox_params_path,
+                'slam_params_file': LaunchConfiguration('slam_params_file'),
         }.items()
     )
 
@@ -104,7 +109,8 @@ def generate_launch_description():
         PythonLaunchDescriptionSource(nav2_navigation_launch_path),
         launch_arguments={
                 'use_sim_time': LaunchConfiguration('use_sim_time'),
-                'params_file': navigation_params_path,
+                'params_file': LaunchConfiguration('navigation_params_file'),
+                'autostart': LaunchConfiguration('nav2_autostart'),
         }.items()
     )
 
@@ -113,9 +119,16 @@ def generate_launch_description():
     launchDescriptionObject.add_action(rviz_launch_arg)
     launchDescriptionObject.add_action(rviz_config_arg)
     launchDescriptionObject.add_action(sim_time_arg)
+    launchDescriptionObject.add_action(autostart_arg)
+    launchDescriptionObject.add_action(DeclareLaunchArgument(
+        'navigation_params_file', default_value=navigation_params_path))
+    launchDescriptionObject.add_action(DeclareLaunchArgument(
+        'slam_params_file', default_value=slam_toolbox_params_path))
     launchDescriptionObject.add_action(rviz_node)
     #launchDescriptionObject.add_action(interactive_marker_twist_server_node)
-    launchDescriptionObject.add_action(slam_toolbox_launch)
-    launchDescriptionObject.add_action(navigation_launch)
+    # Both includes declare `autostart`; isolate their launch configurations so
+    # delaying Nav2 cannot disable SLAM's own lifecycle activation.
+    launchDescriptionObject.add_action(GroupAction(actions=[slam_toolbox_launch]))
+    launchDescriptionObject.add_action(GroupAction(actions=[navigation_launch]))
 
     return launchDescriptionObject

@@ -1,4 +1,18 @@
 #!/usr/bin/env bash
+# Copyright 2026 Mert Güler
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
 set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -6,7 +20,7 @@ PROJECT_ROOT="${SCRIPT_DIR}"
 
 DOCKER_IMAGE="${BENCHMARK_DOCKER_IMAGE:-autonomous-exploration-benchmark:jazzy-harmonic}"
 DOCKERFILE_PATH="${PROJECT_ROOT}/docker/Dockerfile"
-WORLD="${1:-bookstore}"
+WORLD="${1:-}"
 
 if [[ $# -gt 1 ]]; then
   echo "Usage: $0 [world_name]" >&2
@@ -28,6 +42,11 @@ build_docker_image() {
       echo "Docker image '${DOCKER_IMAGE}' does not exist and BENCHMARK_DOCKER_SKIP_BUILD=1 is set." >&2
       exit 1
     fi
+    return
+  fi
+
+  # Starting an installed runtime should not rebuild all native robot SDKs.
+  if [[ "${BENCHMARK_DOCKER_REBUILD:-0}" != "1" ]] && docker image inspect "${DOCKER_IMAGE}" >/dev/null 2>&1; then
     return
   fi
 
@@ -119,8 +138,10 @@ run_docker() {
     docker_args+=(-v "${PROJECT_ROOT}/results:/opt/benchmark_ws/results")
   fi
 
-  echo "Starting benchmark in Docker (image=${DOCKER_IMAGE}, world=${WORLD})..."
-  docker "${docker_args[@]}" "${DOCKER_IMAGE}" ./launch.sh "${WORLD}"
+  echo "Starting benchmark configuration in Docker (image=${DOCKER_IMAGE}, preselected world=${WORLD:-none})..."
+  local -a launch_args=(./launch.sh)
+  [[ -z "${WORLD}" ]] || launch_args+=("${WORLD}")
+  docker "${docker_args[@]}" "${DOCKER_IMAGE}" "${launch_args[@]}"
 }
 
 run_docker

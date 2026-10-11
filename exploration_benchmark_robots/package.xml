@@ -1,0 +1,41 @@
+<?xml version="1.0"?>
+<!--
+Copyright 2026 Mert Güler
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+-->
+<package format="3">
+  <name>exploration_benchmark_robots</name>
+  <version>0.1.0</version>
+  <description>Robot profiles and isolated simulation adapters.</description>
+  <maintainer email="support.mertgulerx@gmail.com">Mert Güler</maintainer>
+  <license>Apache-2.0</license>
+  <buildtool_depend>python3-setuptools</buildtool_depend>
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
+  <exec_depend>python3-numpy</exec_depend>
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>nav_msgs</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>ros_gz_sim</exec_depend>
+  <exec_depend>ros_gz_bridge</exec_depend>
+  <exec_depend>robot_state_publisher</exec_depend>
+  <exec_depend>robot_localization</exec_depend>
+  <exec_depend>xacro</exec_depend>
+  <exec_depend>laser_filters</exec_depend>
+  <exec_depend>controller_manager_msgs</exec_depend>
+  <exec_depend>exploration_benchmark_interfaces</exec_depend>
+  <export><build_type>ament_python</build_type></export>
+</package>

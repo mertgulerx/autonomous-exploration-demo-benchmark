@@ -1,0 +1,72 @@
+# Copyright 2026 Mert Güler
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# Refresh application code on an already-built vendor image. Use Dockerfile for
+# a clean dependency build. Set BENCHMARK_BASE to an existing dependency image.
+ARG BENCHMARK_BASE
+FROM ${BENCHMARK_BASE}
+LABEL org.benchmark.multi_robot="1"
+ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ros-jazzy-laser-filters=2.0.10-5noble.20260915.190358 \
+    ros-jazzy-turtlebot3-description=2.3.6-1noble.20260911.051522 \
+    ros-jazzy-rviz-imu-plugin=2.1.6-1noble.20260921.024449 \
+    && rm -rf /var/lib/apt/lists/*
+# Remove obsolete vendor SDKs and prior Python installations before copying
+# the current sources; Docker COPY alone would keep deleted adapter files.
+RUN rm -rf /opt/vendor/go2 \
+    /opt/benchmark_ws/exploration_benchmark_robots \
+    /opt/benchmark_ws/exploration_benchmark_runner \
+    /opt/benchmark_ws/build/exploration_benchmark_robots \
+    /opt/benchmark_ws/build/exploration_benchmark_runner \
+    /opt/benchmark_ws/install/exploration_benchmark_robots \
+    /opt/benchmark_ws/install/exploration_benchmark_runner \
+    /opt/benchmark_ws/config \
+    /opt/benchmark_ws/docs \
+    /opt/benchmark_ws/AGENTS.md
+# Remove tests and previously installed probes from the cached base image.
+RUN rm -rf /opt/benchmark_ws/rviz/test \
+    /opt/benchmark_ws/exploration_packages/frontier_exploration_ros2/test \
+    /opt/benchmark_ws/exploration_packages/frontier_exploration_ros2/plugin/frontier_exploration_ros2_rviz/test && \
+    find /opt/benchmark_ws/build /opt/benchmark_ws/install \
+      -depth \( -name 'test_*' -o -name test_results -o -name Testing \
+      -o -name CTestTestfile.cmake -o -name comparison_probe \
+      -o -name parameter_editor_probe -o -name single_run_panel_probe \) \
+      -exec rm -rf {} +
+RUN rm -f /opt/benchmark_ws/rviz/src/frontier_path_tracker.py \
+    /opt/benchmark_ws/rviz/src/frontier_path_tracker.yaml \
+    /opt/benchmark_ws/install/rviz_autonomous_exploration_benchmark/lib/rviz_autonomous_exploration_benchmark/frontier_path_tracker.py \
+    /opt/benchmark_ws/install/rviz_autonomous_exploration_benchmark/share/rviz_autonomous_exploration_benchmark/config/frontier_path_tracker.yaml
+COPY exploration_benchmark_robots /opt/benchmark_ws/exploration_benchmark_robots
+COPY exploration_benchmark_runner /opt/benchmark_ws/exploration_benchmark_runner
+COPY exploration_benchmark_interfaces /opt/benchmark_ws/exploration_benchmark_interfaces
+COPY config /opt/benchmark_ws/config
+COPY rviz /opt/benchmark_ws/rviz
+COPY exploration_packages/frontier_exploration_ros2/CMakeLists.txt exploration_packages/frontier_exploration_ros2/package.xml /opt/benchmark_ws/exploration_packages/frontier_exploration_ros2/
+COPY exploration_packages/frontier_exploration_ros2/plugin/frontier_exploration_ros2_rviz/CMakeLists.txt exploration_packages/frontier_exploration_ros2/plugin/frontier_exploration_ros2_rviz/package.xml /opt/benchmark_ws/exploration_packages/frontier_exploration_ros2/plugin/frontier_exploration_ros2_rviz/
+COPY exploration_packages/frontier_exploration_ros2/README.md /opt/benchmark_ws/exploration_packages/frontier_exploration_ros2/README.md
+COPY simulation/Week-7-8-ROS2-Navigation/bme_ros2_navigation/CMakeLists.txt /opt/benchmark_ws/simulation/Week-7-8-ROS2-Navigation/bme_ros2_navigation/CMakeLists.txt
+COPY simulation/Week-7-8-ROS2-Navigation/bme_ros2_navigation/package.xml /opt/benchmark_ws/simulation/Week-7-8-ROS2-Navigation/bme_ros2_navigation/package.xml
+COPY simulation/Week-7-8-ROS2-Navigation/bme_ros2_navigation_py/setup.py simulation/Week-7-8-ROS2-Navigation/bme_ros2_navigation_py/package.xml /opt/benchmark_ws/simulation/Week-7-8-ROS2-Navigation/bme_ros2_navigation_py/
+COPY simulation/Week-7-8-ROS2-Navigation/bme_ros2_navigation/launch /opt/benchmark_ws/simulation/Week-7-8-ROS2-Navigation/bme_ros2_navigation/launch
+COPY simulation/Week-7-8-ROS2-Navigation/bme_ros2_navigation/rviz /opt/benchmark_ws/simulation/Week-7-8-ROS2-Navigation/bme_ros2_navigation/rviz
+COPY launch.sh docker.sh /opt/benchmark_ws/
+COPY docker/entrypoint.sh /opt/benchmark_ws/docker/entrypoint.sh
+COPY docker/Dockerfile docker/Dockerfile.runtime docker/build_robot_dependencies.sh /opt/benchmark_ws/docker/
+COPY README.md /opt/benchmark_ws/README.md
+RUN /bin/bash -c "source /opt/ros/jazzy/setup.bash && source install/setup.bash && \
+    CMAKE_BUILD_PARALLEL_LEVEL=2 \
+    colcon build --symlink-install --executor sequential \
+    --packages-select exploration_benchmark_interfaces frontier_exploration_ros2 bme_ros2_navigation bme_ros2_navigation_py exploration_benchmark_robots exploration_benchmark_runner rviz_autonomous_exploration_benchmark \
+    --cmake-args -DBUILD_TESTING=OFF"

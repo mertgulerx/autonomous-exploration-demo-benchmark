@@ -1,4 +1,5 @@
 import os
+import shlex
 from glob import glob
 
 from ament_index_python.packages import get_package_share_directory
@@ -62,7 +63,13 @@ def _resolve_world_path(pkg_bme_ros2_navigation, worlds_root, world_name):
 def _build_world_launch(context, pkg_ros_gz_sim, pkg_bme_ros2_navigation, worlds_root):
     selected_world = LaunchConfiguration('world').perform(context)
     world_path = _resolve_world_path(pkg_bme_ros2_navigation, worlds_root, selected_world)
-    gz_args = f'{world_path} -r -v -v1'
+    run_flag = '' if LaunchConfiguration('start_paused').perform(context).lower() == 'true' else '-r'
+    gz_args = f'{shlex.quote(world_path)} {run_flag} -v1'
+    if LaunchConfiguration('headless').perform(context).lower() == 'true':
+        gz_args += ' -s --headless-rendering --render-engine ogre2'
+    seed = LaunchConfiguration('seed').perform(context)
+    if seed:
+        gz_args += f' --seed {int(seed)}'
 
     return [
         IncludeLaunchDescription(
@@ -81,7 +88,7 @@ def generate_launch_description():
     pkg_bme_ros2_navigation = get_package_share_directory('bme_ros2_navigation')
     pkg_ros_gz_sim = get_package_share_directory('ros_gz_sim')
 
-    workspace_root = os.path.abspath(
+    workspace_root = os.environ.get('BENCHMARK_PROJECT_ROOT') or os.path.abspath(
         os.path.join(pkg_bme_ros2_navigation, '..', '..', '..', '..')
     )
     worlds_root = os.path.join(workspace_root, 'simulation', 'worlds')
@@ -119,5 +126,8 @@ def generate_launch_description():
 
     launchDescriptionObject = LaunchDescription()
     launchDescriptionObject.add_action(world_arg)
+    launchDescriptionObject.add_action(DeclareLaunchArgument('headless', default_value='false'))
+    launchDescriptionObject.add_action(DeclareLaunchArgument('start_paused', default_value='false'))
+    launchDescriptionObject.add_action(DeclareLaunchArgument('seed', default_value=''))
     launchDescriptionObject.add_action(world_launch)
     return launchDescriptionObject

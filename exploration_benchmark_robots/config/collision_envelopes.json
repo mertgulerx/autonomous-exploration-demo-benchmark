@@ -1,0 +1,551 @@
+{
+  "policy": "All retained native collision geometry, zero joint positions. Moving link range requires additional review.",
+  "planar_margin_m": 0.005,
+  "spawn_clearance_m": 0.01,
+  "robots": {
+    "tb4_standard": {
+      "root_frame": "base_footprint",
+      "lower": [
+        -0.16399999999999998,
+        -0.17159999705944318,
+        0.0039000000000000024
+      ],
+      "upper": [
+        0.1770800054082076,
+        0.17158000372256976,
+        0.34927
+      ],
+      "nominal_footprint": [
+        [
+          -0.16399999999999998,
+          -0.17159999705944318
+        ],
+        [
+          -0.16399999999999998,
+          0.17158000372256976
+        ],
+        [
+          0.1770800054082076,
+          0.17158000372256976
+        ],
+        [
+          0.1770800054082076,
+          -0.17159999705944318
+        ]
+      ],
+      "joint_pose": "Zero positions; review operating stance and moving-link envelope separately"
+    },
+    "tb4_lite": {
+      "root_frame": "base_footprint",
+      "lower": [
+        -0.16399999999999998,
+        -0.17159999705944318,
+        0.0039000000000000024
+      ],
+      "upper": [
+        0.1770800054082076,
+        0.17158000372256976,
+        0.19588622
+      ],
+      "nominal_footprint": [
+        [
+          -0.16399999999999998,
+          -0.17159999705944318
+        ],
+        [
+          -0.16399999999999998,
+          0.17158000372256976
+        ],
+        [
+          0.1770800054082076,
+          0.17158000372256976
+        ],
+        [
+          0.1770800054082076,
+          -0.17159999705944318
+        ]
+      ],
+      "joint_pose": "Zero positions; review operating stance and moving-link envelope separately"
+    },
+    "j100": {
+      "root_frame": "base_footprint",
+      "lower": [
+        -0.229,
+        -0.207795,
+        -0.0635
+      ],
+      "upper": [
+        0.229,
+        0.207795,
+        0.304
+      ],
+      "nominal_footprint": [
+        [
+          -0.229,
+          -0.207795
+        ],
+        [
+          -0.229,
+          0.207795
+        ],
+        [
+          0.229,
+          0.207795
+        ],
+        [
+          0.229,
+          -0.207795
+        ]
+      ],
+      "joint_pose": "Zero positions; review operating stance and moving-link envelope separately"
+    },
+    "a200": {
+      "root_frame": "base_footprint",
+      "lower": [
+        -0.4937,
+        -0.33465021905378717,
+        -7.582618299917243e-08
+      ],
+      "upper": [
+        0.4937,
+        0.33465021905378717,
+        0.47628
+      ],
+      "nominal_footprint": [
+        [
+          -0.4937,
+          -0.33465021905378717
+        ],
+        [
+          -0.4937,
+          0.33465021905378717
+        ],
+        [
+          0.4937,
+          0.33465021905378717
+        ],
+        [
+          0.4937,
+          -0.33465021905378717
+        ]
+      ],
+      "joint_pose": "Zero positions; review operating stance and moving-link envelope separately"
+    },
+    "a300": {
+      "root_frame": "base_footprint",
+      "lower": [
+        -0.4510028660297394,
+        -0.32105000000000006,
+        -0.30107
+      ],
+      "upper": [
+        0.44746163487434387,
+        0.3400500000000001,
+        0.18445900000000004
+      ],
+      "nominal_footprint": [
+        [
+          -0.4510028660297394,
+          -0.32105000000000006
+        ],
+        [
+          -0.4510028660297394,
+          0.3400500000000001
+        ],
+        [
+          0.44746163487434387,
+          0.3400500000000001
+        ],
+        [
+          0.44746163487434387,
+          -0.32105000000000006
+        ]
+      ],
+      "joint_pose": "Zero positions; review operating stance and moving-link envelope separately"
+    },
+    "dd100": {
+      "root_frame": "base_footprint",
+      "lower": [
+        -0.27558398246765137,
+        -0.2585841417312622,
+        -0.01674
+      ],
+      "upper": [
+        0.27558398246765137,
+        0.2585841417312622,
+        0.184263
+      ],
+      "nominal_footprint": [
+        [
+          -0.27558398246765137,
+          -0.2585841417312622
+        ],
+        [
+          -0.27558398246765137,
+          0.2585841417312622
+        ],
+        [
+          0.27558398246765137,
+          0.2585841417312622
+        ],
+        [
+          0.27558398246765137,
+          -0.2585841417312622
+        ]
+      ],
+      "joint_pose": "Zero positions; review operating stance and moving-link envelope separately"
+    },
+    "dd150": {
+      "root_frame": "base_footprint",
+      "lower": [
+        -0.27558398246765137,
+        -0.2585841417312622,
+        -0.01674
+      ],
+      "upper": [
+        0.27558398246765137,
+        0.2585841417312622,
+        0.184263
+      ],
+      "nominal_footprint": [
+        [
+          -0.27558398246765137,
+          -0.2585841417312622
+        ],
+        [
+          -0.27558398246765137,
+          0.2585841417312622
+        ],
+        [
+          0.27558398246765137,
+          0.2585841417312622
+        ],
+        [
+          0.27558398246765137,
+          -0.2585841417312622
+        ]
+      ],
+      "joint_pose": "Zero positions; review operating stance and moving-link envelope separately"
+    },
+    "do100": {
+      "root_frame": "base_footprint",
+      "lower": [
+        -0.34316810965538025,
+        -0.25861597061157227,
+        -0.014855
+      ],
+      "upper": [
+        0.3431679308414459,
+        0.25861597061157227,
+        0.18902300000000002
+      ],
+      "nominal_footprint": [
+        [
+          -0.34316810965538025,
+          -0.25861597061157227
+        ],
+        [
+          -0.34316810965538025,
+          0.25861597061157227
+        ],
+        [
+          0.3431679308414459,
+          0.25861597061157227
+        ],
+        [
+          0.3431679308414459,
+          -0.25861597061157227
+        ]
+      ],
+      "joint_pose": "Zero positions; review operating stance and moving-link envelope separately"
+    },
+    "do150": {
+      "root_frame": "base_footprint",
+      "lower": [
+        -0.34316810965538025,
+        -0.25861597061157227,
+        -0.014855
+      ],
+      "upper": [
+        0.3431679308414459,
+        0.25861597061157227,
+        0.18902300000000002
+      ],
+      "nominal_footprint": [
+        [
+          -0.34316810965538025,
+          -0.25861597061157227
+        ],
+        [
+          -0.34316810965538025,
+          0.25861597061157227
+        ],
+        [
+          0.3431679308414459,
+          0.25861597061157227
+        ],
+        [
+          0.3431679308414459,
+          -0.25861597061157227
+        ]
+      ],
+      "joint_pose": "Zero positions; review operating stance and moving-link envelope separately"
+    },
+    "r100": {
+      "root_frame": "base_footprint",
+      "lower": [
+        -0.46625378727912903,
+        -0.3949950039386749,
+        -0.025899999999999992
+      ],
+      "upper": [
+        0.46625378727912903,
+        0.3949950039386749,
+        0.415
+      ],
+      "nominal_footprint": [
+        [
+          -0.46625378727912903,
+          -0.3949950039386749
+        ],
+        [
+          -0.46625378727912903,
+          0.3949950039386749
+        ],
+        [
+          0.46625378727912903,
+          0.3949950039386749
+        ],
+        [
+          0.46625378727912903,
+          -0.3949950039386749
+        ]
+      ],
+      "joint_pose": "Zero positions; review operating stance and moving-link envelope separately"
+    },
+    "w200": {
+      "root_frame": "base_footprint",
+      "lower": [
+        -0.757367,
+        -0.69321,
+        -0.287977
+      ],
+      "upper": [
+        0.757367,
+        0.69321,
+        0.532847011089325
+      ],
+      "nominal_footprint": [
+        [
+          -0.757367,
+          -0.69321
+        ],
+        [
+          -0.757367,
+          0.69321
+        ],
+        [
+          0.757367,
+          0.69321
+        ],
+        [
+          0.757367,
+          -0.69321
+        ]
+      ],
+      "joint_pose": "Zero positions; review operating stance and moving-link envelope separately"
+    },
+    "rosbot_basic": {
+      "root_frame": "base_footprint",
+      "lower": [
+        -0.0985,
+        -0.114,
+        0.0
+      ],
+      "upper": [
+        0.0985,
+        0.114,
+        0.191460055759193
+      ],
+      "nominal_footprint": [
+        [
+          -0.0985,
+          -0.114
+        ],
+        [
+          -0.0985,
+          0.114
+        ],
+        [
+          0.0985,
+          0.114
+        ],
+        [
+          0.0985,
+          -0.114
+        ]
+      ],
+      "joint_pose": "Zero positions; review operating stance and moving-link envelope separately"
+    },
+    "rosbot_pro": {
+      "root_frame": "base_footprint",
+      "lower": [
+        -0.0985,
+        -0.114,
+        0.0
+      ],
+      "upper": [
+        0.0985,
+        0.114,
+        0.1964900834918846
+      ],
+      "nominal_footprint": [
+        [
+          -0.0985,
+          -0.114
+        ],
+        [
+          -0.0985,
+          0.114
+        ],
+        [
+          0.0985,
+          0.114
+        ],
+        [
+          0.0985,
+          -0.114
+        ]
+      ],
+      "joint_pose": "Zero positions; review operating stance and moving-link envelope separately"
+    },
+    "rosbot_xl": {
+      "root_frame": "base_footprint",
+      "lower": [
+        -0.17296774974345316,
+        -0.16,
+        0.0
+      ],
+      "upper": [
+        0.16100001335144043,
+        0.16,
+        0.2592511549878509
+      ],
+      "nominal_footprint": [
+        [
+          -0.17296774974345316,
+          -0.16
+        ],
+        [
+          -0.17296774974345316,
+          0.16
+        ],
+        [
+          0.16100001335144043,
+          0.16
+        ],
+        [
+          0.16100001335144043,
+          -0.16
+        ]
+      ],
+      "joint_pose": "Zero positions; review operating stance and moving-link envelope separately"
+    },
+    "panther": {
+      "root_frame": "base_footprint",
+      "lower": [
+        -0.40249999999999997,
+        -0.41850000000000004,
+        0.0
+      ],
+      "upper": [
+        0.40249999999999997,
+        0.41850000000000004,
+        0.3953
+      ],
+      "nominal_footprint": [
+        [
+          -0.40249999999999997,
+          -0.41850000000000004
+        ],
+        [
+          -0.40249999999999997,
+          0.41850000000000004
+        ],
+        [
+          0.40249999999999997,
+          0.41850000000000004
+        ],
+        [
+          0.40249999999999997,
+          -0.41850000000000004
+        ]
+      ],
+      "joint_pose": "Zero positions; review operating stance and moving-link envelope separately"
+    },
+    "lynx": {
+      "root_frame": "base_footprint",
+      "lower": [
+        -0.30979999999999996,
+        -0.2725,
+        0.0
+      ],
+      "upper": [
+        0.3099077414107651,
+        0.2725,
+        0.4076
+      ],
+      "nominal_footprint": [
+        [
+          -0.30979999999999996,
+          -0.2725
+        ],
+        [
+          -0.30979999999999996,
+          0.2725
+        ],
+        [
+          0.3099077414107651,
+          0.2725
+        ],
+        [
+          0.3099077414107651,
+          -0.2725
+        ]
+      ],
+      "joint_pose": "Zero positions; review operating stance and moving-link envelope separately"
+    },
+    "rbwatcher": {
+      "root_frame": "base_footprint",
+      "lower": [
+        -0.38513100147247314,
+        -0.336,
+        0.0
+      ],
+      "upper": [
+        0.33795000000000003,
+        0.336,
+        0.8960899999999999
+      ],
+      "nominal_footprint": [
+        [
+          -0.38513100147247314,
+          -0.336
+        ],
+        [
+          -0.38513100147247314,
+          0.336
+        ],
+        [
+          0.33795000000000003,
+          0.336
+        ],
+        [
+          0.33795000000000003,
+          -0.336
+        ]
+      ],
+      "joint_pose": "Zero positions; review operating stance and moving-link envelope separately"
+    }
+  }
+}

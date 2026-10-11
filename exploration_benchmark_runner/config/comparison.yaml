@@ -1,0 +1,9 @@
+# All runs use one selected scenario and independent fresh state.
+world: bookstore
+simulation_time_limit: 1800
+runs:
+  - {profile: default, label: Default}
+  - profile: default
+    label: Gain weight 2
+    overrides:
+      weight_gain_ws: 2.0

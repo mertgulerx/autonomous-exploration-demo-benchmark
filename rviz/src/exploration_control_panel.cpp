@@ -14,321 +14,861 @@ See the License for the specific language governing permissions and
 limitations under the License.
 */
 
-
 #include "utils/exploration_control_panel.hpp"
 
-#include <unistd.h>
-
-#include <ament_index_cpp/get_package_share_directory.hpp>
-// slam_toolbox service APIs used for runtime map reset.
+#include <QApplication>
+#include <QComboBox>
+#include <QDockWidget>
+#include <QDoubleSpinBox>
+#include <QGridLayout>
+#include <QGroupBox>
+#include <QLabel>
+#include <QFormLayout>
+#include <QLineEdit>
+#include <QMainWindow>
+#include <QPushButton>
+#include <QScreen>
+#include <QScrollArea>
+#include <QSpinBox>
+#include <QStackedWidget>
+#include <QTimer>
+#include <QToolBar>
+#include <QToolButton>
+#include <QVBoxLayout>
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <pluginlib/class_list_macros.hpp>
+#include <rviz_common/display_context.hpp>
+#include <rviz_common/visualization_manager.hpp>
+#include <rviz_common/window_manager_interface.hpp>
 #include <slam_toolbox/srv/clear.hpp>
 #include <slam_toolbox/srv/clear_queue.hpp>
 #include <slam_toolbox/srv/reset.hpp>
+#include <std_srvs/srv/empty.hpp>
 
-#include <QFile>
-#include <QGridLayout>
-#include <QGroupBox>
-#include <QHBoxLayout>
-#include <QLabel>
-#include <QMetaObject>
-#include <QProcess>
-#include <QPushButton>
-#include <QRegularExpression>
-#include <QTextStream>
-#include <QVBoxLayout>
-
-#include <algorithm>
-#include <cmath>
-#include <chrono>
-#include <filesystem>
-#include <stdexcept>
-
-#include <pluginlib/class_list_macros.hpp>
+#include "utils/comparison_view.hpp"
+#include "utils/parameter_editor.hpp"
 
 namespace utils
 {
-
-// Panel constructor builds the full UI and wires runtime orchestration primitives.
-// Keeping this setup centralized makes behavior predictable when the panel is recreated.
-ExplorationControlPanel::ExplorationControlPanel(QWidget * parent)
-: rviz_common::Panel(parent),
-  process_(std::make_unique<QProcess>(this)),
-  stats_timer_(std::make_unique<QTimer>(this))
+namespace interfaces = exploration_benchmark_interfaces;
+ExplorationControlPanel::ExplorationControlPanel(QWidget* parent) : rviz_common::Panel(parent)
 {
-  auto * root_layout = new QVBoxLayout();
-
-  auto * group_box = new QGroupBox("Exploration Packages");
-  auto * group_layout = new QGridLayout();
-
-  // Row helper keeps explorer configuration declarative and avoids repetitive widget glue.
-  // Each call registers one launch profile plus the process-matching metadata used later.
-  auto add_explorer_row =
-    [this, group_layout](int row, const QString & display_name, const QString & package_name,
-    const QString & launch_file, const QString & launch_arguments, const QString & process_pattern,
-    const QString & active_path_package_name,
-    bool use_ros2_run = false, const QString & executable_name = QString(),
-    const QString & post_start_command = QString()) {
-      ExplorerEntry entry;
-      entry.display_name = display_name;
-      entry.active_path_package_name = active_path_package_name;
-      entry.package_name = package_name;
-      entry.launch_file = launch_file;
-      entry.launch_arguments = launch_arguments;
-      entry.executable_name = executable_name;
-      entry.use_ros2_run = use_ros2_run;
-      entry.post_start_command = post_start_command;
-      entry.process_match_pattern = process_pattern;
-      entry.start_button = new QPushButton("Start");
-      connect(entry.start_button, &QPushButton::clicked, this, &ExplorationControlPanel::onStartClicked);
-
-      auto * name_label = new QLabel(entry.display_name);
-      group_layout->addWidget(name_label, row, 0);
-      group_layout->addWidget(entry.start_button, row, 1);
-      explorers_.push_back(entry);
-    };
-
-  add_explorer_row(
-    0,
-    "frontier_exploration_ros2 (mrtsp)",
-    "frontier_exploration_ros2",
-    "frontier_explorer.launch.py",
-    "params_file:=config/frontier_exploration_ros2/config.yaml",
-    "frontier_explorer",
-    "frontier_exploration_ros2_mrtsp");
-
-  add_explorer_row(
-    1,
-    "frontier_exploration_ros2 (nearest)",
-    "frontier_exploration_ros2",
-    "frontier_explorer.launch.py",
-    "params_file:=config/frontier_exploration_ros2/config_nearest.yaml",
-    "frontier_explorer",
-    "frontier_exploration_ros2_nearest");
-
-  add_explorer_row(
-    2,
-    "m_explore_ros2",
-    "explore_lite",
-    "explore.launch.py",
-    "",
-    "(__node:=explore_node|explore_lite/.*/explore)",
-    "m_explore_ros2");
-
-  add_explorer_row(
-    3,
-    "nav2_wavefront_frontier_exploration",
-    "nav2_wfd",
-    "",
-    "",
-    "(nav2_wfd/.*/explore|ros2 run nav2_wfd explore)",
-    "",
-    true,
-    "explore");
-
-  add_explorer_row(
-    4,
-    "roadmap_explorer",
-    "rviz_autonomous_exploration_benchmark",
-    "roadmap_explorer_compat.launch.py",
-    "",
-    "roadmap_exploration_server",
-    "roadmap_explorer",
-    false,
-    "",
-    "for i in $(seq 1 30); do "
-    "ros2 action info /roadmap_explorer >/dev/null 2>&1 && break; "
-    "sleep 1; "
-    "done; "
-    "ros2 action send_goal /roadmap_explorer roadmap_explorer_msgs/action/Explore "
-    "\"{exploration_bringup_mode: 0, load_from_folder: {data: ''}, session_name: {data: ''}}\" "
-    ">> /dev/null 2>&1");
-
-  // Control buttons intentionally separate run/stop/reset concerns so operators can recover
-  // from partial failures without restarting the entire RViz session.
-  group_box->setLayout(group_layout);
-  root_layout->addWidget(group_box);
-
-  auto * controls_layout = new QHBoxLayout();
-  end_button_ = new QPushButton("End");
-  end_button_->setEnabled(false);
-  connect(end_button_, &QPushButton::clicked, this, &ExplorationControlPanel::onEndClicked);
-  controls_layout->addWidget(end_button_);
+  auto* outer = new QVBoxLayout(this);
+  outer->setContentsMargins(0, 0, 0, 0);
+  auto* scroll = new QScrollArea;
+  scroll->setWidgetResizable(true);
+  auto* content = new QWidget;
+  auto* root = new QVBoxLayout(content);
+  scroll->setWidget(content);
+  outer->addWidget(scroll);
+  auto* scenario_box = new QGroupBox("Scenario");
+  auto* scenario_layout = new QVBoxLayout(scenario_box);
+  world_ = new QComboBox;
+  world_->setObjectName("benchmark_world");
+  world_->addItem("Select a world…", "");
+  scenario_layout->addWidget(world_);
+  robot_ = new QComboBox;
+  robot_->setObjectName("benchmark_robot");
+  robot_->addItem("MOGI — loading robot catalog", "mogi");
+  scenario_layout->addWidget(robot_);
+  robot_details_ = new QLabel("Waiting for robot catalog");
+  robot_details_->setWordWrap(true);
+  scenario_layout->addWidget(robot_details_);
+  auto* mogi_settings = new QGroupBox("MOGI Reference Robot");
+  mogi_settings_ = mogi_settings;
+  auto* robot_form = new QFormLayout(mogi_settings);
+  movement_speed_ = new QDoubleSpinBox;
+  turning_speed_ = new QDoubleSpinBox;
+  lidar_range_ = new QDoubleSpinBox;
+  for (auto* field : {movement_speed_, turning_speed_, lidar_range_})
+  {
+    field->setDecimals(3);
+    field->setRange(0.001, 10000.0);
+    field->setSingleStep(0.1);
+  }
+  movement_speed_->setSuffix(" m/s");
+  turning_speed_->setSuffix(" rad/s");
+  lidar_range_->setSuffix(" m");
+  robot_form->addRow("Movement speed limit", movement_speed_);
+  robot_form->addRow("Turning speed limit", turning_speed_);
+  robot_form->addRow("Lidar range", lidar_range_);
+  auto* reset_robot = new QPushButton("Reset to Default");
+  robot_form->addRow(reset_robot);
+  connect(reset_robot, &QPushButton::clicked, this, &ExplorationControlPanel::resetMogiSettings);
+  scenario_layout->addWidget(mogi_settings);
+  mode_ = new QComboBox;
+  mode_->setObjectName("benchmark_mode");
+  mode_->addItem("Single Run");
+  mode_->addItem("Comparison");
+  scenario_layout->addWidget(mode_);
+  root->addWidget(scenario_box);
+  auto* single = new QGroupBox("Single Run Controls");
+  single_group_ = single;
+  auto* single_layout = new QVBoxLayout(single);
+  root->addWidget(single);
+  auto* controls = new QHBoxLayout;
+  end_button_ = new QPushButton("Stop Run");
+  end_button_->setObjectName("benchmark_stop_single");
+  controls->addWidget(end_button_);
   path_reset_button_ = new QPushButton("Path Reset");
-  connect(path_reset_button_, &QPushButton::clicked, this, &ExplorationControlPanel::onPathResetClicked);
-  controls_layout->addWidget(path_reset_button_);
+  controls->addWidget(path_reset_button_);
   map_reset_button_ = new QPushButton("Map Reset");
-  connect(map_reset_button_, &QPushButton::clicked, this, &ExplorationControlPanel::onMapResetClicked);
-  controls_layout->addWidget(map_reset_button_);
+  controls->addWidget(map_reset_button_);
   return_start_button_ = new QPushButton("Return Start");
-  connect(return_start_button_, &QPushButton::clicked, this, &ExplorationControlPanel::onReturnStartClicked);
-  controls_layout->addWidget(return_start_button_);
-  controls_layout->addStretch();
-  root_layout->addLayout(controls_layout);
-
-  status_label_ = new QLabel("Status: idle");
-  pid_label_ = new QLabel("PID: -");
-  cpu_label_ = new QLabel("CPU: -");
-  ram_label_ = new QLabel("RAM: -");
-  distance_label_ = new QLabel("Distance: -");
-  time_label_ = new QLabel("Time: -");
-  root_layout->addWidget(status_label_);
-  root_layout->addWidget(pid_label_);
-  root_layout->addWidget(cpu_label_);
-  root_layout->addWidget(ram_label_);
-  root_layout->addWidget(distance_label_);
-  root_layout->addWidget(time_label_);
-  root_layout->addStretch();
-
-  setLayout(root_layout);
-
-  // Process and timer signals are hooked once so run state transitions stay consistent across
-  // all explorer backends.
-  connect(
-    process_.get(), QOverload<int, QProcess::ExitStatus>::of(&QProcess::finished),
-    this, &ExplorationControlPanel::onProcessFinished);
-  connect(
-    process_.get(), &QProcess::errorOccurred,
-    this, &ExplorationControlPanel::onProcessError);
-  connect(
-    stats_timer_.get(), &QTimer::timeout,
-    this, &ExplorationControlPanel::updateProcessStats);
-  stats_timer_->setInterval(1000);
-
-  // A dedicated metrics node lets the panel publish resets/markers and consume odometry without
-  // depending on the lifecycle of whichever explorer process is currently running.
-  const uint64_t node_stamp = static_cast<uint64_t>(
-    std::chrono::duration_cast<std::chrono::microseconds>(
-      std::chrono::system_clock::now().time_since_epoch()).count());
-  const std::string node_name =
-    "exploration_control_panel_metrics_" + std::to_string(node_stamp);
-  metrics_node_ = std::make_shared<rclcpp::Node>(node_name);
+  controls->addWidget(return_start_button_);
+  single_controls_widget_ = new QWidget;
+  single_controls_widget_->setLayout(controls);
+  single_layout->addWidget(single_controls_widget_);
+  single_metrics_ = new QLabel("CPU: –    RAM: –\nDistance: –    Time: –");
+  single_metrics_->setObjectName("benchmark_single_metrics");
+  single_metrics_->setWordWrap(true);
+  single_layout->addWidget(single_metrics_);
+  connect(path_reset_button_, &QPushButton::clicked, this,
+          &ExplorationControlPanel::onPathResetClicked);
+  connect(map_reset_button_, &QPushButton::clicked, this,
+          &ExplorationControlPanel::onMapResetClicked);
+  connect(return_start_button_, &QPushButton::clicked, this,
+          &ExplorationControlPanel::onReturnStartClicked);
+  connect(end_button_, &QPushButton::clicked, this,
+          [this]()
+          {
+            if (!session_state_.runs.empty())
+            {
+              stopRun(session_state_.runs.front().run_id);
+            }
+          });
+  auto* comparison = new QGroupBox("Configurations");
+  auto* settings = new QVBoxLayout(comparison);
+  auto* shared = new QHBoxLayout;
+  shared->addWidget(new QLabel("Runs"));
+  count_ = new QSpinBox;
+  count_->setRange(1, 1);
+  count_->setValue(1);
+  count_->setObjectName("benchmark_count");
+  shared->addWidget(count_);
+  settings->addLayout(shared);
+  for (int i = 0; i < 4; ++i)
+  {
+    Row row;
+    row.widget = new QWidget;
+    auto* layout = new QGridLayout(row.widget);
+    layout->setContentsMargins(0, 0, 0, 0);
+    row.label = new QLineEdit(i == 0 ? "Default" : QString("Variant %1").arg(i));
+    row.label->setPlaceholderText("Configuration label");
+    row.label->setObjectName(QString("benchmark_label_%1").arg(i));
+    row.editor = new QPushButton("Edit Parameters (Default)");
+    row.editor->setObjectName(QString("benchmark_edit_%1").arg(i));
+    layout->addWidget(row.label, 0, 0);
+    layout->addWidget(row.editor, 1, 0);
+    connect(row.editor, &QPushButton::clicked, this,
+            [this, i]() { editParameters(static_cast<size_t>(i)); });
+    row.widget->setVisible(i == 0);
+    settings->addWidget(row.widget);
+    rows_.push_back(row);
+  }
+  connect(count_, QOverload<int>::of(&QSpinBox::valueChanged), this,
+          [this](int n)
+          {
+            for (size_t i = 0; i < rows_.size(); ++i)
+            {
+              rows_[i].widget->setVisible(static_cast<int>(i) < n);
+            }
+          });
+  auto* time = new QHBoxLayout;
+  time->addWidget(new QLabel("Simulation limit (s; 0 disables)"));
+  limit_ = new QDoubleSpinBox;
+  limit_->setRange(0, 1e7);
+  limit_->setDecimals(1);
+  limit_->setValue(1800);
+  time->addWidget(limit_);
+  settings->addLayout(time);
+  start_single_button_ = new QPushButton("Start Single Run");
+  settings->addWidget(start_single_button_);
+  comparison_button_ = new QPushButton("Run Comparison");
+  comparison_button_->setVisible(false);
+  settings->addWidget(comparison_button_);
+  stop_all_button_ = new QPushButton("Stop All");
+  settings->addWidget(stop_all_button_);
+  single_mode_button_ = new QPushButton("Back to Configuration");
+  settings->addWidget(single_mode_button_);
+  root->addWidget(comparison);
+  status_label_ = new QLabel("Connecting to session coordinator");
+  status_label_->setWordWrap(true);
+  root->addWidget(status_label_);
+  root->addStretch();
+  connect(start_single_button_, &QPushButton::clicked, this, &ExplorationControlPanel::startSingle);
+  connect(mode_, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+          [this](int index)
+          {
+            count_->setRange(index == 0 ? 1 : 2, index == 0 ? 1 : 4);
+            start_single_button_->setVisible(index == 0);
+            comparison_button_->setVisible(index != 0);
+            stateReceived(session_state_);
+          });
+  connect(world_, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+          [this]() { stateReceived(session_state_); });
+  connect(robot_, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+          [this]() { robotChanged(); });
+  connect(comparison_button_, &QPushButton::clicked, this,
+          &ExplorationControlPanel::startComparison);
+  connect(stop_all_button_, &QPushButton::clicked, this,
+          [this]()
+          {
+            request<interfaces::srv::StopComparison>(
+                stop_all_client_, std::make_shared<interfaces::srv::StopComparison::Request>());
+          });
+  connect(single_mode_button_, &QPushButton::clicked, this,
+          [this]()
+          {
+            request<interfaces::srv::ReturnToConfiguration>(
+                return_client_,
+                std::make_shared<interfaces::srv::ReturnToConfiguration::Request>());
+          });
+  const auto session = qEnvironmentVariable("BENCHMARK_SESSION_ID", "unattached");
+  session_root_ = "/benchmark/" + session.toStdString();
+  const auto stamp = std::chrono::steady_clock::now().time_since_epoch().count();
+  rclcpp::NodeOptions options;
+  options.use_global_arguments(false);
+  options.parameter_overrides({rclcpp::Parameter("use_sim_time", true)});
+  metrics_node_ =
+      std::make_shared<rclcpp::Node>("benchmark_panel_" + std::to_string(stamp), options);
+  auto retained = rclcpp::QoS(1).reliable().transient_local();
+  traveled_path_clear_pub_ =
+      metrics_node_->create_publisher<nav_msgs::msg::Path>("/explore/traversed_path", retained);
+  traveled_path_reset_pub_ = metrics_node_->create_publisher<std_msgs::msg::Empty>(
+      "/explore/reset_traveled_path", retained);
+  frontier_clear_pub_ = metrics_node_->create_publisher<visualization_msgs::msg::MarkerArray>(
+      "/explore/frontiers", 10);
+  navigate_to_pose_client_ = rclcpp_action::create_client<nav2_msgs::action::NavigateToPose>(
+      metrics_node_, "/navigate_to_pose");
+  initial_pose_sub_ = metrics_node_->create_subscription<geometry_msgs::msg::PoseStamped>(
+      "/explore/path_tracker/initial_pose", retained,
+      [this](geometry_msgs::msg::PoseStamped::SharedPtr m) { onInitialPose(m); });
+  single_client_ = metrics_node_->create_client<interfaces::srv::StartSingleRun>(
+      session_root_ + "/start_single_run");
+  comparison_client_ = metrics_node_->create_client<interfaces::srv::StartComparison>(
+      session_root_ + "/start_comparison");
+  stop_client_ =
+      metrics_node_->create_client<interfaces::srv::StopRun>(session_root_ + "/stop_run");
+  stop_all_client_ = metrics_node_->create_client<interfaces::srv::StopComparison>(
+      session_root_ + "/stop_comparison");
+  return_client_ = metrics_node_->create_client<interfaces::srv::ReturnToConfiguration>(
+      session_root_ + "/return_to_configuration");
+  parameter_client_ = metrics_node_->create_client<interfaces::srv::ResolveParameters>(
+      session_root_ + "/resolve_parameters");
+  scenario_sub_ = metrics_node_->create_subscription<interfaces::msg::ScenarioCatalog>(
+      session_root_ + "/scenarios", retained,
+      [this](interfaces::msg::ScenarioCatalog::SharedPtr message)
+      {
+        QMetaObject::invokeMethod(
+            this, [this, message]() { scenarioReceived(*message); }, Qt::QueuedConnection);
+      });
+  parameter_sub_ = metrics_node_->create_subscription<interfaces::msg::ParameterCatalog>(
+      session_root_ + "/parameters", retained,
+      [this](interfaces::msg::ParameterCatalog::SharedPtr message)
+      {
+        QMetaObject::invokeMethod(
+            this, [this, message]() { parameterCatalogReceived(*message); }, Qt::QueuedConnection);
+      });
+  robot_sub_ = metrics_node_->create_subscription<interfaces::msg::RobotCatalog>(
+      session_root_ + "/robots", retained,
+      [this](interfaces::msg::RobotCatalog::SharedPtr message)
+      {
+        QMetaObject::invokeMethod(this, [this, message]() { robotCatalogReceived(*message); },
+                                  Qt::QueuedConnection);
+      });
+  catalog_sub_ = metrics_node_->create_subscription<interfaces::msg::ProfileCatalog>(
+      session_root_ + "/catalog", retained,
+      [this](interfaces::msg::ProfileCatalog::SharedPtr m) {
+        QMetaObject::invokeMethod(this, [this, m]() { catalogReceived(*m); }, Qt::QueuedConnection);
+      });
+  state_sub_ = metrics_node_->create_subscription<interfaces::msg::SessionState>(
+      session_root_ + "/state", retained,
+      [this](interfaces::msg::SessionState::SharedPtr m) {
+        QMetaObject::invokeMethod(this, [this, m]() { stateReceived(*m); }, Qt::QueuedConnection);
+      });
+  metrics_sub_ = metrics_node_->create_subscription<interfaces::msg::RunMetrics>(
+      session_root_ + "/metrics", 20,
+      [this](interfaces::msg::RunMetrics::SharedPtr m) {
+        QMetaObject::invokeMethod(this, [this, m]() { metricsReceived(*m); }, Qt::QueuedConnection);
+      });
   metrics_executor_ = std::make_shared<rclcpp::executors::SingleThreadedExecutor>();
   metrics_executor_->add_node(metrics_node_);
-  traveled_path_clear_pub_ = metrics_node_->create_publisher<nav_msgs::msg::Path>(
-    "/explore/traversed_path",
-    rclcpp::QoS(rclcpp::KeepLast(1)).reliable().transient_local());
-  active_path_package_pub_ = metrics_node_->create_publisher<std_msgs::msg::String>(
-    "/explore/path_tracker/active_package", 10);
-  traveled_path_reset_pub_ = metrics_node_->create_publisher<std_msgs::msg::Empty>(
-    "/explore/reset_traveled_path",
-    rclcpp::QoS(rclcpp::KeepLast(1)).reliable().transient_local());
-  frontier_clear_pub_ =
-    metrics_node_->create_publisher<visualization_msgs::msg::MarkerArray>("/explore/frontiers", 10);
-  navigate_to_pose_client_ =
-    rclcpp_action::create_client<nav2_msgs::action::NavigateToPose>(metrics_node_, "navigate_to_pose");
-  initial_pose_sub_ = metrics_node_->create_subscription<geometry_msgs::msg::PoseStamped>(
-    "/explore/path_tracker/initial_pose",
-    rclcpp::QoS(rclcpp::KeepLast(1)).reliable().transient_local(),
-    [this](const geometry_msgs::msg::PoseStamped::SharedPtr msg) { onInitialPose(msg); });
-  odom_sub_ = metrics_node_->create_subscription<nav_msgs::msg::Odometry>(
-    "/odom",
-    rclcpp::QoS(rclcpp::KeepLast(20)).best_effort(),
-    [this](const nav_msgs::msg::Odometry::SharedPtr msg) { onOdometry(msg); });
-
-  // Spin in a lightweight polling loop so callbacks continue even when UI-triggered operations
-  // run in separate worker threads.
-  ros_spin_thread_ = std::thread([this]() {
-      while (!stop_ros_thread_ && rclcpp::ok()) {
-        if (metrics_executor_) {
-          metrics_executor_->spin_some();
-        }
-        std::this_thread::sleep_for(std::chrono::milliseconds(20));
-      }
-    });
+  ros_spin_thread_ = std::thread([this]() { metrics_executor_->spin(); });
+  comparison_button_->setEnabled(false);
+  start_single_button_->setEnabled(false);
+  end_button_->setEnabled(false);
+  stop_all_button_->setEnabled(false);
 }
-
-// Destructor enforces an ordered shutdown: stop ROS loop, stop external processes, join workers.
-// The order prevents callbacks from touching panel state after UI teardown starts.
 ExplorationControlPanel::~ExplorationControlPanel()
 {
   stop_ros_thread_ = true;
-  if (metrics_executor_) {
+  if (metrics_executor_)
+  {
     metrics_executor_->cancel();
   }
-  stopExplorer();
-  if (operation_thread_.joinable()) {
+  if (operation_thread_.joinable())
+  {
     operation_thread_.join();
   }
-  if (ros_spin_thread_.joinable()) {
+  if (ros_spin_thread_.joinable())
+  {
     ros_spin_thread_.join();
   }
-  if (metrics_executor_ && metrics_node_) {
-    metrics_executor_->remove_node(metrics_node_);
+  if (grid_widget_)
+  {
+    delete grid_widget_;
   }
 }
-
-// Start action is routed by sender button, so one slot can serve all explorer rows.
-void ExplorationControlPanel::onStartClicked()
+void ExplorationControlPanel::onInitialize()
 {
-  // Prevent overlapping starts; only one explorer process is supervised at a time.
-  if (process_->state() != QProcess::NotRunning) {
+  window_ = qobject_cast<QMainWindow*>(getDisplayContext()->getWindowManager()->getParentWindow());
+  original_manager_ = dynamic_cast<rviz_common::VisualizationManager*>(getDisplayContext());
+  connect(qApp, &QCoreApplication::aboutToQuit, this,
+          [this]()
+          {
+            // VisualizationFrame deletes its main render window before its
+            // custom docks. Destroy embedded scenes while that GL context is
+            // still available, and reject any queued ROS presentation updates.
+            stop_ros_thread_ = true;
+            if (metrics_executor_)
+            {
+              metrics_executor_->cancel();
+            }
+            if (grid_widget_)
+            {
+              delete grid_widget_;
+            }
+            views_.clear();
+            view_ids_.clear();
+            deferred_state_.reset();
+          });
+  QTimer::singleShot(
+      0, this,
+      [this]()
+      {
+        if (!window_ || stack_)
+        {
+          return;
+        }
+        original_central_ = window_->takeCentralWidget();
+        stack_ = new QStackedWidget(window_);
+        stack_->addWidget(original_central_);
+        auto* idle = new QLabel(
+            "Select a world and configure explorer parameters on the left.\nStart a Single Run or "
+            "a Comparison when ready.");
+        idle->setAlignment(Qt::AlignCenter);
+        idle_widget_ = idle;
+        stack_->addWidget(idle);
+        stack_->setCurrentWidget(idle);
+        window_->setCentralWidget(stack_);
+        const auto available = window_->screen()->availableGeometry();
+        if (window_->width() > available.width() || window_->height() > available.height())
+        {
+          window_->resize(std::min(window_->width(), available.width()),
+                          std::min(window_->height(), available.height()));
+          window_->move(available.topLeft());
+        }
+        stateReceived(session_state_);
+      });
+}
+void ExplorationControlPanel::catalogReceived(const interfaces::msg::ProfileCatalog& catalog)
+{
+  if (catalog.profiles.size() != 1 || catalog.profiles.front().id != "default")
+    setStatusText("Rebuild the workspace: expected the Default frontier configuration");
+}
+void ExplorationControlPanel::scenarioReceived(const interfaces::msg::ScenarioCatalog& catalog)
+{
+  const auto selected = world_->currentData().toString();
+  world_->blockSignals(true);
+  world_->clear();
+  world_->addItem("Select a world…", "");
+  for (const auto& item : catalog.scenarios)
+    world_->addItem(QString::fromStdString(item.label), QString::fromStdString(item.id));
+  const auto preferred =
+      selected.isEmpty() ? QString::fromStdString(catalog.preselected_world) : selected;
+  world_->setCurrentIndex(std::max(0, world_->findData(preferred)));
+  world_->blockSignals(false);
+  stateReceived(session_state_);
+}
+void ExplorationControlPanel::parameterCatalogReceived(
+    const interfaces::msg::ParameterCatalog& catalog)
+{
+  baseline_parameter_catalog_ = catalog;
+  parameter_catalog_ = catalog;
+  robotChanged();
+  stateReceived(session_state_);
+}
+void ExplorationControlPanel::robotCatalogReceived(const interfaces::msg::RobotCatalog& catalog)
+{
+  const auto selected = robot_->currentData().toString();
+  robot_catalog_ = catalog;
+  if (!mogi_settings_initialized_)
+  {
+    resetMogiSettings();
+    mogi_settings_initialized_ = !catalog.robots.empty();
+  }
+  robot_->blockSignals(true);
+  robot_->clear();
+  for (const auto& profile : catalog.robots)
+  {
+    robot_->addItem(QString::fromStdString(profile.label) +
+                        (profile.available ? QString() : " — unavailable"),
+                    QString::fromStdString(profile.id));
+    robot_->setItemData(robot_->count() - 1, QString::fromStdString(profile.reason), Qt::ToolTipRole);
+  }
+  robot_->setCurrentIndex(std::max(0, robot_->findData(
+      selected.isEmpty() ? QString::fromStdString(catalog.default_robot) : selected)));
+  robot_->blockSignals(false);
+  robotChanged();
+}
+void ExplorationControlPanel::robotChanged()
+{
+  const auto selected = robot_->currentData().toString().toStdString();
+  mogi_settings_->setVisible(selected == "mogi");
+  auto found = std::find_if(robot_catalog_.robots.begin(), robot_catalog_.robots.end(),
+                            [&selected](const auto& profile) { return profile.id == selected; });
+  if (found == robot_catalog_.robots.end()) return;
+  robot_details_->setText(QString::fromStdString(found->lidar_label) + "\n" +
+      (found->available ? QString("Limits: %1 m/s · %2 rad/s · physics %3 ms\n")
+                          .arg(found->max_linear_speed).arg(found->max_angular_speed)
+                          .arg(found->physics_step * 1000.0)
+                       : QString()) + QString::fromStdString(found->reason));
+  auto previous = parameter_catalog_;
+  parameter_catalog_ = baseline_parameter_catalog_;
+  parameter_catalog_.robot_id = found->id;
+  for (auto& definition : parameter_catalog_.parameters)
+  {
+    if (definition.name != "max_linear_speed_vmax" && definition.name != "max_angular_speed_wmax")
+      continue;
+    if (selected != "mogi")
+      definition.default_value.double_value = definition.name == "max_linear_speed_vmax"
+          ? found->max_linear_speed : found->max_angular_speed;
+    for (auto& row : rows_)
+      for (auto& parameter : row.parameters)
+        for (const auto& old : previous.parameters)
+          if (parameter.name == definition.name && old.name == definition.name &&
+              parameter.value == old.default_value)
+            parameter.value = definition.default_value;
+  }
+  stateReceived(session_state_);
+}
+void ExplorationControlPanel::editParameters(size_t index)
+{
+  ParameterEditor editor(parameter_catalog_, rows_.at(index).parameters, parameter_client_, this);
+  if (editor.exec() != QDialog::Accepted) return;
+  rows_[index].parameters = editor.parameters();
+  size_t changed = 0;
+  for (const auto& parameter : rows_[index].parameters)
+    for (const auto& definition : parameter_catalog_.parameters)
+      if (parameter.name == definition.name && parameter.value != definition.default_value)
+        ++changed;
+  rows_[index].editor->setText(changed ? QString("Edit Parameters (%1 changed)").arg(changed)
+                                       : "Edit Parameters (Default)");
+}
+void ExplorationControlPanel::resetMogiSettings()
+{
+  const auto found = std::find_if(robot_catalog_.robots.begin(), robot_catalog_.robots.end(),
+                                  [](const auto& profile) { return profile.id == "mogi"; });
+  if (found == robot_catalog_.robots.end()) return;
+  movement_speed_->setValue(found->max_linear_speed);
+  turning_speed_->setValue(found->max_angular_speed);
+  lidar_range_->setValue(found->lidar_range);
+}
+std::vector<rcl_interfaces::msg::Parameter> ExplorationControlPanel::robotOverrides() const
+{
+  std::vector<rcl_interfaces::msg::Parameter> overrides;
+  if (robot_->currentData().toString() != "mogi") return overrides;
+  const auto found = std::find_if(robot_catalog_.robots.begin(), robot_catalog_.robots.end(),
+                                  [](const auto& profile) { return profile.id == "mogi"; });
+  if (found == robot_catalog_.robots.end()) return overrides;
+  auto add = [&overrides](const char* name, double value, double baseline)
+  {
+    if (value != baseline)
+      overrides.push_back(rclcpp::Parameter(name, value).to_parameter_msg());
+  };
+  add("movement_speed", movement_speed_->value(), found->max_linear_speed);
+  add("turning_speed", turning_speed_->value(), found->max_angular_speed);
+  add("lidar_range", lidar_range_->value(), found->lidar_range);
+  return overrides;
+}
+void ExplorationControlPanel::startSingle()
+{
+  auto message = std::make_shared<interfaces::srv::StartSingleRun::Request>();
+  message->world = world_->currentData().toString().toStdString();
+  message->robot_id = robot_->currentData().toString().toStdString();
+  message->robot_overrides = robotOverrides();
+  message->simulation_time_limit = limit_->value();
+  message->spec.profile = "default";
+  message->spec.label = rows_[0].label->text().toStdString();
+  message->spec.overrides = rows_[0].parameters;
+  request<interfaces::srv::StartSingleRun>(single_client_, message);
+}
+void ExplorationControlPanel::startComparison()
+{
+  auto message = std::make_shared<interfaces::srv::StartComparison::Request>();
+  message->robot_id = robot_->currentData().toString().toStdString();
+  message->robot_overrides = robotOverrides();
+  message->world = world_->currentData().toString().toStdString();
+  message->simulation_time_limit = limit_->value();
+  for (int i = 0; i < count_->value(); ++i)
+  {
+    interfaces::msg::RunSpec spec;
+    spec.profile = "default";
+    spec.label = rows_[i].label->text().toStdString();
+    spec.overrides = rows_[i].parameters;
+    message->runs.push_back(spec);
+  }
+  request<interfaces::srv::StartComparison>(comparison_client_, message);
+}
+void ExplorationControlPanel::stopRun(const std::string& id)
+{
+  auto message = std::make_shared<interfaces::srv::StopRun::Request>();
+  message->run_id = id;
+  request<interfaces::srv::StopRun>(stop_client_, message);
+}
+void ExplorationControlPanel::switchView(bool comparison)
+{
+  if (!stack_ || comparison == comparison_mode_)
+  {
     return;
   }
-
-  // Sender-based routing keeps button wiring simple even with dynamic row construction.
-  auto * button = qobject_cast<QPushButton *>(sender());
-  if (!button) {
-    return;
+  comparison_mode_ = comparison;
+  single_group_->setVisible(!comparison);
+  single_controls_widget_->setVisible(!comparison);
+  single_metrics_->setVisible(!comparison);
+  if (comparison)
+  {
+    original_manager_->stopUpdate();
+    for (auto* dock : window_->findChildren<QDockWidget*>())
+    {
+      if (dock->isVisible() && !dock->isAncestorOf(this))
+      {
+        hidden_docks_.push_back(dock);
+        dock->hide();
+      }
+    }
   }
-
-  // Find the row that owns the clicked button and launch that specific explorer profile.
-  for (const auto & entry : explorers_) {
-    if (entry.start_button == button) {
-      startExplorer(entry);
-      return;
+  else
+  {
+    stack_->setCurrentWidget(original_central_);
+    original_manager_->resetTime();
+    original_manager_->startUpdate();
+    for (auto dock : hidden_docks_)
+    {
+      if (dock)
+      {
+        dock->show();
+      }
+    }
+    hidden_docks_.clear();
+    if (grid_widget_)
+    {
+      delete grid_widget_;
+    }
+    views_.clear();
+    view_ids_.clear();
+    has_initial_pose_ = false;
+  }
+  for (auto* toolbar : window_->findChildren<QToolBar*>())
+  {
+    toolbar->setEnabled(!comparison);
+  }
+  for (auto* button : window_->findChildren<QToolButton*>())
+  {
+    if (button->text() == "Reset")
+    {
+      button->setEnabled(!comparison);
     }
   }
 }
-
-// End action freezes final averages before terminating, so users keep a summary snapshot.
-void ExplorationControlPanel::onEndClicked()
+void ExplorationControlPanel::rebuildViews(const interfaces::msg::SessionState& state)
 {
-  // Force one last sampling tick so averages include the latest process counters.
-  updateProcessStats();
-  if (resource_sample_count_ > 0) {
-    const double avg_cpu = cpu_sum_percent_ / static_cast<double>(resource_sample_count_);
-    const double avg_ram = ram_sum_mb_ / static_cast<double>(resource_sample_count_);
-    cpu_label_->setText(QString("CPU(avg): %1%").arg(avg_cpu, 0, 'f', 1));
-    ram_label_->setText(QString("RAM(avg): %1 MB").arg(avg_ram, 0, 'f', 1));
-  } else {
-    // Keep UI explicit when no valid sample was collected during this run.
-    cpu_label_->setText("CPU(avg): -");
-    ram_label_->setText("RAM(avg): - MB");
-  }
-  // Clear stale frontier overlays so the next run starts from a visually clean state.
-  clearFrontierMarkers();
-  stopExplorer();
-}
-
-// Path reset is blocked while running to avoid mixing metrics from two logical runs.
-void ExplorationControlPanel::onPathResetClicked()
-{
-  if (process_->state() != QProcess::NotRunning) {
-    setStatusText("Status: path reset blocked (exploration is running)");
+  if (!stack_ || state.runs.empty())
+  {
     return;
   }
-
+  std::vector<std::string> ids;
+  for (const auto& run : state.runs)
+  {
+    ids.push_back(run.run_id);
+  }
+  if (ids == view_ids_)
+  {
+    return;
+  }
+  // Realizing native render windows pumps Qt events. Retained ROS callbacks
+  // must not replace a grid whose ComparisonView constructors are still active.
+  building_views_ = true;
+  if (grid_widget_)
+  {
+    delete grid_widget_;
+  }
+  views_.clear();
+  view_ids_ = ids;
+  grid_widget_ = new QWidget(stack_);
+  auto* layout = new QGridLayout(grid_widget_);
+  stack_->addWidget(grid_widget_);
+  for (size_t i = 0; i < state.runs.size(); ++i)
+  {
+    const auto& run = state.runs[i];
+    auto* view = new ComparisonView(run.run_id, run.topic_root,
+                                    QString::fromStdString(run.spec.label), grid_widget_);
+    layout->addWidget(view, state.runs.size() == 2 ? 0 : static_cast<int>(i) / 2,
+                      static_cast<int>(i) % 2);
+    views_.push_back(view);
+    connect(view->stop_button, &QPushButton::clicked, this,
+            [this, id = run.run_id]() { stopRun(id); });
+  }
+  if (state.runs.size() == 3)
+  {
+    layout->addWidget(new QLabel("", grid_widget_), 1, 1);
+  }
+  linkCameras(views_, grid_widget_);
+  stack_->setCurrentWidget(grid_widget_);
+  building_views_ = false;
+  if (deferred_state_)
+  {
+    QTimer::singleShot(0, this,
+                       [this]()
+                       {
+                         if (!deferred_state_ || stop_ros_thread_)
+                         {
+                           return;
+                         }
+                         auto state = std::move(*deferred_state_);
+                         deferred_state_.reset();
+                         stateReceived(state);
+                       });
+  }
+  // RViz may restore saved dock geometry after panel initialization. Refit the
+  // comparison once those events have settled, including on smaller monitors.
+  QTimer::singleShot(100, this,
+                     [this]()
+                     {
+                       if (!window_ || !comparison_mode_ || stop_ros_thread_)
+                       {
+                         return;
+                       }
+                       for (auto* dock : window_->findChildren<QDockWidget*>())
+                       {
+                         if (dock->isAncestorOf(this))
+                         {
+                           window_->resizeDocks({dock}, {380}, Qt::Horizontal);
+                         }
+                       }
+                       const auto available = window_->screen()->availableGeometry();
+                       window_->resize(std::min(window_->width(), available.width()),
+                                       std::min(window_->height(), available.height()));
+                     });
+}
+void ExplorationControlPanel::stateReceived(const interfaces::msg::SessionState& state)
+{
+  if (stop_ros_thread_)
+  {
+    return;
+  }
+  if (building_views_ || deferred_state_)
+  {
+    deferred_state_ = state;
+    return;
+  }
+  session_state_ = state;
+  mogi_settings_->setEnabled(!state.busy && state.mode != "SWITCHING" && state.mode != "STOPPING");
+  const bool single = state.mode == "SINGLE";
+  const bool comparison = state.mode == "COMPARISON";
+  const bool live = single && !state.runs.empty() && state.runs.front().phase == "RUNNING";
+  const bool stoppable = single && !state.runs.empty() && state.runs.front().phase != "FINISHED" &&
+                         state.runs.front().phase != "STOPPING";
+  exploration_running_ = live;
+  end_button_->setEnabled(stoppable && stop_client_->service_is_ready());
+  path_reset_button_->setEnabled(false);
+  map_reset_button_->setEnabled(false);
+  return_start_button_->setEnabled(live && navigate_to_pose_client_->action_server_is_ready());
+  const bool configured = !state.session_id.empty() &&
+                          std::any_of(robot_catalog_.robots.begin(), robot_catalog_.robots.end(),
+                            [this](const auto& p) {
+                              return p.available && p.id == robot_->currentData().toString().toStdString() &&
+                                  std::find(p.worlds.begin(), p.worlds.end(), world_->currentData().toString().toStdString()) != p.worlds.end();
+                            }) &&
+                          !world_->currentData().toString().isEmpty() &&
+                          !parameter_catalog_.parameters.empty() && state.mode != "SWITCHING" &&
+                          state.mode != "STOPPING";
+  comparison_button_->setEnabled(configured && !(comparison && state.busy));
+  start_single_button_->setEnabled(configured && !(single && state.busy));
+  for (auto& row : rows_) row.editor->setEnabled(!parameter_catalog_.parameters.empty());
+  stop_all_button_->setEnabled(comparison && state.busy);
+  single_mode_button_->setEnabled(state.mode != "SWITCHING" && state.mode != "IDLE" &&
+                                  state.mode != "STOPPING");
+  if (comparison)
+  {
+    switchView(true);
+    rebuildViews(state);
+  }
+  else if (single || state.mode == "IDLE")
+  {
+    switchView(false);
+    if (single && !state.runs.empty() && single_view_run_ != state.runs.front().run_id)
+    {
+      single_view_run_ = state.runs.front().run_id;
+      single_has_metrics_ = false;
+      has_initial_pose_ = false;
+      if (original_manager_) original_manager_->resetTime();
+    }
+    if (single && !state.runs.empty())
+    {
+      const auto& run = state.runs.front();
+      if (!single_has_metrics_)
+        single_metrics_->setText(QString::fromStdString(
+            run.phase + (run.outcome.empty() ? "" : " / " + run.outcome) + "\n" + run.detail));
+    }
+    if (stack_) stack_->setCurrentWidget(single ? original_central_.data() : idle_widget_.data());
+  }
+  if (window_)
+  {
+    for (auto* toolbar : window_->findChildren<QToolBar*>()) toolbar->setEnabled(live);
+    for (auto* button : window_->findChildren<QToolButton*>())
+      if (button->text() == "Reset") button->setEnabled(live);
+  }
+  single_group_->setVisible(single);
+  for (size_t i = 0; i < views_.size() && i < state.runs.size(); ++i)
+  {
+    const auto& run = state.runs[i];
+    views_[i]->setStatus(QString::fromStdString(run.spec.label + " — " + run.phase +
+                                                (run.outcome.empty() ? "" : " / " + run.outcome)));
+    views_[i]->stop_button->setEnabled(run.phase != "FINISHED" && run.phase != "STOPPING");
+  }
+  QString status = QString::fromStdString(state.detail);
+  if (single && !state.runs.empty())
+  {
+    status = QString::fromStdString(state.runs.front().phase + " " + state.runs.front().outcome +
+                                    " " + state.runs.front().detail);
+  }
+  setStatusText(status);
+}
+void ExplorationControlPanel::metricsReceived(const interfaces::msg::RunMetrics& m)
+{
+  if (stop_ros_thread_)
+  {
+    return;
+  }
+  const auto cpu = m.frozen ? m.cpu_average_percent : m.cpu_percent;
+  const auto rss = m.frozen ? m.rss_average_mib : m.rss_mib;
+  QStringList flags;
+  for (const auto& flag : m.quality_flags)
+  {
+    flags << QString::fromStdString(flag);
+  }
+  const auto health = !m.motion_started && !m.frozen
+                          ? QString("Waiting for first movement") +
+                                (flags.empty() ? QString() : QString("; ") + flags.join(", "))
+                          : (flags.empty() ? QString("OK") : flags.join(", "));
+  QString outcome;
+  for (const auto& run : session_state_.runs)
+  {
+    if (run.run_id == m.run_id)
+    {
+      outcome = QString::fromStdString(run.outcome.empty() ? run.phase : run.outcome);
+      break;
+    }
+  }
+  QStringList milestones;
+  for (const auto& milestone : m.coverage_milestones)
+  {
+    const QString value = milestone.reached
+                              ? QString::number(milestone.simulation_elapsed, 'f', 1) + " s"
+                              : (!m.motion_started ? (m.frozen ? "not started" : "pending")
+                                                   : (m.frozen ? "unreached" : "pending"));
+    milestones << QString("%1%: %2").arg(milestone.percent, 0, 'f', 0).arg(value);
+  }
+  QString coverage = "Coverage: ";
+  if ((m.coverage_status == "valid" || m.coverage_status == "stale") &&
+      std::isfinite(m.coverage_percent))
+  {
+    coverage += QString::number(m.coverage_percent, 'f', 1) + "%";
+    if (m.coverage_status == "stale") coverage += " (stale)";
+  }
+  else
+  {
+    coverage += m.coverage_status == "pending" ? "pending" : "unavailable";
+  }
+  if (!m.coverage_quality_flags.empty())
+  {
+    coverage += " (flagged)";
+  }
+  QStringList coverage_flags;
+  for (const auto& flag : m.coverage_quality_flags)
+  {
+    coverage_flags << QString::fromStdString(flag);
+  }
+  const QString coverage_tooltip =
+      QString("Coverage: current SLAM free space against the fixed world reference.\n"
+              "Covered: %1 m² / Target: %2 m²\nMap source age: %3 simulation seconds\n"
+              "First reached times use the first robot movement, without interpolation.\n"
+              "Coverage quality: %4")
+          .arg(m.coverage_covered_m2, 0, 'f', 2)
+          .arg(m.coverage_target_m2, 0, 'f', 2)
+          .arg(m.coverage_map_age, 0, 'f', 2)
+          .arg(coverage_flags.empty() ? QString::fromStdString(m.coverage_status)
+                                      : coverage_flags.join(", "));
+  const QString text =
+      QString(
+          "CPU%1: %2%    RAM%1: %3 MiB    Distance: %4 m\nWall (from first move): %5 s    "
+          "Simulation: %6 s    RTF: %7\nTiming: %8    Outcome: %9")
+          .arg(m.frozen ? " (avg)" : "")
+          .arg(cpu, 0, 'f', 1)
+          .arg(rss, 0, 'f', 1)
+          .arg(m.distance_m, 0, 'f', 2)
+          .arg(m.wall_elapsed, 0, 'f', 1)
+          .arg(m.simulation_elapsed, 0, 'f', 1)
+          .arg(m.rtf, 0, 'f', 2)
+          .arg(health)
+          .arg(outcome) + "\n" + coverage + "\nFirst reached (simulation): " +
+      (milestones.empty() ? QString("pending") : milestones.join("    "));
+  for (size_t i = 0; i < views_.size() && i < view_ids_.size(); ++i)
+  {
+    if (view_ids_[i] == m.run_id)
+    {
+      views_[i]->setMetrics(text, !m.frozen, coverage_tooltip);
+    }
+  }
+  if (session_state_.mode == "SINGLE" && !session_state_.runs.empty() &&
+      session_state_.runs.front().run_id == m.run_id)
+  {
+    single_has_metrics_ = true;
+    single_metrics_->setText(text);
+    single_metrics_->setToolTip(coverage_tooltip);
+  }
+}
+void ExplorationControlPanel::onPathResetClicked()
+{
+  if (session_state_.mode != "SINGLE" || session_state_.busy)
+  {
+    return;
+  }
   requestPathTrackerReset();
   clearTraveledPath();
-  // Local distance accumulator must be reset alongside tracker state.
-  {
-    std::lock_guard<std::mutex> lock(odom_mutex_);
-    has_last_odom_ = false;
-    traveled_distance_m_ = 0.0;
-  }
-  distance_label_->setText("Distance: 0.00 m");
-  setStatusText("Status: path reset OK");
+  setStatusText("Path reset requested");
 }
-
-// Map reset tries discovered slam_toolbox services first, then falls back to conservative defaults.
-// This keeps behavior resilient across slight naming/type differences between deployments.
+void ExplorationControlPanel::onReturnStartClicked()
+{
+  if (session_state_.mode != "SINGLE" || operation_in_progress_)
+  {
+    return;
+  }
+  sendReturnToStartGoal();
+}
 void ExplorationControlPanel::onMapResetClicked()
 {
-  if (process_->state() != QProcess::NotRunning) {
+  if (session_state_.mode != "SINGLE" || session_state_.busy)
+  {
     setStatusText("Status: map reset blocked (exploration is running)");
     return;
   }
-  if (operation_in_progress_) {
+  if (operation_in_progress_)
+  {
     setStatusText("Status: map reset ignored (another request is still running)");
     return;
   }
@@ -336,7 +876,8 @@ void ExplorationControlPanel::onMapResetClicked()
   clearFrontierMarkers();
 
   auto discovered = discoverSlamResetServices();
-  if (discovered.isEmpty()) {
+  if (discovered.isEmpty())
+  {
     // Conservative fallback if graph query is late on startup.
     discovered.push_back({"/slam_toolbox/reset", "slam_toolbox/srv/Reset"});
     discovered.push_back({"/slam_toolbox/clear", "slam_toolbox/srv/Clear"});
@@ -346,265 +887,72 @@ void ExplorationControlPanel::onMapResetClicked()
     discovered.push_back({"/slam_toolbox/clear_queue", "std_srvs/srv/Empty"});
   }
 
-  setStatusText(QString("Status: map reset requested (%1 candidate service(s))").arg(discovered.size()));
-  startBackgroundOperation([this, discovered]() {
-      for (const auto & candidate : discovered) {
-        if (stop_ros_thread_) {
-          return;
-        }
-        if (callSlamResetService(candidate.first, candidate.second, 2000)) {
-          postStatusText(
-            QString("Status: map reset OK (%1, %2)").arg(candidate.first, candidate.second));
-          return;
-        }
-      }
-
-      postStatusText(
-        QString("Status: map reset failed (checked %1 candidate service(s))").arg(discovered.size()));
-    });
-}
-
-// Return-to-start uses the same serialized background lane as map reset to avoid overlapping
-// long-running requests from multiple buttons.
-void ExplorationControlPanel::onReturnStartClicked()
-{
-  if (operation_in_progress_) {
-    setStatusText("Status: return start ignored (another request is still running)");
-    return;
-  }
-  sendReturnToStartGoal();
-}
-
-// Process-finished callback is the canonical place where run-scoped counters are reset.
-void ExplorationControlPanel::onProcessFinished(int exit_code, QProcess::ExitStatus)
-{
-  setRunningUiState(false);
-  const QString status = QString("Status: stopped (%1), exit code=%2")
-    .arg(active_explorer_name_.isEmpty() ? "unknown" : active_explorer_name_)
-    .arg(exit_code);
-  setStatusText(status);
-  pid_label_->setText("PID: -");
-  // Reset all run-scoped telemetry and process matching caches for a clean next start.
-  exploration_running_ = false;
-  has_run_start_time_ = false;
-  monitored_pid_ = -1;
-  last_cpu_ticks_ = 0;
-  last_cpu_check_time_ = {};
-  last_cpu_pid_ = -1;
-  active_process_pattern_.clear();
-  active_explorer_name_.clear();
-  active_log_file_.clear();
-}
-
-// Launch errors are surfaced with explorer context so operator logs stay actionable.
-void ExplorationControlPanel::onProcessError(QProcess::ProcessError)
-{
   setStatusText(
-    QString("Status: launch error (%1)")
-    .arg(active_explorer_name_.isEmpty() ? "unknown" : active_explorer_name_));
+      QString("Status: map reset requested (%1 candidate service(s))").arg(discovered.size()));
+  startBackgroundOperation(
+      [this, discovered]()
+      {
+        for (const auto& candidate : discovered)
+        {
+          if (stop_ros_thread_)
+          {
+            return;
+          }
+          if (callSlamResetService(candidate.first, candidate.second, 2000))
+          {
+            postStatusText(
+                QString("Status: map reset OK (%1, %2)").arg(candidate.first, candidate.second));
+            return;
+          }
+        }
+
+        postStatusText(QString("Status: map reset failed (checked %1 candidate service(s))")
+                           .arg(discovered.size()));
+      });
 }
 
-// startExplorer builds one shell command that sources overlays, truncates log, and execs launcher.
-// Using a single shell keeps environment handling identical for all explorer backends.
-void ExplorationControlPanel::startExplorer(const ExplorerEntry & entry)
+void ExplorationControlPanel::setStatusText(const QString& text) { status_label_->setText(text); }
+
+void ExplorationControlPanel::postStatusText(const QString& text)
 {
-  const QString project_root = projectRootPath();
-  const QString install_setup = project_root + "/install/setup.bash";
-  const std::filesystem::path log_dir =
-    std::filesystem::path(project_root.toStdString()) / "logs" / "exploration";
-  std::error_code ec;
-  // Best-effort directory creation; launch may still proceed if folder already exists.
-  std::filesystem::create_directories(log_dir, ec);
-  const QString log_file = QString::fromStdString(
-    (log_dir / (safeLogFileStem(entry.display_name).toStdString() + ".log")).string());
-  active_log_file_ = log_file;
-
-  QString command = "source /opt/ros/jazzy/setup.bash";
-  command += " && ";
-  command += "source ";
-  command += shellQuote(install_setup);
-  // Truncate previous log contents so each run has an isolated log timeline.
-  command += " && : > ";
-  command += shellQuote(log_file);
-  command += " && ";
-  command += "(";
-  if (entry.use_ros2_run) {
-    // run-mode path is used for single-node packages that do not provide launch files.
-    command += "exec ros2 run ";
-    command += entry.package_name;
-    command += " ";
-    command += entry.executable_name;
-    command += " --ros-args -p use_sim_time:=true";
-  } else {
-    // launch-mode path supports richer bringup stacks with params/remappings.
-    command += "exec ros2 launch ";
-    command += entry.package_name;
-    command += " ";
-    command += entry.launch_file;
-    command += " use_sim_time:=true";
-    if (!entry.launch_arguments.trimmed().isEmpty()) {
-      command += " ";
-      command += entry.launch_arguments;
-    }
-  }
-  command += ")";
-  command += " >> ";
-  command += shellQuote(log_file);
-  command += " 2>&1";
-
-  // The project root is used as working directory so relative launch arguments remain valid.
-  process_->setWorkingDirectory(project_root);
-  process_->start("bash", {"-lc", command});
-
-  if (!process_->waitForStarted(3000)) {
-    setStatusText(QString("Status: failed to start %1").arg(entry.display_name));
-    pid_label_->setText("PID: -");
-    return;
-  }
-
-  active_explorer_name_ = entry.display_name;
-  if (!entry.active_path_package_name.trimmed().isEmpty()) {
-    setActivePathPackage(entry.active_path_package_name);
-  } else {
-    // Fallback keeps path tracker usable even when row has no explicit package channel.
-    setActivePathPackage(active_explorer_name_);
-  }
-  active_process_pattern_ = entry.process_match_pattern;
-  if (!entry.post_start_command.trimmed().isEmpty()) {
-    // Optional post-start hook is detached intentionally: it should not block the launch process.
-    QString post_start = "source /opt/ros/jazzy/setup.bash";
-    post_start += " && source ";
-    post_start += shellQuote(install_setup);
-    post_start += " && ";
-    post_start += entry.post_start_command;
-    QProcess::startDetached("bash", {"-lc", post_start}, project_root);
-  }
-  {
-    // Distance always restarts from zero at explorer launch boundary.
-    std::lock_guard<std::mutex> lock(odom_mutex_);
-    has_last_odom_ = false;
-    traveled_distance_m_ = 0.0;
-  }
-  cpu_sum_percent_ = 0.0;
-  ram_sum_mb_ = 0.0;
-  resource_sample_count_ = 0;
-  // CPU delta math requires clean previous-sample state on each run.
-  run_start_time_ = std::chrono::steady_clock::now();
-  has_run_start_time_ = true;
-  monitored_pid_ = -1;
-  last_cpu_ticks_ = 0;
-  last_cpu_check_time_ = {};
-  last_cpu_pid_ = -1;
-  exploration_running_ = true;
-  setRunningUiState(true);
-  setStatusText(QString("Status: running (%1)").arg(entry.display_name));
-  pid_label_->setText("PID: resolving...");
-  cpu_label_->setText("CPU: collecting...");
-  ram_label_->setText("RAM: collecting...");
-  distance_label_->setText("Distance: 0.00 m");
-  time_label_->setText("Time: 00:00");
-  stats_timer_->start();
+  QMetaObject::invokeMethod(this, [this, text]() { setStatusText(text); }, Qt::QueuedConnection);
 }
 
-// stopExplorer handles both running and already-exited cases, then enforces tree-wide cleanup.
-// This defensive approach is required because some launch trees leave grandchildren behind.
-void ExplorationControlPanel::stopExplorer()
-{
-  exploration_running_ = false;
-  const qint64 launch_pid = process_->processId();
-  const qint64 tracked_pid = monitored_pid_;
-  QVector<qint64> known_pids = collectProcessTreePids(launch_pid);
-  known_pids += collectProcessTreePids(tracked_pid);
-  std::sort(known_pids.begin(), known_pids.end());
-  known_pids.erase(std::unique(known_pids.begin(), known_pids.end()), known_pids.end());
-
-  if (process_->state() == QProcess::NotRunning) {
-    // Process may have exited unexpectedly; still enforce descendant cleanup by PID set.
-    signalPids(known_pids, "TERM");
-    signalProcessTree(launch_pid, "TERM");
-    signalProcessTree(tracked_pid, "TERM");
-    signalPids(known_pids, "KILL");
-    signalProcessTree(launch_pid, "KILL");
-    signalProcessTree(tracked_pid, "KILL");
-    stats_timer_->stop();
-    return;
-  }
-
-  process_->terminate();
-  // Escalate to kill if graceful termination does not complete promptly.
-  if (!process_->waitForFinished(2500)) {
-    process_->kill();
-    process_->waitForFinished(1000);
-  }
-
-  // Some launch trees (notably explore_lite) may keep descendants alive after
-  // the parent exits, so enforce a tree-wide shutdown.
-  signalPids(known_pids, "TERM");
-  signalProcessTree(launch_pid, "TERM");
-  signalProcessTree(tracked_pid, "TERM");
-  signalPids(known_pids, "KILL");
-  signalProcessTree(launch_pid, "KILL");
-  signalProcessTree(tracked_pid, "KILL");
-  stats_timer_->stop();
-}
-
-// UI enable/disable policy keeps mutually exclusive actions obvious to the operator.
-void ExplorationControlPanel::setRunningUiState(bool running)
-{
-  for (const auto & entry : explorers_) {
-    entry.start_button->setEnabled(!running);
-  }
-  end_button_->setEnabled(running);
-  path_reset_button_->setEnabled(!running);
-  map_reset_button_->setEnabled(!running);
-  return_start_button_->setEnabled(true);
-}
-
-// setStatusText updates directly on the UI thread.
-void ExplorationControlPanel::setStatusText(const QString & text)
-{
-  status_label_->setText(text);
-}
-
-// postStatusText is safe from worker threads by marshaling updates onto the Qt event loop.
-void ExplorationControlPanel::postStatusText(const QString & text)
-{
-  QMetaObject::invokeMethod(
-    this,
-    [this, text]() { setStatusText(text); },
-    Qt::QueuedConnection);
-}
-
-// Background operation lane serializes expensive requests (map reset, return-to-start, etc.).
-// Reusing one worker thread avoids concurrent service storms from repeated clicks.
 void ExplorationControlPanel::startBackgroundOperation(std::function<void()> task)
 {
-  // Single-flight guard keeps reset/goal actions serialized and easier to reason about.
-  if (operation_in_progress_.exchange(true)) {
+  if (operation_in_progress_.exchange(true))
+  {
     return;
   }
 
-  // Join previous worker before reusing the slot to avoid detached thread accumulation.
-  if (operation_thread_.joinable()) {
+  if (operation_thread_.joinable())
+  {
     operation_thread_.join();
   }
 
-  operation_thread_ = std::thread([this, task = std::move(task)]() mutable {
-      try {
-        task();
-      } catch (const std::exception & ex) {
-        postStatusText(QString("Status: background request failed (%1)").arg(ex.what()));
-      } catch (...) {
-        postStatusText("Status: background request failed");
-      }
-      operation_in_progress_ = false;
-    });
+  operation_thread_ = std::thread(
+      [this, task = std::move(task)]() mutable
+      {
+        try
+        {
+          task();
+        }
+        catch (const std::exception& ex)
+        {
+          postStatusText(QString("Status: background request failed (%1)").arg(ex.what()));
+        }
+        catch (...)
+        {
+          postStatusText("Status: background request failed");
+        }
+        operation_in_progress_ = false;
+      });
 }
 
-// Initial pose is latched and reused as return-to-start target.
 void ExplorationControlPanel::onInitialPose(const geometry_msgs::msg::PoseStamped::SharedPtr msg)
 {
-  if (!msg) {
+  if (!msg)
+  {
     return;
   }
   std::lock_guard<std::mutex> lock(odom_mutex_);
@@ -612,227 +960,10 @@ void ExplorationControlPanel::onInitialPose(const geometry_msgs::msg::PoseStampe
   has_initial_pose_ = true;
 }
 
-// Project root is derived from installed share path so the panel works from build/install layouts.
-QString ExplorationControlPanel::projectRootPath() const
-{
-  const auto benchmark_rviz_share = std::filesystem::path(
-    ament_index_cpp::get_package_share_directory("rviz_autonomous_exploration_benchmark"));
-  auto project_root = benchmark_rviz_share;
-  // install/<pkg>/share/<pkg> -> workspace root (four parent hops).
-  for (int i = 0; i < 4; ++i) {
-    project_root = project_root.parent_path();
-  }
-  return QString::fromStdString(project_root.string());
-}
-
-// Shell quoting is intentionally minimal and only escapes single quotes for bash -lc commands.
-QString ExplorationControlPanel::shellQuote(const QString & value) const
-{
-  QString escaped = value;
-  escaped.replace("'", "'\\''");
-  return "'" + escaped + "'";
-}
-
-// Log file stems are normalized so explorer names can safely map to filesystem paths.
-QString ExplorationControlPanel::safeLogFileStem(const QString & value) const
-{
-  QString stem = value.trimmed();
-  stem.replace(QRegularExpression("[^A-Za-z0-9._-]"), "_");
-  if (stem.isEmpty()) {
-    return "explorer";
-  }
-  return stem;
-}
-
-// runCommand is a short-lived helper for host-side introspection commands.
-// Timeout is intentionally small to avoid stalling UI-triggered flows.
-QString ExplorationControlPanel::runCommand(const QString & command) const
-{
-  QProcess proc;
-  proc.start("bash", {"-lc", command});
-  // Keep helper responsive; callers use it for control-plane checks, not long jobs.
-  if (!proc.waitForFinished(300)) {
-    return {};
-  }
-  return QString::fromUtf8(proc.readAllStandardOutput()).trimmed();
-}
-
-// Recursive shell function sends a signal to all descendants before signaling root.
-// This catches wrapper-heavy launch stacks where children outlive their parent.
-void ExplorationControlPanel::signalProcessTree(qint64 root_pid, const QString & signal_name) const
-{
-  if (root_pid <= 0) {
-    return;
-  }
-
-  const QString escaped_signal = shellQuote(signal_name);
-  runCommand(
-    QString(
-      "root=%1; sig=%2; "
-      "signal_descendants() { "
-      "  local p=\"$1\" child; "
-      "  for child in $(ps -o pid= --ppid \"$p\"); do "
-      "    signal_descendants \"$child\"; "
-      "    kill -s \"$sig\" \"$child\" 2>/dev/null || true; "
-      "  done; "
-      "}; "
-      "signal_descendants \"$root\"; "
-      "kill -s \"$sig\" \"$root\" 2>/dev/null || true")
-      .arg(root_pid)
-      .arg(escaped_signal));
-}
-
-// /proc-based traversal avoids external tools and gives deterministic child discovery.
-QVector<qint64> ExplorationControlPanel::collectProcessTreePids(qint64 root_pid) const
-{
-  QVector<qint64> pids;
-  if (root_pid <= 0) {
-    return pids;
-  }
-
-  QVector<qint64> pending{root_pid};
-  while (!pending.isEmpty()) {
-    const qint64 pid = pending.back();
-    pending.pop_back();
-    if (pid <= 0 || pids.contains(pid)) {
-      continue;
-    }
-
-    pids.push_back(pid);
-
-    QFile children_file(QString("/proc/%1/task/%1/children").arg(pid));
-    if (!children_file.open(QIODevice::ReadOnly)) {
-      continue;
-    }
-
-    const QList<QByteArray> child_parts = children_file.readAll().trimmed().split(' ');
-    for (const QByteArray & child_part : child_parts) {
-      if (child_part.isEmpty()) {
-        continue;
-      }
-
-      bool ok = false;
-      const qint64 child_pid = child_part.toLongLong(&ok);
-      if (ok && child_pid > 0) {
-        pending.push_back(child_pid);
-      }
-    }
-  }
-
-  std::sort(pids.begin(), pids.end());
-  pids.erase(std::unique(pids.begin(), pids.end()), pids.end());
-  return pids;
-}
-
-// signalPids batches explicit known PIDs when already discovered locally.
-void ExplorationControlPanel::signalPids(const QVector<qint64> & pids, const QString & signal_name) const
-{
-  if (pids.isEmpty()) {
-    return;
-  }
-
-  const QString escaped_signal = shellQuote(signal_name);
-  QStringList pid_args;
-  // Filter invalid PIDs defensively before constructing shell command.
-  for (qint64 pid : pids) {
-    if (pid > 0) {
-      pid_args.push_back(QString::number(pid));
-    }
-  }
-  if (pid_args.isEmpty()) {
-    return;
-  }
-
-  runCommand(
-    QString("kill -s %1 %2 2>/dev/null || true")
-      .arg(escaped_signal)
-      .arg(pid_args.join(' ')));
-}
-
-// Liveness check uses /proc presence as a cheap single-process probe.
-bool ExplorationControlPanel::isPidAlive(qint64 pid) const
-{
-  if (pid <= 0) {
-    return false;
-  }
-  return QFile::exists(QString("/proc/%1/stat").arg(pid));
-}
-
-// resolveMonitoredPid maps panel-level process patterns onto descendants of the launch PID.
-// Restricting scope to the launch tree prevents cross-terminal false positives.
-qint64 ExplorationControlPanel::resolveMonitoredPid() const
-{
-  if (monitored_pid_ > 0 && isPidAlive(monitored_pid_)) {
-    return monitored_pid_;
-  }
-
-  if (active_process_pattern_.isEmpty()) {
-    return -1;
-  }
-
-  // Resolve only from descendants of the panel-started launch process.
-  // This avoids picking unrelated processes from other terminals/sessions.
-  const qint64 launch_pid = process_->processId();
-  if (launch_pid <= 0) {
-    return -1;
-  }
-
-  const QRegularExpression pattern(active_process_pattern_);
-  if (!pattern.isValid()) {
-    return -1;
-  }
-
-  qint64 matched_pid = -1;
-  const QVector<qint64> tree_pids = collectProcessTreePids(launch_pid);
-  for (qint64 pid : tree_pids) {
-    if (pid == launch_pid) {
-      continue;
-    }
-
-    QFile cmdline_file(QString("/proc/%1/cmdline").arg(pid));
-    QString command_line;
-    if (cmdline_file.open(QIODevice::ReadOnly)) {
-      // /proc cmdline is NUL-separated; replace with spaces for regex matching.
-      QByteArray cmdline = cmdline_file.readAll();
-      cmdline.replace('\0', ' ');
-      command_line = QString::fromLocal8Bit(cmdline).trimmed();
-    }
-
-    if (command_line.isEmpty()) {
-      // Fallback to comm when cmdline is unavailable (kernel threads/permission quirks).
-      QFile comm_file(QString("/proc/%1/comm").arg(pid));
-      if (comm_file.open(QIODevice::ReadOnly)) {
-        command_line = QString::fromLocal8Bit(comm_file.readAll()).trimmed();
-      }
-    }
-
-    if (command_line.isEmpty() || command_line.contains(".launch.py")) {
-      continue;
-    }
-
-    if (pattern.match(command_line).hasMatch()) {
-      // Keep last match in traversal; usually the deepest child is the true worker process.
-      matched_pid = pid;
-    }
-  }
-
-  return matched_pid;
-}
-
-// Elapsed time is rendered as MM:SS for compact panel display.
-QString ExplorationControlPanel::formatElapsedTime(qint64 elapsed_seconds) const
-{
-  const qint64 minutes = elapsed_seconds / 60;
-  const qint64 seconds = elapsed_seconds % 60;
-  return QString("%1:%2")
-    .arg(minutes, 2, 10, QLatin1Char('0'))
-    .arg(seconds, 2, 10, QLatin1Char('0'));
-}
-
-// Frontier markers are cleared with DELETEALL so stale visual state is removed in one publish.
 void ExplorationControlPanel::clearFrontierMarkers()
 {
-  if (!frontier_clear_pub_ || !metrics_node_) {
+  if (!frontier_clear_pub_ || !metrics_node_)
+  {
     return;
   }
 
@@ -845,10 +976,10 @@ void ExplorationControlPanel::clearFrontierMarkers()
   frontier_clear_pub_->publish(clear_msg);
 }
 
-// Traveled path reset republishes an empty path in map frame for deterministic RViz clearing.
 void ExplorationControlPanel::clearTraveledPath()
 {
-  if (!traveled_path_clear_pub_ || !metrics_node_) {
+  if (!traveled_path_clear_pub_ || !metrics_node_)
+  {
     return;
   }
 
@@ -859,40 +990,29 @@ void ExplorationControlPanel::clearTraveledPath()
   traveled_path_clear_pub_->publish(clear_path);
 }
 
-// Tracker reset topic clears per-package path history inside the tracker node.
 void ExplorationControlPanel::requestPathTrackerReset()
 {
-  if (!traveled_path_reset_pub_) {
+  if (!traveled_path_reset_pub_)
+  {
     return;
   }
   std_msgs::msg::Empty msg;
   traveled_path_reset_pub_->publish(msg);
 }
 
-// Active package broadcast routes new path samples into the selected package channel.
-void ExplorationControlPanel::setActivePathPackage(const QString & package_name)
-{
-  if (!active_path_package_pub_) {
-    return;
-  }
-  std_msgs::msg::String msg;
-  msg.data = package_name.toStdString();
-  active_path_package_pub_->publish(msg);
-}
-
-// Return-to-start uses the latched initial pose and Nav2 action client with async callbacks.
 void ExplorationControlPanel::sendReturnToStartGoal()
 {
-  if (!metrics_node_ || !navigate_to_pose_client_) {
+  if (!metrics_node_ || !navigate_to_pose_client_)
+  {
     setStatusText("Status: return start failed (client unavailable)");
     return;
   }
 
   geometry_msgs::msg::PoseStamped initial_pose;
   {
-    // Copy under lock once so asynchronous action setup uses a stable snapshot.
     std::lock_guard<std::mutex> lock(odom_mutex_);
-    if (!has_initial_pose_) {
+    if (!has_initial_pose_)
+    {
       setStatusText("Status: return start failed (initial pose not available yet)");
       return;
     }
@@ -900,54 +1020,71 @@ void ExplorationControlPanel::sendReturnToStartGoal()
   }
 
   setStatusText("Status: return start requested");
-  startBackgroundOperation([this, initial_pose]() {
-      if (!navigate_to_pose_client_->wait_for_action_server(std::chrono::milliseconds(1200))) {
-        postStatusText("Status: return start failed (navigate_to_pose unavailable)");
-        return;
-      }
+  startBackgroundOperation(
+      [this, initial_pose]()
+      {
+        if (!navigate_to_pose_client_->wait_for_action_server(std::chrono::milliseconds(1200)))
+        {
+          postStatusText("Status: return start failed (navigate_to_pose unavailable)");
+          return;
+        }
 
-      nav2_msgs::action::NavigateToPose::Goal goal;
-      // Stamp at send time so Nav2 receives a current header even for old latched poses.
-      goal.pose.header.stamp = metrics_node_->now();
-      goal.pose.header.frame_id = initial_pose.header.frame_id.empty() ? "map" : initial_pose.header.frame_id;
-      goal.pose.pose = initial_pose.pose;
+        nav2_msgs::action::NavigateToPose::Goal goal;
+        // Stamp at send time so Nav2 receives a current header even for old latched poses.
+        goal.pose.header.stamp = metrics_node_->now();
+        goal.pose.header.frame_id =
+            initial_pose.header.frame_id.empty() ? "map" : initial_pose.header.frame_id;
+        goal.pose.pose = initial_pose.pose;
 
-      rclcpp_action::Client<nav2_msgs::action::NavigateToPose>::SendGoalOptions options;
-      options.goal_response_callback =
-        [this](const rclcpp_action::ClientGoalHandle<nav2_msgs::action::NavigateToPose>::SharedPtr & handle) {
-          if (!handle) {
+        rclcpp_action::Client<nav2_msgs::action::NavigateToPose>::SendGoalOptions options;
+        options.goal_response_callback =
+            [this](
+                const rclcpp_action::ClientGoalHandle<nav2_msgs::action::NavigateToPose>::SharedPtr&
+                    handle)
+        {
+          if (!handle)
+          {
             postStatusText("Status: return start rejected");
-          } else {
+          }
+          else
+          {
             postStatusText("Status: return start accepted");
           }
         };
-      options.result_callback =
-        [this](const rclcpp_action::ClientGoalHandle<nav2_msgs::action::NavigateToPose>::WrappedResult & result) {
-          // Map action result codes directly to operator-facing status messages.
-          if (result.code == rclcpp_action::ResultCode::SUCCEEDED) {
+        options.result_callback = [this](const rclcpp_action::ClientGoalHandle<
+                                         nav2_msgs::action::NavigateToPose>::WrappedResult& result)
+        {
+          if (result.code == rclcpp_action::ResultCode::SUCCEEDED)
+          {
             postStatusText("Status: return start completed");
-          } else if (result.code == rclcpp_action::ResultCode::ABORTED) {
+          }
+          else if (result.code == rclcpp_action::ResultCode::ABORTED)
+          {
             postStatusText("Status: return start aborted");
-          } else if (result.code == rclcpp_action::ResultCode::CANCELED) {
+          }
+          else if (result.code == rclcpp_action::ResultCode::CANCELED)
+          {
             postStatusText("Status: return start canceled");
-          } else {
+          }
+          else
+          {
             postStatusText("Status: return start failed");
           }
         };
-      navigate_to_pose_client_->async_send_goal(goal, options);
-    });
+        navigate_to_pose_client_->async_send_goal(goal, options);
+      });
 }
 
-// Generic Empty service helper is used for fallback reset endpoints.
-bool ExplorationControlPanel::callEmptyService(const QString & service_name, int timeout_ms)
+bool ExplorationControlPanel::callEmptyService(const QString& service_name, int timeout_ms)
 {
-  if (!metrics_node_ || stop_ros_thread_) {
+  if (!metrics_node_ || stop_ros_thread_)
+  {
     return false;
   }
 
-  auto client =
-    metrics_node_->create_client<std_srvs::srv::Empty>(service_name.toStdString());
-  if (!client->wait_for_service(std::chrono::milliseconds(timeout_ms))) {
+  auto client = metrics_node_->create_client<std_srvs::srv::Empty>(service_name.toStdString());
+  if (!client->wait_for_service(std::chrono::milliseconds(timeout_ms)))
+  {
     return false;
   }
 
@@ -955,8 +1092,10 @@ bool ExplorationControlPanel::callEmptyService(const QString & service_name, int
   auto future = client->async_send_request(request);
   const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
   // Poll in short waits so shutdown can interrupt promptly.
-  while (!stop_ros_thread_ && std::chrono::steady_clock::now() < deadline) {
-    if (future.wait_for(std::chrono::milliseconds(100)) == std::future_status::ready) {
+  while (!stop_ros_thread_ && std::chrono::steady_clock::now() < deadline)
+  {
+    if (future.wait_for(std::chrono::milliseconds(100)) == std::future_status::ready)
+    {
       (void)future.get();
       return true;
     }
@@ -964,28 +1103,29 @@ bool ExplorationControlPanel::callEmptyService(const QString & service_name, int
   return false;
 }
 
-// Service discovery filters for slam/reset-like semantics, then ranks candidates by preference.
 QVector<QPair<QString, QString>> ExplorationControlPanel::discoverSlamResetServices() const
 {
   QVector<QPair<QString, QString>> services;
-  if (!metrics_node_) {
+  if (!metrics_node_)
+  {
     return services;
   }
 
   const auto graph = metrics_node_->get_service_names_and_types();
-  for (const auto & item : graph) {
-    const auto & service_name = item.first;
-    const auto & types = item.second;
+  for (const auto& item : graph)
+  {
+    const auto& service_name = item.first;
+    const auto& types = item.second;
     const QString qname = QString::fromStdString(service_name);
     const QString lname = qname.toLower();
-    for (const auto & t : types) {
+    for (const auto& t : types)
+    {
       const QString qtype = QString::fromStdString(t);
       const bool supported_type =
-        (qtype == "slam_toolbox/srv/Reset") ||
-        (qtype == "slam_toolbox/srv/Clear") ||
-        (qtype == "slam_toolbox/srv/ClearQueue") ||
-        (qtype == "std_srvs/srv/Empty");
-      if (!supported_type) {
+          (qtype == "slam_toolbox/srv/Reset") || (qtype == "slam_toolbox/srv/Clear") ||
+          (qtype == "slam_toolbox/srv/ClearQueue") || (qtype == "std_srvs/srv/Empty");
+      if (!supported_type)
+      {
         continue;
       }
 
@@ -993,60 +1133,91 @@ QVector<QPair<QString, QString>> ExplorationControlPanel::discoverSlamResetServi
       const QString ltype = qtype.toLower();
       const bool reset_like_name = lname.contains("reset") || lname.contains("clear");
       const bool reset_like_type = ltype.contains("reset") || ltype.contains("clear");
-      const bool slam_like = lname.contains("slam") || lname.contains("toolbox") || ltype.contains("slam_toolbox");
-      if (slam_like && (reset_like_name || reset_like_type)) {
+      const bool slam_like =
+          lname.contains("slam") || lname.contains("toolbox") || ltype.contains("slam_toolbox");
+      if (slam_like && (reset_like_name || reset_like_type))
+      {
         services.push_back({qname, qtype});
       }
     }
   }
 
-  std::sort(services.begin(), services.end(), [](const QPair<QString, QString> & a,
-    const QPair<QString, QString> & b) {
-    const QString na = a.first.toLower();
-    const QString nb = b.first.toLower();
-    const QString ta = a.second.toLower();
-    const QString tb = b.second.toLower();
-    // Prefer semantic reset endpoints before broader clear/empty fallbacks.
-    auto score = [](const QString & name, const QString & type) {
-      if (type.contains("slam_toolbox/srv/reset")) {return 0;}
-      if (name.contains("reset")) {return 1;}
-      if (type.contains("slam_toolbox/srv/clear") && !type.contains("queue")) {return 2;}
-      if (name.contains("clear") && !name.contains("queue")) {return 3;}
-      if (type.contains("clearqueue")) {return 4;}
-      if (name.contains("clear_queue")) {return 5;}
-      if (type.contains("std_srvs/srv/empty")) {return 6;}
-      return 3;
-    };
-    const int sa = score(na, ta);
-    const int sb = score(nb, tb);
-    if (sa != sb) {
-      return sa < sb;
-    }
-    if (na != nb) {
-      return na < nb;
-    }
-    return ta < tb;
-  });
+  std::sort(services.begin(), services.end(),
+            [](const QPair<QString, QString>& a, const QPair<QString, QString>& b)
+            {
+              const QString na = a.first.toLower();
+              const QString nb = b.first.toLower();
+              const QString ta = a.second.toLower();
+              const QString tb = b.second.toLower();
+              // Prefer semantic reset endpoints before broader clear/empty fallbacks.
+              auto score = [](const QString& name, const QString& type)
+              {
+                if (type.contains("slam_toolbox/srv/reset"))
+                {
+                  return 0;
+                }
+                if (name.contains("reset"))
+                {
+                  return 1;
+                }
+                if (type.contains("slam_toolbox/srv/clear") && !type.contains("queue"))
+                {
+                  return 2;
+                }
+                if (name.contains("clear") && !name.contains("queue"))
+                {
+                  return 3;
+                }
+                if (type.contains("clearqueue"))
+                {
+                  return 4;
+                }
+                if (name.contains("clear_queue"))
+                {
+                  return 5;
+                }
+                if (type.contains("std_srvs/srv/empty"))
+                {
+                  return 6;
+                }
+                return 3;
+              };
+              const int sa = score(na, ta);
+              const int sb = score(nb, tb);
+              if (sa != sb)
+              {
+                return sa < sb;
+              }
+              if (na != nb)
+              {
+                return na < nb;
+              }
+              return ta < tb;
+            });
 
   return services;
 }
 
-// Type-dispatched reset caller keeps request/response semantics specific to each service API.
-bool ExplorationControlPanel::callSlamResetService(
-  const QString & service_name, const QString & service_type, int timeout_ms)
+bool ExplorationControlPanel::callSlamResetService(const QString& service_name,
+                                                   const QString& service_type, int timeout_ms)
 {
-  if (service_type == "std_srvs/srv/Empty") {
+  if (service_type == "std_srvs/srv/Empty")
+  {
     // Legacy/bridged deployments may only expose Empty services.
     return callEmptyService(service_name, timeout_ms);
   }
 
-  if (!metrics_node_ || stop_ros_thread_) {
+  if (!metrics_node_ || stop_ros_thread_)
+  {
     return false;
   }
 
-  if (service_type == "slam_toolbox/srv/Reset") {
-    auto client = metrics_node_->create_client<slam_toolbox::srv::Reset>(service_name.toStdString());
-    if (!client->wait_for_service(std::chrono::milliseconds(timeout_ms))) {
+  if (service_type == "slam_toolbox/srv/Reset")
+  {
+    auto client =
+        metrics_node_->create_client<slam_toolbox::srv::Reset>(service_name.toStdString());
+    if (!client->wait_for_service(std::chrono::milliseconds(timeout_ms)))
+    {
       return false;
     }
     auto request = std::make_shared<slam_toolbox::srv::Reset::Request>();
@@ -1054,8 +1225,10 @@ bool ExplorationControlPanel::callSlamResetService(
     request->pause_new_measurements = false;
     auto future = client->async_send_request(request);
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
-    while (!stop_ros_thread_ && std::chrono::steady_clock::now() < deadline) {
-      if (future.wait_for(std::chrono::milliseconds(100)) == std::future_status::ready) {
+    while (!stop_ros_thread_ && std::chrono::steady_clock::now() < deadline)
+    {
+      if (future.wait_for(std::chrono::milliseconds(100)) == std::future_status::ready)
+      {
         auto response = future.get();
         return response && response->result == 0;
       }
@@ -1063,16 +1236,21 @@ bool ExplorationControlPanel::callSlamResetService(
     return false;
   }
 
-  if (service_type == "slam_toolbox/srv/Clear") {
-    auto client = metrics_node_->create_client<slam_toolbox::srv::Clear>(service_name.toStdString());
-    if (!client->wait_for_service(std::chrono::milliseconds(timeout_ms))) {
+  if (service_type == "slam_toolbox/srv/Clear")
+  {
+    auto client =
+        metrics_node_->create_client<slam_toolbox::srv::Clear>(service_name.toStdString());
+    if (!client->wait_for_service(std::chrono::milliseconds(timeout_ms)))
+    {
       return false;
     }
     auto request = std::make_shared<slam_toolbox::srv::Clear::Request>();
     auto future = client->async_send_request(request);
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
-    while (!stop_ros_thread_ && std::chrono::steady_clock::now() < deadline) {
-      if (future.wait_for(std::chrono::milliseconds(100)) == std::future_status::ready) {
+    while (!stop_ros_thread_ && std::chrono::steady_clock::now() < deadline)
+    {
+      if (future.wait_for(std::chrono::milliseconds(100)) == std::future_status::ready)
+      {
         (void)future.get();
         return true;
       }
@@ -1080,16 +1258,21 @@ bool ExplorationControlPanel::callSlamResetService(
     return false;
   }
 
-  if (service_type == "slam_toolbox/srv/ClearQueue") {
-    auto client = metrics_node_->create_client<slam_toolbox::srv::ClearQueue>(service_name.toStdString());
-    if (!client->wait_for_service(std::chrono::milliseconds(timeout_ms))) {
+  if (service_type == "slam_toolbox/srv/ClearQueue")
+  {
+    auto client =
+        metrics_node_->create_client<slam_toolbox::srv::ClearQueue>(service_name.toStdString());
+    if (!client->wait_for_service(std::chrono::milliseconds(timeout_ms)))
+    {
       return false;
     }
     auto request = std::make_shared<slam_toolbox::srv::ClearQueue::Request>();
     auto future = client->async_send_request(request);
     const auto deadline = std::chrono::steady_clock::now() + std::chrono::milliseconds(timeout_ms);
-    while (!stop_ros_thread_ && std::chrono::steady_clock::now() < deadline) {
-      if (future.wait_for(std::chrono::milliseconds(100)) == std::future_status::ready) {
+    while (!stop_ros_thread_ && std::chrono::steady_clock::now() < deadline)
+    {
+      if (future.wait_for(std::chrono::milliseconds(100)) == std::future_status::ready)
+      {
         auto response = future.get();
         return response && response->status;
       }
@@ -1100,195 +1283,5 @@ bool ExplorationControlPanel::callSlamResetService(
   return false;
 }
 
-// updateProcessStats resolves active PID, samples /proc CPU/RAM, and updates run aggregates.
-// Missing or changing process state is handled defensively to avoid stale readings.
-void ExplorationControlPanel::updateProcessStats()
-{
-  if (process_->state() == QProcess::NotRunning) {
-    stats_timer_->stop();
-    return;
-  }
-
-  if (has_run_start_time_) {
-    const auto now = std::chrono::steady_clock::now();
-    const auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now - run_start_time_);
-    const qint64 elapsed_seconds = std::max<qint64>(0, elapsed.count());
-    time_label_->setText(QString("Time: %1").arg(formatElapsedTime(elapsed_seconds)));
-  } else {
-    time_label_->setText("Time: -");
-  }
-
-  double traveled_distance_m = 0.0;
-  {
-    // Copy shared metric under lock and render outside lock to keep callback contention low.
-    std::lock_guard<std::mutex> lock(odom_mutex_);
-    traveled_distance_m = traveled_distance_m_;
-  }
-  distance_label_->setText(QString("Distance: %1 m").arg(traveled_distance_m, 0, 'f', 2));
-
-  if (monitored_pid_ <= 0 || !isPidAlive(monitored_pid_)) {
-    const qint64 resolved_pid = resolveMonitoredPid();
-    if (resolved_pid > 0) {
-      monitored_pid_ = resolved_pid;
-    } else {
-      monitored_pid_ = -1;
-    }
-  }
-
-  const qint64 pid = monitored_pid_;
-  if (pid <= 0) {
-    pid_label_->setText("PID: -");
-    cpu_label_->setText("CPU: -");
-    ram_label_->setText("RAM: - MB");
-    last_cpu_ticks_ = 0;
-    last_cpu_check_time_ = {};
-    last_cpu_pid_ = -1;
-    return;
-  }
-  // Show the resolved worker PID (not necessarily the top-level launch shell PID).
-  pid_label_->setText(QString("PID: %1").arg(pid));
-
-  QFile stat_file(QString("/proc/%1/stat").arg(pid));
-  QFile statm_file(QString("/proc/%1/statm").arg(pid));
-  if (!stat_file.open(QIODevice::ReadOnly) || !statm_file.open(QIODevice::ReadOnly)) {
-    cpu_label_->setText("CPU: -");
-    ram_label_->setText("RAM: - MB");
-    last_cpu_ticks_ = 0;
-    last_cpu_check_time_ = {};
-    last_cpu_pid_ = -1;
-    return;
-  }
-
-  bool ram_ok = false;
-  double rss_mb = 0.0;
-  // /proc/<pid>/statm second field is resident pages; convert to MB via page size.
-  const QList<QByteArray> statm_parts = statm_file.readAll().trimmed().split(' ');
-  if (statm_parts.size() >= 2) {
-    bool ok = false;
-    const uint64_t rss_pages = statm_parts[1].toULongLong(&ok);
-    if (ok) {
-      rss_mb = (rss_pages * static_cast<double>(sysconf(_SC_PAGESIZE))) / (1024.0 * 1024.0);
-      ram_label_->setText(QString("RAM: %1 MB").arg(rss_mb, 0, 'f', 1));
-      ram_ok = true;
-    }
-  }
-  if (!ram_ok) {
-    ram_label_->setText("RAM: - MB");
-  }
-
-  // cpu_ok: this refresh produced a numeric CPU percentage that can be displayed and aggregated.
-  // cpu_state_updated: we parsed counters successfully, so baseline state is now synchronized.
-  // cpu_percent: instantaneous estimate from delta(process_cpu_time) / delta(wall_time).
-  // Keeping these flags explicit makes UI/output behavior deterministic in partial-failure cases.
-  bool cpu_ok = false;
-  bool cpu_state_updated = false;
-  double cpu_percent = 0.0;
-  // /proc/<pid>/stat includes process name in parentheses, and that name may contain spaces.
-  // Example: "1234 (my process) R ...". Splitting naively by space would break field indexing.
-  // We locate the last ')' first, then parse positional numeric fields from the remainder.
-  const QByteArray stat_data = stat_file.readAll();
-  const int comm_end = stat_data.lastIndexOf(')');
-  if (comm_end > 0 && comm_end + 2 < stat_data.size()) {
-    // Slice after ") " so index 0 now corresponds to kernel's original "state" field.
-    const QList<QByteArray> stat_parts = stat_data.mid(comm_end + 2).trimmed().split(' ');
-    // After stripping "pid (comm)", indexes 11/12 correspond to utime/stime in jiffies.
-    // We need both user+kernel ticks to represent total process CPU time.
-    if (stat_parts.size() > 12) {
-      bool utime_ok = false;
-      bool stime_ok = false;
-      // Parse as unsigned 64-bit to avoid overflow on long-lived processes.
-      const uint64_t utime = stat_parts[11].toULongLong(&utime_ok);
-      const uint64_t stime = stat_parts[12].toULongLong(&stime_ok);
-      if (utime_ok && stime_ok) {
-        // total_ticks is cumulative CPU time consumed by the process since start.
-        const uint64_t total_ticks = utime + stime;
-        // steady_clock avoids wall-clock jumps (NTP/timezone updates) during delta computation.
-        const auto now = std::chrono::steady_clock::now();
-        cpu_state_updated = true;
-
-        // CPU percent requires two samples for the same PID.
-        // On first sample (or when tracked PID changes), we only prime the baseline.
-        if (last_cpu_pid_ == pid) {
-          // CPU usage is computed from process tick delta over wall-clock elapsed interval.
-          const double elapsed_sec = std::chrono::duration<double>(now - last_cpu_check_time_).count();
-          if (elapsed_sec > 0.0) {
-            // Guard against counter regressions (PID recycle or proc race) by clamping delta.
-            const uint64_t ticks_diff = total_ticks >= last_cpu_ticks_ ? total_ticks - last_cpu_ticks_ : 0;
-            // _SC_CLK_TCK converts jiffies -> seconds for this platform.
-            const double hz = static_cast<double>(sysconf(_SC_CLK_TCK));
-            if (hz > 0.0) {
-              // Percentage may exceed 100 on multicore if process is multithreaded.
-              cpu_percent = (static_cast<double>(ticks_diff) / hz) / elapsed_sec * 100.0;
-              cpu_label_->setText(QString("CPU: %1%").arg(cpu_percent, 0, 'f', 1));
-              cpu_ok = true;
-            }
-          }
-        }
-
-        if (!cpu_ok) {
-          // We intentionally avoid showing "0.0%" for primer samples because that is misleading.
-          // "collecting..." tells operators that one more tick is needed for a delta-based metric.
-          cpu_label_->setText("CPU: collecting...");
-        }
-
-        // Always refresh baseline after a successful parse so next tick has delta reference.
-        last_cpu_ticks_ = total_ticks;
-        last_cpu_check_time_ = now;
-        last_cpu_pid_ = pid;
-      }
-    }
-  }
-  if (!cpu_state_updated) {
-    // Parsing failure resets CPU sampling state to avoid mixing stale counters.
-    // This keeps future samples self-healing when /proc becomes readable again.
-    // Without reset, a later successful sample could compute an invalidly large delta.
-    cpu_label_->setText("CPU: -");
-    last_cpu_ticks_ = 0;
-    last_cpu_check_time_ = {};
-    last_cpu_pid_ = -1;
-  }
-
-  if (cpu_ok && ram_ok) {
-    // Aggregate only complete samples so averages remain comparable across runs.
-    // Partial samples (CPU or RAM missing) are intentionally excluded.
-    cpu_sum_percent_ += cpu_percent;
-    ram_sum_mb_ += rss_mb;
-    ++resource_sample_count_;
-  }
-}
-
-// Odom callback accumulates traveled distance only while an exploration run is active.
-void ExplorationControlPanel::onOdometry(const nav_msgs::msg::Odometry::SharedPtr msg)
-{
-  if (!exploration_running_ || !msg) {
-    return;
-  }
-
-  std::lock_guard<std::mutex> lock(odom_mutex_);
-  const double x = msg->pose.pose.position.x;
-  const double y = msg->pose.pose.position.y;
-  if (!has_last_odom_) {
-    // First sample seeds baseline but does not contribute distance.
-    has_last_odom_ = true;
-    last_x_ = x;
-    last_y_ = y;
-    return;
-  }
-
-  const double dx = x - last_x_;
-  const double dy = y - last_y_;
-  const double step = std::hypot(dx, dy);
-  last_x_ = x;
-  last_y_ = y;
-
-  // Guard against rare TF/odom jumps on respawn or reset.
-  if (!std::isfinite(step) || step > 2.0) {
-    return;
-  }
-
-  traveled_distance_m_ += step;
-}
-
 }  // namespace utils
-
 PLUGINLIB_EXPORT_CLASS(utils::ExplorationControlPanel, rviz_common::Panel)

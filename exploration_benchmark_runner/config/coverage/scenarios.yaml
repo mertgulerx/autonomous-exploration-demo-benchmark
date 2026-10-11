@@ -1,0 +1,29 @@
+# Reviewed interior regions in Gazebo world coordinates; never explorer tuning.
+resolution: 0.05
+# Wheel/floor contact is below this slab. Upper bound covers the robot's body
+# and mounted sensors, including the camera (URDF + settled base height).
+body_height_slab: [0.03, 0.35]
+scenarios:
+  bookstore:
+    bounds: [-7.85, -7.4, 7.85, 7.4]
+    inclusion_polygons:
+      - [[-7.752, -7.224], [7.765, -7.224], [7.765, 2.27], [2.45, 2.27], [2.45, 7.317], [-7.752, 7.317]]
+    exclusion_polygons: []
+    review: L-shaped floor mesh; exclude the northeast exterior beyond x=2.45 and y=2.27, and retain only the spawn-connected free-space component.
+  corridor:
+    bounds: [-9.1, -6.6, 9.1, 6.6]
+    inclusion_polygons:
+      - [[-9, -2], [9, -2], [9, 2], [-9, 2]]
+      - [[-6, 2], [-3, 2], [-3, 6.5], [-6, 6.5]]
+      - [[3, 2], [6, 2], [6, 6.5], [3, 6.5]]
+      - [[-5.625, -6.5], [-3.375, -6.5], [-3.375, -2], [-5.625, -2]]
+      - [[-1.125, -6.5], [1.125, -6.5], [1.125, -2], [-1.125, -2]]
+      - [[3.375, -6.5], [5.625, -6.5], [5.625, -2], [3.375, -2]]
+    exclusion_polygons: []
+    review: Central corridor, both top rooms and all three bottom rooms; exclude all exterior floor.
+  warehouse:
+    bounds: [-15, -25, 15, 25]
+    inclusion_polygons:
+      - [[-15, -25], [15, -25], [15, 25], [-15, 25]]
+    exclusion_polygons: []
+    review: Interior of the version-5 warehouse collision shell, with shelves and fixed furniture removed by geometry.

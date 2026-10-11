@@ -1,0 +1,54 @@
+schema_version: 1
+sources:
+  rosbot:
+    url: https://github.com/husarion/rosbot_ros.git
+    revision: ff77c662bdfd1fac933af74df488c917f987afc5
+    family: rosbot
+  ugv:
+    url: https://github.com/husarion/husarion_ugv_ros.git
+    revision: 559e784b84c05c813b6ecfce02751d8b3966528a
+    family: ugv
+  rosbot_husarion_asset_msgs:
+    url: https://github.com/husarion/husarion_asset_msgs.git
+    revision: 45e1d686c761431e6cbb7fae066f2eb516b091da
+    family: rosbot
+  rosbot_husarion_components_description:
+    url: https://github.com/husarion/husarion_components_description.git
+    revision: 5f783f89961bb16098184f5381b1a76058cec19e
+    family: rosbot
+  rosbot_husarion_controllers:
+    url: https://github.com/husarion/husarion_controllers
+    revision: 724f4273b637a938ffb3171ebc0e5c96d020f98d
+    family: rosbot
+  rosbot_husarion_gz_worlds:
+    url: https://github.com/husarion/husarion_gz_worlds
+    revision: 4f1fdd1d09b4d524261d9c335816439c5f11fb44
+    family: rosbot
+  rosbot_tf_namespace_bridge:
+    url: https://github.com/husarion/tf_namespace_bridge
+    revision: 48ea8cd5184630d79ab54060e3a959881d58182c
+    family: rosbot
+  ugv_behaviortree_cpp:
+    url: https://github.com/BehaviorTree/BehaviorTree.CPP
+    revision: 3ff6a32ba0497a08519c77a1436e3b81eff1bcd6
+    family: ugv
+  ugv_behaviortree_ros2:
+    url: https://github.com/BehaviorTree/BehaviorTree.ROS2
+    revision: 7a6ace6424adaa81737b95d20d81e1e8c0782ed7
+    family: ugv
+  ugv_husarion_controllers:
+    url: https://github.com/husarion/husarion_controllers
+    revision: 2b2b37a1579ae3968693a368ca7a7aaa351a41f4
+    family: ugv
+  ugv_husarion_gz_worlds:
+    url: https://github.com/husarion/husarion_gz_worlds.git
+    revision: 56b5788a9584d3bc31ba85d36582ba965752c27e
+    family: ugv
+  ugv_husarion_components_description:
+    url: https://github.com/husarion/husarion_components_description.git
+    revision: ed1d8664354ed1dcaa94cc973dd8bed7bef62690
+    family: ugv
+  ugv_joy2twist:
+    url: https://github.com/husarion/joy2twist.git
+    revision: 64c271cd2ecc77ef4ad09f959d057aa4eedc3c5f
+    family: ugv

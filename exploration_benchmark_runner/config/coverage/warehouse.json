@@ -1,0 +1,1337 @@
+{
+  "id": "warehouse_coverage_v1",
+  "metric_version": 1,
+  "world": "warehouse",
+  "spawn": [
+    -12.97,
+    8.23,
+    0.1,
+    1.58
+  ],
+  "resolution": 0.05,
+  "origin": [
+    -15,
+    -25,
+    0.0
+  ],
+  "width": 600,
+  "height": 1000,
+  "target_cells": 507794,
+  "target_area_m2": 1269.4850000000004,
+  "grid_file": "warehouse.npz",
+  "grid_sha256": "0aa8252354033b10718cf1ae5eb841315d02a141ddc96880c0fcff45b8ac1f5a",
+  "source_sha256": {
+    "simulation/worlds/warehouse/warehouse.sdf": "96d132926c8bdbe47e3629129f24e564301bf9e401d4721a58c9818b1eaf694d",
+    "exploration_benchmark_runner/config/coverage/scenarios.yaml": "693ba684585aaae272ff2333c2da55ec3f41b5fb0c285968d114354d6bb20c26",
+    "simulation/Week-7-8-ROS2-Navigation/bme_ros2_navigation/urdf/mogi_bot.urdf": "11b3a0684efb4f44bd12719f36ed6732b6dbf1d4570ea14580f4e81ba8af263a",
+    "fuel:https://fuel.gazebosim.org/1.0/OpenRobotics/models/Warehouse/5#model.config": "4112eae762973474b0d79ad711ad3682c34f36c0ed6185df2e85da39eb3dd227",
+    "fuel:https://fuel.gazebosim.org/1.0/OpenRobotics/models/Warehouse/5#model.sdf": "8a2a1e3cf36d53d676841455c3d244a616230a584f81f6327542063c32973c24",
+    "fuel:https://fuel.gazebosim.org/1.0/OpenRobotics/models/Warehouse/5#meshes/warehouse_colision.stl": "78fa7f71edc7ec8347e647ca29a0f347036f8a9c253e502e74f8fc6e1180e0e8",
+    "fuel:https://fuel.gazebosim.org/1.0/MovAi/models/shelf_big/2#model.config": "16920d959a782311f3920ac03c744b4655279c085a040ae7052f5bf09e38ae3f",
+    "fuel:https://fuel.gazebosim.org/1.0/MovAi/models/shelf_big/2#model.sdf": "0fb3e7441418919d3feb561f33b6d1088c862f9bc4b095e1313bdc5bfe9e49d7",
+    "fuel:https://fuel.gazebosim.org/1.0/MovAi/models/shelf/1#model.config": "0935cc457d5477eda3cca41fc832b70418d8ca3b7a4c3ce27cb3c479f0ceb555",
+    "fuel:https://fuel.gazebosim.org/1.0/MovAi/models/shelf/1#model.sdf": "5bd74fe8bda9f9e200150713338385b9b0a7e0d087ab82c48e3ae51c869b69ec",
+    "fuel:https://fuel.gazebosim.org/1.0/OpenRobotics/models/Jersey Barrier/6#model.config": "0ba72cbf0ec684b897a234af39d95684ba7d39b86acea9ad952f4e1ce8e76808",
+    "fuel:https://fuel.gazebosim.org/1.0/OpenRobotics/models/Jersey Barrier/6#model.sdf": "8ca20acc01547394d9f0a3e5c914c85d3f257a3e809f7e5de35eb2fdb72ed31c",
+    "fuel:https://fuel.gazebosim.org/1.0/OpenRobotics/models/Chair/3#model.config": "70b823befc5c96877ae159c114288aae285d3fb2a24f935ad10b32299c6673a8",
+    "fuel:https://fuel.gazebosim.org/1.0/OpenRobotics/models/Chair/3#model.sdf": "81d55695df13fbc7475bfc2ed48d1632e64faacf80683d41a3e92627c1b3dbc9",
+    "fuel:https://fuel.gazebosim.org/1.0/OpenRobotics/models/foldable_chair/3#model.config": "50e6d163666f7d591097dc6648e638cfdb7a5dc9c132f7e3547792362d8d20d7",
+    "fuel:https://fuel.gazebosim.org/1.0/OpenRobotics/models/foldable_chair/3#model.sdf": "aee1f51c36c70511283b0357d3b396c95edb024c0019f1c1cf0be40fe5dc04dd",
+    "fuel:https://fuel.gazebosim.org/1.0/OpenRobotics/models/Table/4#model.config": "135367bc4c08ce4757a069ad78f0f8d09868e645ba263fac6660ab34dc3cf3aa",
+    "fuel:https://fuel.gazebosim.org/1.0/OpenRobotics/models/Table/4#model.sdf": "99fb1778308e10e4c28bf66238e17fc6feef78bc6898c3ab40adfaea6613c2e6",
+    "fuel:https://fuel.gazebosim.org/1.0/OpenRobotics/models/MaleVisitorOnPhone/2#model.config": "e3c8edaa7c1cb0fd73af43386f83c2571553cfcf1975ca86e0ecb540df6448a2",
+    "fuel:https://fuel.gazebosim.org/1.0/OpenRobotics/models/MaleVisitorOnPhone/2#model.sdf": "c2da242d84552b6383e084a4022bfe14ba9561fbf3f80f789249ecf3a8329447",
+    "fuel:https://fuel.gazebosim.org/1.0/openrobotics/models/malevisitoronphone/2#meshes/MaleVisitorStatic_Col.obj": "feded16115d772d51b75be16941e5ee376cd92bf1aee6b84f4d21fac4dc47878",
+    "fuel:https://fuel.gazebosim.org/1.0/plateau/models/Casual female/1#model.config": "19d1bdb5e4a769c9dc48c21ffe9dd5c9c4cb20a198afabe229c2475f2ac9b771",
+    "fuel:https://fuel.gazebosim.org/1.0/plateau/models/Casual female/1#model.sdf": "70a3a24f3b80f6bbd780a05a5a2c10d974e2928bbc50427bb54fcbb000b05222"
+  },
+  "generation": {
+    "body_height_slab": [
+      0.03,
+      0.35
+    ],
+    "settings": {
+      "bounds": [
+        -15,
+        -25,
+        15,
+        25
+      ],
+      "inclusion_polygons": [
+        [
+          [
+            -15,
+            -25
+          ],
+          [
+            15,
+            -25
+          ],
+          [
+            15,
+            25
+          ],
+          [
+            -15,
+            25
+          ]
+        ]
+      ],
+      "exclusion_polygons": [],
+      "review": "Interior of the version-5 warehouse collision shell, with shelves and fixed furniture removed by geometry."
+    },
+    "connectivity": "4-connected free floor from spawn; not a footprint planner",
+    "unreachable_free_cells": 0,
+    "collision_records": [
+      {
+        "model": "warehouse",
+        "collision": "warehouse_collision",
+        "bounds": [
+          [
+            -15.0,
+            -25.0,
+            -0.0014310836791992243
+          ],
+          [
+            15.0,
+            25.0,
+            12.498570823669434
+          ]
+        ]
+      },
+      {
+        "model": "shelf_big",
+        "collision": "shelf_big_chassi_collision",
+        "bounds": [
+          [
+            -10.05,
+            -22.0,
+            0.0
+          ],
+          [
+            -7.95,
+            -4.0,
+            6.0
+          ]
+        ]
+      },
+      {
+        "model": "shelf_big",
+        "collision": "shelf_big_chassi_collision",
+        "bounds": [
+          [
+            4.95,
+            -22.0,
+            0.0
+          ],
+          [
+            7.05,
+            -4.0,
+            6.0
+          ]
+        ]
+      },
+      {
+        "model": "shelf_big",
+        "collision": "shelf_big_chassi_collision",
+        "bounds": [
+          [
+            -3.05,
+            -22.0,
+            0.0
+          ],
+          [
+            -0.95,
+            -4.0,
+            6.0
+          ]
+        ]
+      },
+      {
+        "model": "shelf",
+        "collision": "shelf_chassi_collision",
+        "bounds": [
+          [
+            11.2,
+            4.2,
+            0.0
+          ],
+          [
+            14.8,
+            4.8,
+            1.8
+          ]
+        ]
+      },
+      {
+        "model": "shelf",
+        "collision": "shelf_chassi_collision",
+        "bounds": [
+          [
+            7.7,
+            4.2,
+            0.0
+          ],
+          [
+            11.3,
+            4.8,
+            1.8
+          ]
+        ]
+      },
+      {
+        "model": "shelf",
+        "collision": "shelf_chassi_collision",
+        "bounds": [
+          [
+            11.2,
+            -21.3,
+            0.0
+          ],
+          [
+            14.8,
+            -20.7,
+            1.8
+          ]
+        ]
+      },
+      {
+        "model": "shelf",
+        "collision": "shelf_chassi_collision",
+        "bounds": [
+          [
+            11.2,
+            -15.3,
+            0.0
+          ],
+          [
+            14.8,
+            -14.7,
+            1.8
+          ]
+        ]
+      },
+      {
+        "model": "shelf",
+        "collision": "shelf_chassi_collision",
+        "bounds": [
+          [
+            -1.9,
+            -2.3,
+            0.0
+          ],
+          [
+            1.7000000000000002,
+            -1.7,
+            1.8
+          ]
+        ]
+      },
+      {
+        "model": "shelf_big",
+        "collision": "shelf_big_chassi_collision",
+        "bounds": [
+          [
+            -5.501231452788149,
+            7.942833551059056,
+            0.0
+          ],
+          [
+            12.500435126077415,
+            10.057166766009107,
+            6.0
+          ]
+        ]
+      },
+      {
+        "model": "shelf_big",
+        "collision": "shelf_big_chassi_collision",
+        "bounds": [
+          [
+            -10.301231452788148,
+            16.942833551059056,
+            0.0
+          ],
+          [
+            7.700435126077415,
+            19.057166766009107,
+            6.0
+          ]
+        ]
+      },
+      {
+        "model": "shelf",
+        "collision": "shelf_chassi_collision",
+        "bounds": [
+          [
+            -10.301831456314238,
+            19.19976183124356,
+            0.0
+          ],
+          [
+            -9.698964870396496,
+            22.800238485824604,
+            1.8
+          ]
+        ]
+      },
+      {
+        "model": "shelf",
+        "collision": "shelf_chassi_collision",
+        "bounds": [
+          [
+            -7.301831456314236,
+            21.29976183124356,
+            0.0
+          ],
+          [
+            -6.698964870396496,
+            24.900238485824605,
+            1.8
+          ]
+        ]
+      },
+      {
+        "model": "shelf",
+        "collision": "shelf_chassi_collision",
+        "bounds": [
+          [
+            -4.301831456314236,
+            19.19976183124356,
+            0.0
+          ],
+          [
+            -3.698964870396496,
+            22.800238485824604,
+            1.8
+          ]
+        ]
+      },
+      {
+        "model": "jersey_barrier",
+        "collision": "upright",
+        "bounds": [
+          [
+            -10.554768652709186,
+            12.717168687071881,
+            0.0
+          ],
+          [
+            -10.245231347290815,
+            16.782831312928117,
+            1.143
+          ]
+        ]
+      },
+      {
+        "model": "jersey_barrier",
+        "collision": "base",
+        "bounds": [
+          [
+            -10.806968572744594,
+            12.716967853475435,
+            0.0
+          ],
+          [
+            -9.993031427255406,
+            16.783032146524565,
+            0.064516
+          ]
+        ]
+      },
+      {
+        "model": "jersey_barrier",
+        "collision": "base2",
+        "bounds": [
+          [
+            -10.726618598221021,
+            12.717031838326642,
+            0.05
+          ],
+          [
+            -10.07338140177898,
+            16.78296816167336,
+            0.15000000000000002
+          ]
+        ]
+      },
+      {
+        "model": "jersey_barrier",
+        "collision": "base3",
+        "bounds": [
+          [
+            -10.651618622001134,
+            12.717091562829948,
+            0.15000000000000002
+          ],
+          [
+            -10.148381377998867,
+            16.782908437170054,
+            0.25
+          ]
+        ]
+      },
+      {
+        "model": "jersey_barrier",
+        "collision": "left-angle",
+        "bounds": [
+          [
+            -10.358289766524834,
+            12.716968394140245,
+            0.024216378236654068
+          ],
+          [
+            -9.993710375521704,
+            16.782674851493347,
+            0.45598362176334595
+          ]
+        ]
+      },
+      {
+        "model": "jersey_barrier",
+        "collision": "right-angle",
+        "bounds": [
+          [
+            -10.806289624478296,
+            12.717325148506653,
+            0.024216378236654068
+          ],
+          [
+            -10.441710233475167,
+            16.783031605859755,
+            0.45598362176334595
+          ]
+        ]
+      },
+      {
+        "model": "jersey_barrier",
+        "collision": "upright",
+        "bounds": [
+          [
+            -10.554768652709186,
+            8.467168687071881,
+            0.0
+          ],
+          [
+            -10.245231347290815,
+            12.532831312928119,
+            1.143
+          ]
+        ]
+      },
+      {
+        "model": "jersey_barrier",
+        "collision": "base",
+        "bounds": [
+          [
+            -10.806968572744594,
+            8.466967853475435,
+            0.0
+          ],
+          [
+            -9.993031427255406,
+            12.533032146524565,
+            0.064516
+          ]
+        ]
+      },
+      {
+        "model": "jersey_barrier",
+        "collision": "base2",
+        "bounds": [
+          [
+            -10.726618598221021,
+            8.467031838326642,
+            0.05
+          ],
+          [
+            -10.07338140177898,
+            12.532968161673358,
+            0.15000000000000002
+          ]
+        ]
+      },
+      {
+        "model": "jersey_barrier",
+        "collision": "base3",
+        "bounds": [
+          [
+            -10.651618622001134,
+            8.467091562829948,
+            0.15000000000000002
+          ],
+          [
+            -10.148381377998867,
+            12.532908437170052,
+            0.25
+          ]
+        ]
+      },
+      {
+        "model": "jersey_barrier",
+        "collision": "left-angle",
+        "bounds": [
+          [
+            -10.358289766524834,
+            8.466968394140245,
+            0.024216378236654068
+          ],
+          [
+            -9.993710375521704,
+            12.532674851493347,
+            0.45598362176334595
+          ]
+        ]
+      },
+      {
+        "model": "jersey_barrier",
+        "collision": "right-angle",
+        "bounds": [
+          [
+            -10.806289624478296,
+            8.467325148506653,
+            0.024216378236654068
+          ],
+          [
+            -10.441710233475167,
+            12.533031605859755,
+            0.45598362176334595
+          ]
+        ]
+      },
+      {
+        "model": "jersey_barrier",
+        "collision": "upright",
+        "bounds": [
+          [
+            -10.554768652709186,
+            4.467168687071881,
+            0.0
+          ],
+          [
+            -10.245231347290815,
+            8.532831312928119,
+            1.143
+          ]
+        ]
+      },
+      {
+        "model": "jersey_barrier",
+        "collision": "base",
+        "bounds": [
+          [
+            -10.806968572744594,
+            4.466967853475435,
+            0.0
+          ],
+          [
+            -9.993031427255406,
+            8.533032146524565,
+            0.064516
+          ]
+        ]
+      },
+      {
+        "model": "jersey_barrier",
+        "collision": "base2",
+        "bounds": [
+          [
+            -10.726618598221021,
+            4.467031838326642,
+            0.05
+          ],
+          [
+            -10.07338140177898,
+            8.532968161673358,
+            0.15000000000000002
+          ]
+        ]
+      },
+      {
+        "model": "jersey_barrier",
+        "collision": "base3",
+        "bounds": [
+          [
+            -10.651618622001134,
+            4.467091562829948,
+            0.15000000000000002
+          ],
+          [
+            -10.148381377998867,
+            8.532908437170052,
+            0.25
+          ]
+        ]
+      },
+      {
+        "model": "jersey_barrier",
+        "collision": "left-angle",
+        "bounds": [
+          [
+            -10.358289766524834,
+            4.466968394140245,
+            0.024216378236654068
+          ],
+          [
+            -9.993710375521704,
+            8.532674851493345,
+            0.45598362176334595
+          ]
+        ]
+      },
+      {
+        "model": "jersey_barrier",
+        "collision": "right-angle",
+        "bounds": [
+          [
+            -10.806289624478296,
+            4.467325148506655,
+            0.024216378236654068
+          ],
+          [
+            -10.441710233475167,
+            8.533031605859755,
+            0.45598362176334595
+          ]
+        ]
+      },
+      {
+        "model": "jersey_barrier",
+        "collision": "upright",
+        "bounds": [
+          [
+            -14.88271,
+            4.6968499999999995,
+            0.0
+          ],
+          [
+            -10.81729,
+            5.00315,
+            1.143
+          ]
+        ]
+      },
+      {
+        "model": "jersey_barrier",
+        "collision": "base",
+        "bounds": [
+          [
+            -14.88271,
+            4.444649999999999,
+            0.0
+          ],
+          [
+            -10.81729,
+            5.25535,
+            0.064516
+          ]
+        ]
+      },
+      {
+        "model": "jersey_barrier",
+        "collision": "base2",
+        "bounds": [
+          [
+            -14.88271,
+            4.5249999999999995,
+            0.05
+          ],
+          [
+            -10.81729,
+            5.175,
+            0.15000000000000002
+          ]
+        ]
+      },
+      {
+        "model": "jersey_barrier",
+        "collision": "base3",
+        "bounds": [
+          [
+            -14.88271,
+            4.6,
+            0.15000000000000002
+          ],
+          [
+            -10.81729,
+            5.1,
+            0.25
+          ]
+        ]
+      },
+      {
+        "model": "jersey_barrier",
+        "collision": "left-angle",
+        "bounds": [
+          [
+            -14.88271,
+            4.44532894848157,
+            0.024216378236654068
+          ],
+          [
+            -10.81729,
+            4.806671051518429,
+            0.45598362176334595
+          ]
+        ]
+      },
+      {
+        "model": "jersey_barrier",
+        "collision": "right-angle",
+        "bounds": [
+          [
+            -14.88271,
+            4.89332894848157,
+            0.024216378236654068
+          ],
+          [
+            -10.81729,
+            5.25467105151843,
+            0.45598362176334595
+          ]
+        ]
+      },
+      {
+        "model": "jersey_barrier",
+        "collision": "upright",
+        "bounds": [
+          [
+            -7.757823951581256,
+            -25.154551759547687,
+            0.0
+          ],
+          [
+            -3.682176048418744,
+            -24.64544824045231,
+            1.143
+          ]
+        ]
+      },
+      {
+        "model": "jersey_barrier",
+        "collision": "base",
+        "bounds": [
+          [
+            -7.770428698071321,
+            -25.4064365752193,
+            0.0
+          ],
+          [
+            -3.669571301928679,
+            -24.393563424780698,
+            0.064516
+          ]
+        ]
+      },
+      {
+        "model": "jersey_barrier",
+        "collision": "base2",
+        "bounds": [
+          [
+            -7.766412871820422,
+            -25.326186991796565,
+            0.05
+          ],
+          [
+            -3.6735871281795776,
+            -24.473813008203432,
+            0.15000000000000002
+          ]
+        ]
+      },
+      {
+        "model": "jersey_barrier",
+        "collision": "base3",
+        "bounds": [
+          [
+            -7.762664434125121,
+            -25.25128072226694,
+            0.15000000000000002
+          ],
+          [
+            -3.6773355658748788,
+            -24.548719277733056,
+            0.25
+          ]
+        ]
+      },
+      {
+        "model": "jersey_barrier",
+        "collision": "left-angle",
+        "bounds": [
+          [
+            -7.770394764790234,
+            -25.405758475246532,
+            0.024216378236654068
+          ],
+          [
+            -3.691995903043029,
+            -24.841681641410407,
+            0.45598362176334595
+          ]
+        ]
+      },
+      {
+        "model": "jersey_barrier",
+        "collision": "right-angle",
+        "bounds": [
+          [
+            -7.74800409695697,
+            -24.95831835858959,
+            0.024216378236654068
+          ],
+          [
+            -3.6696052352097652,
+            -24.394241524753465,
+            0.45598362176334595
+          ]
+        ]
+      },
+      {
+        "model": "jersey_barrier",
+        "collision": "upright",
+        "bounds": [
+          [
+            -4.217823951581256,
+            -25.314551759547687,
+            0.0
+          ],
+          [
+            -0.1421760484187442,
+            -24.80544824045231,
+            1.143
+          ]
+        ]
+      },
+      {
+        "model": "jersey_barrier",
+        "collision": "base",
+        "bounds": [
+          [
+            -4.2304286980713215,
+            -25.5664365752193,
+            0.0
+          ],
+          [
+            -0.12957130192867927,
+            -24.553563424780698,
+            0.064516
+          ]
+        ]
+      },
+      {
+        "model": "jersey_barrier",
+        "collision": "base2",
+        "bounds": [
+          [
+            -4.226412871820422,
+            -25.486186991796565,
+            0.05
+          ],
+          [
+            -0.13358712817957796,
+            -24.633813008203433,
+            0.15000000000000002
+          ]
+        ]
+      },
+      {
+        "model": "jersey_barrier",
+        "collision": "base3",
+        "bounds": [
+          [
+            -4.222664434125122,
+            -25.41128072226694,
+            0.15000000000000002
+          ],
+          [
+            -0.13733556587487916,
+            -24.708719277733056,
+            0.25
+          ]
+        ]
+      },
+      {
+        "model": "jersey_barrier",
+        "collision": "left-angle",
+        "bounds": [
+          [
+            -4.230394764790235,
+            -25.565758475246533,
+            0.024216378236654068
+          ],
+          [
+            -0.15199590304302957,
+            -25.001681641410407,
+            0.45598362176334595
+          ]
+        ]
+      },
+      {
+        "model": "jersey_barrier",
+        "collision": "right-angle",
+        "bounds": [
+          [
+            -4.208004096956971,
+            -25.11831835858959,
+            0.024216378236654068
+          ],
+          [
+            -0.12960523520976563,
+            -24.554241524753465,
+            0.45598362176334595
+          ]
+        ]
+      },
+      {
+        "model": "jersey_barrier",
+        "collision": "upright",
+        "bounds": [
+          [
+            -1.017823951581256,
+            -25.62455175954769,
+            0.0
+          ],
+          [
+            3.057823951581256,
+            -25.115448240452313,
+            1.143
+          ]
+        ]
+      },
+      {
+        "model": "jersey_barrier",
+        "collision": "base",
+        "bounds": [
+          [
+            -1.0304286980713209,
+            -25.8764365752193,
+            0.0
+          ],
+          [
+            3.070428698071321,
+            -24.8635634247807,
+            0.064516
+          ]
+        ]
+      },
+      {
+        "model": "jersey_barrier",
+        "collision": "base2",
+        "bounds": [
+          [
+            -1.0264128718204222,
+            -25.796186991796567,
+            0.05
+          ],
+          [
+            3.066412871820422,
+            -24.943813008203435,
+            0.15000000000000002
+          ]
+        ]
+      },
+      {
+        "model": "jersey_barrier",
+        "collision": "base3",
+        "bounds": [
+          [
+            -1.022664434125121,
+            -25.721280722266943,
+            0.15000000000000002
+          ],
+          [
+            3.062664434125121,
+            -25.01871927773306,
+            0.25
+          ]
+        ]
+      },
+      {
+        "model": "jersey_barrier",
+        "collision": "left-angle",
+        "bounds": [
+          [
+            -1.0303947647902345,
+            -25.875758475246535,
+            0.024216378236654068
+          ],
+          [
+            3.0480040969569706,
+            -25.31168164141041,
+            0.45598362176334595
+          ]
+        ]
+      },
+      {
+        "model": "jersey_barrier",
+        "collision": "right-angle",
+        "bounds": [
+          [
+            -1.0080040969569706,
+            -25.428318358589593,
+            0.024216378236654068
+          ],
+          [
+            3.0703947647902345,
+            -24.864241524753467,
+            0.45598362176334595
+          ]
+        ]
+      },
+      {
+        "model": "jersey_barrier",
+        "collision": "upright",
+        "bounds": [
+          [
+            2.682176048418744,
+            -25.634551759547687,
+            0.0
+          ],
+          [
+            6.757823951581256,
+            -25.12544824045231,
+            1.143
+          ]
+        ]
+      },
+      {
+        "model": "jersey_barrier",
+        "collision": "base",
+        "bounds": [
+          [
+            2.669571301928679,
+            -25.8864365752193,
+            0.0
+          ],
+          [
+            6.770428698071321,
+            -24.8735634247807,
+            0.064516
+          ]
+        ]
+      },
+      {
+        "model": "jersey_barrier",
+        "collision": "base2",
+        "bounds": [
+          [
+            2.6735871281795776,
+            -25.806186991796565,
+            0.05
+          ],
+          [
+            6.766412871820422,
+            -24.953813008203433,
+            0.15000000000000002
+          ]
+        ]
+      },
+      {
+        "model": "jersey_barrier",
+        "collision": "base3",
+        "bounds": [
+          [
+            2.6773355658748788,
+            -25.73128072226694,
+            0.15000000000000002
+          ],
+          [
+            6.762664434125121,
+            -25.028719277733057,
+            0.25
+          ]
+        ]
+      },
+      {
+        "model": "jersey_barrier",
+        "collision": "left-angle",
+        "bounds": [
+          [
+            2.6696052352097652,
+            -25.885758475246533,
+            0.024216378236654068
+          ],
+          [
+            6.74800409695697,
+            -25.321681641410407,
+            0.45598362176334595
+          ]
+        ]
+      },
+      {
+        "model": "jersey_barrier",
+        "collision": "right-angle",
+        "bounds": [
+          [
+            2.691995903043029,
+            -25.43831835858959,
+            0.024216378236654068
+          ],
+          [
+            6.770394764790234,
+            -24.874241524753465,
+            0.45598362176334595
+          ]
+        ]
+      },
+      {
+        "model": "jersey_barrier",
+        "collision": "upright",
+        "bounds": [
+          [
+            4.912176048418744,
+            -25.73455175954769,
+            0.0
+          ],
+          [
+            8.987823951581255,
+            -25.225448240452312,
+            1.143
+          ]
+        ]
+      },
+      {
+        "model": "jersey_barrier",
+        "collision": "base",
+        "bounds": [
+          [
+            4.899571301928679,
+            -25.9864365752193,
+            0.0
+          ],
+          [
+            9.000428698071321,
+            -24.9735634247807,
+            0.064516
+          ]
+        ]
+      },
+      {
+        "model": "jersey_barrier",
+        "collision": "base2",
+        "bounds": [
+          [
+            4.903587128179578,
+            -25.906186991796567,
+            0.05
+          ],
+          [
+            8.996412871820421,
+            -25.053813008203434,
+            0.15000000000000002
+          ]
+        ]
+      },
+      {
+        "model": "jersey_barrier",
+        "collision": "base3",
+        "bounds": [
+          [
+            4.907335565874879,
+            -25.831280722266943,
+            0.15000000000000002
+          ],
+          [
+            8.992664434125121,
+            -25.128719277733058,
+            0.25
+          ]
+        ]
+      },
+      {
+        "model": "jersey_barrier",
+        "collision": "left-angle",
+        "bounds": [
+          [
+            4.899605235209766,
+            -25.985758475246534,
+            0.024216378236654068
+          ],
+          [
+            8.97800409695697,
+            -25.42168164141041,
+            0.45598362176334595
+          ]
+        ]
+      },
+      {
+        "model": "jersey_barrier",
+        "collision": "right-angle",
+        "bounds": [
+          [
+            4.92199590304303,
+            -25.538318358589592,
+            0.024216378236654068
+          ],
+          [
+            9.000394764790235,
+            -24.974241524753467,
+            0.45598362176334595
+          ]
+        ]
+      },
+      {
+        "model": "Chair",
+        "collision": "collision",
+        "ignored": "dynamic"
+      },
+      {
+        "model": "Chair",
+        "collision": "collision",
+        "ignored": "dynamic"
+      },
+      {
+        "model": "foldable_chair",
+        "collision": "collision",
+        "bounds": [
+          [
+            -11.75157004984891,
+            6.088377463872526,
+            0.0
+          ],
+          [
+            -11.15104518706327,
+            6.688902326658166,
+            0.8
+          ]
+        ]
+      },
+      {
+        "model": "foldable_chair",
+        "collision": "collision",
+        "bounds": [
+          [
+            -14.364712418022101,
+            6.166438108019095,
+            0.0
+          ],
+          [
+            -13.729917590746641,
+            6.8012329352945535,
+            0.8
+          ]
+        ]
+      },
+      {
+        "model": "Table",
+        "collision": "surface",
+        "bounds": [
+          [
+            -13.45,
+            6.1,
+            0.985
+          ],
+          [
+            -11.95,
+            6.9,
+            1.015
+          ]
+        ]
+      },
+      {
+        "model": "Table",
+        "collision": "front_left_leg",
+        "bounds": [
+          [
+            -12.04,
+            6.86,
+            0.0
+          ],
+          [
+            -12.0,
+            6.8999999999999995,
+            1.0
+          ]
+        ]
+      },
+      {
+        "model": "Table",
+        "collision": "front_right_leg",
+        "bounds": [
+          [
+            -12.04,
+            6.1000000000000005,
+            0.0
+          ],
+          [
+            -12.0,
+            6.14,
+            1.0
+          ]
+        ]
+      },
+      {
+        "model": "Table",
+        "collision": "back_right_leg",
+        "bounds": [
+          [
+            -13.399999999999999,
+            6.1000000000000005,
+            0.0
+          ],
+          [
+            -13.36,
+            6.14,
+            1.0
+          ]
+        ]
+      },
+      {
+        "model": "Table",
+        "collision": "back_left_leg",
+        "bounds": [
+          [
+            -13.399999999999999,
+            6.86,
+            0.0
+          ],
+          [
+            -13.36,
+            6.8999999999999995,
+            1.0
+          ]
+        ]
+      },
+      {
+        "model": "MaleVisitorOnPhone",
+        "collision": "collision",
+        "bounds": [
+          [
+            0.7976936157357977,
+            -1.1138200696549063,
+            0.0
+          ],
+          [
+            1.2992764390658391,
+            -0.6588560781127166,
+            1.745403
+          ]
+        ]
+      },
+      {
+        "model": "casual_female",
+        "collision": "box",
+        "bounds": [
+          [
+            -12.38,
+            14.835,
+            0.015000000000000013
+          ],
+          [
+            -11.62,
+            15.165,
+            1.7850000000000001
+          ]
+        ]
+      }
+    ],
+    "generator_sha256": "3c5f9d84fb2d36b5ca7691414e905e603695caf4cdfbbaf86ec410c49a660756",
+    "tool_versions": {
+      "numpy": "2.4.4",
+      "scipy": "1.17.1",
+      "shapely": "2.1.2",
+      "trimesh": "4.12.2"
+    }
+  }
+}

@@ -1,0 +1,11 @@
+default_comparison: [default, default, default, default]
+profiles:
+  default:
+    label: Default
+    framework: frontier_exploration_ros2
+    package: frontier_exploration_ros2
+    launch: frontier_explorer.launch.py
+    parameter_package: rviz_autonomous_exploration_benchmark
+    parameters: config/frontier_exploration_ros2/default.yaml
+    executable: frontier_explorer
+    random_seed: unsupported

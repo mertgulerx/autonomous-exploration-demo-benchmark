@@ -7,4 +7,8 @@
       Starts/stops configured exploration package launches and tracks active PID.
     </description>
   </class>
+  <class name="rviz_autonomous_exploration_benchmark/RunTF"
+    type="utils::RunFrameTransformer" base_class_type="rviz_common::transformation::FrameTransformer">
+    <description>Per-run clock and remapped TF buffer for comparison viewports.</description>
+  </class>
 </library>
