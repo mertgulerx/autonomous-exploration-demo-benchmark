@@ -1,0 +1,761 @@
+[
+  {
+    "robot_id": "j100",
+    "label": "Jackal J100",
+    "description_sha256": "ccccf5f50eff1202a7b51df0cd9bc04c87c9b821027bb38cee65280787ddf563",
+    "source_revisions": {},
+    "packages": {
+      "clearpath_platform_description-13527249": {
+        "name": "clearpath_platform_description",
+        "version": "2.9.17",
+        "licenses": [
+          "BSD"
+        ],
+        "authors": [
+          "Ryan Gariepy",
+          "Prasenjit Mukherjee",
+          "Mike Purvis",
+          "Paul Bovbel",
+          "Luis Camero",
+          "Roni Kreinin",
+          "Tony Baltovski"
+        ],
+        "urls": [],
+        "notices": [
+          "notices/clearpath_platform_description-13527249-copyright"
+        ]
+      },
+      "clearpath_sensors_description-ec3c07de": {
+        "name": "clearpath_sensors_description",
+        "version": "2.9.17",
+        "licenses": [
+          "BSD"
+        ],
+        "authors": [
+          "Luis Camero",
+          "Roni Kreinin",
+          "Tony Baltovski"
+        ],
+        "urls": [],
+        "notices": [
+          "notices/clearpath_sensors_description-ec3c07de-copyright"
+        ]
+      }
+    },
+    "meshes": [
+      {
+        "uri": "package://clearpath_platform_description/meshes/j100/j100_base.stl",
+        "sha256": "c3b5f30039d8cc3152218f743072f8bc6968484017b989bad2ed41ee2dbda818"
+      },
+      {
+        "uri": "package://clearpath_platform_description/meshes/j100/wheels/outdoor.stl",
+        "sha256": "a39bc365311f097b1328f7b39426939c98a299f1ef3d745f590168509d367fe4"
+      },
+      {
+        "uri": "package://clearpath_platform_description/meshes/j100/wheels/outdoor.stl",
+        "sha256": "a39bc365311f097b1328f7b39426939c98a299f1ef3d745f590168509d367fe4"
+      },
+      {
+        "uri": "package://clearpath_platform_description/meshes/j100/wheels/outdoor.stl",
+        "sha256": "a39bc365311f097b1328f7b39426939c98a299f1ef3d745f590168509d367fe4"
+      },
+      {
+        "uri": "package://clearpath_platform_description/meshes/j100/wheels/outdoor.stl",
+        "sha256": "a39bc365311f097b1328f7b39426939c98a299f1ef3d745f590168509d367fe4"
+      },
+      {
+        "uri": "package://clearpath_sensors_description/meshes/hokuyo_ust.stl",
+        "sha256": "f6a442fc679a2f228893df6e8fcdc24c53ad9a670515b6be9292ac8ee5961793"
+      }
+    ],
+    "preview_sha256": "82167a198d1f866e17c4dd90f1e92a6ee36f6eaeb97d689e2afad5c7efa2434e",
+    "renderer": "Blender 4.5.14 LTS",
+    "camera": "Orthographic, front three-quarter",
+    "resolution": [
+      640,
+      480
+    ],
+    "samples": 32
+  },
+  {
+    "robot_id": "lynx",
+    "label": "Husarion Lynx",
+    "description_sha256": "2a7a1f0248e79c93a8c4a7bc2954545bf5ecc7395a9eef5fd54c009db8b94741",
+    "source_revisions": {
+      "ugv": {
+        "url": "https://github.com/husarion/husarion_ugv_ros.git",
+        "revision": "559e784b84c05c813b6ecfce02751d8b3966528a",
+        "family": "ugv"
+      },
+      "ugv_behaviortree_cpp": {
+        "url": "https://github.com/BehaviorTree/BehaviorTree.CPP",
+        "revision": "3ff6a32ba0497a08519c77a1436e3b81eff1bcd6",
+        "family": "ugv"
+      },
+      "ugv_behaviortree_ros2": {
+        "url": "https://github.com/BehaviorTree/BehaviorTree.ROS2",
+        "revision": "7a6ace6424adaa81737b95d20d81e1e8c0782ed7",
+        "family": "ugv"
+      },
+      "ugv_husarion_controllers": {
+        "url": "https://github.com/husarion/husarion_controllers",
+        "revision": "2b2b37a1579ae3968693a368ca7a7aaa351a41f4",
+        "family": "ugv"
+      },
+      "ugv_husarion_gz_worlds": {
+        "url": "https://github.com/husarion/husarion_gz_worlds.git",
+        "revision": "56b5788a9584d3bc31ba85d36582ba965752c27e",
+        "family": "ugv"
+      },
+      "ugv_husarion_components_description": {
+        "url": "https://github.com/husarion/husarion_components_description.git",
+        "revision": "ed1d8664354ed1dcaa94cc973dd8bed7bef62690",
+        "family": "ugv"
+      },
+      "ugv_joy2twist": {
+        "url": "https://github.com/husarion/joy2twist.git",
+        "revision": "64c271cd2ecc77ef4ad09f959d057aa4eedc3c5f",
+        "family": "ugv"
+      }
+    },
+    "packages": {
+      "husarion_ugv_description-01792af3": {
+        "name": "husarion_ugv_description",
+        "version": "2.3.2",
+        "licenses": [
+          "Apache License 2.0"
+        ],
+        "authors": [
+          "Dawid Kmak",
+          "Krzysztof Wojciechowski",
+          "Maciej Stepien",
+          "Pawe\u0142 Kowalski",
+          "Rafal Gorecki"
+        ],
+        "urls": [
+          "https://husarion.com/",
+          "https://github.com/husarion/husarion_ugv_ros",
+          "https://github.com/husarion/husarion_ugv_ros/issues"
+        ],
+        "notices": []
+      },
+      "husarion_components_description-5d82dc27": {
+        "name": "husarion_components_description",
+        "version": "0.1.0",
+        "licenses": [
+          "Apache License 2.0"
+        ],
+        "authors": [
+          "Jakub Delikat",
+          "Rafal Gorecki",
+          "Dawid Kmak",
+          "Pawel Kowalski",
+          "Krzysztof Wojciechowski"
+        ],
+        "urls": [
+          "https://husarion.com",
+          "https://github.com/husarion/husarion_components_description/",
+          "https://github.com/husarion/husarion_components_description/issues"
+        ],
+        "notices": []
+      }
+    },
+    "meshes": [
+      {
+        "uri": "package://husarion_ugv_description/meshes/lynx/base.dae",
+        "sha256": "6383bf533420be351e23fdb65c9abc7d2336dac7a639aec0af3475a2e15b5533"
+      },
+      {
+        "uri": "package://husarion_ugv_description/meshes/lynx/base_collision.dae",
+        "sha256": "4688f1241e149745a42013615538c9cb977c6f74e5e96c3f5347b6b83e6c2501"
+      },
+      {
+        "uri": "package://husarion_ugv_description/meshes/WH05/fl_wheel.dae",
+        "sha256": "a4ea54b384f1ce556d89c4679b339ae5f4576406c078f4d4198ef404cfe30b13"
+      },
+      {
+        "uri": "package://husarion_ugv_description/meshes/WH05/fr_wheel.dae",
+        "sha256": "b6d29dc038de28cee7df87b668b0c40c39a9f3a8f4659e0ac82364fb765d225e"
+      },
+      {
+        "uri": "package://husarion_ugv_description/meshes/WH05/rl_wheel.dae",
+        "sha256": "0da55efe2b8d5e4edc1b270f6129607d2935701e4dd288e085fb70c255358438"
+      },
+      {
+        "uri": "package://husarion_ugv_description/meshes/WH05/rr_wheel.dae",
+        "sha256": "0a9f059b24cc8ff491ee7fe9f6bdf03fdd0147fe6224825530ec42cc1c78dc0e"
+      },
+      {
+        "uri": "package://husarion_components_description/meshes/rplidar/s3.glb",
+        "sha256": "4fa51af3cbadbffab86697d5b8e9eb48b052371d2a6990adc88b473d13bdddff"
+      }
+    ],
+    "preview_sha256": "3d1a8966c3c9fada51e4b31254b15f6f3f5328fba160572dab2e350efa48313d",
+    "renderer": "Blender 4.5.14 LTS",
+    "camera": "Orthographic, front three-quarter",
+    "resolution": [
+      640,
+      480
+    ],
+    "samples": 32
+  },
+  {
+    "robot_id": "mogi",
+    "label": "MOGI",
+    "description_sha256": "25781791b8353779b34ff37ad7f416179d52e89c987530e75957312a98cda07f",
+    "source_revisions": {},
+    "packages": {
+      "bme_ros2_navigation-1cd1689b": {
+        "name": "bme_ros2_navigation",
+        "version": "1.0.0",
+        "licenses": [
+          "Apache License 2.0"
+        ],
+        "authors": [],
+        "urls": [],
+        "notices": [
+          "notices/bme_ros2_navigation-1cd1689b-LICENSE",
+          "notices/bme_ros2_navigation-1cd1689b-LICENSE-4458503d"
+        ]
+      }
+    },
+    "meshes": [
+      {
+        "uri": "package://bme_ros2_navigation/meshes/mogi_bot.dae",
+        "sha256": "3b50808eed86de96e426c802505142df99556004d228d99e08a447b40fc3f3c3"
+      },
+      {
+        "uri": "package://bme_ros2_navigation/meshes/wheel.dae",
+        "sha256": "8da239e0768a970c7afce2a5912910d7dde7642cc158c871f3ba0a999fa6c94e"
+      },
+      {
+        "uri": "package://bme_ros2_navigation/meshes/wheel.dae",
+        "sha256": "8da239e0768a970c7afce2a5912910d7dde7642cc158c871f3ba0a999fa6c94e"
+      },
+      {
+        "uri": "package://bme_ros2_navigation/meshes/lidar.dae",
+        "sha256": "a42fae2752bf64de16ff6fdf4f91f02d56c0f3bd259843890a43846acb215fb6"
+      }
+    ],
+    "preview_sha256": "982ecc93ff0c6ba2465ac91d7bda1efb61037d2687a9d0c7a9b6badf8b90697f",
+    "renderer": "Blender 4.5.14 LTS",
+    "camera": "Orthographic, front three-quarter",
+    "resolution": [
+      640,
+      480
+    ],
+    "samples": 32
+  },
+  {
+    "robot_id": "rosbot_pro",
+    "label": "ROSbot 3 PRO",
+    "description_sha256": "a5cb7af246beb8babbaf5d0de3f33f6c327955610b33f8b6fc69c55bcc4a2ddb",
+    "source_revisions": {
+      "rosbot": {
+        "url": "https://github.com/husarion/rosbot_ros.git",
+        "revision": "ff77c662bdfd1fac933af74df488c917f987afc5",
+        "family": "rosbot"
+      },
+      "rosbot_husarion_asset_msgs": {
+        "url": "https://github.com/husarion/husarion_asset_msgs.git",
+        "revision": "45e1d686c761431e6cbb7fae066f2eb516b091da",
+        "family": "rosbot"
+      },
+      "rosbot_husarion_components_description": {
+        "url": "https://github.com/husarion/husarion_components_description.git",
+        "revision": "5f783f89961bb16098184f5381b1a76058cec19e",
+        "family": "rosbot"
+      },
+      "rosbot_husarion_controllers": {
+        "url": "https://github.com/husarion/husarion_controllers",
+        "revision": "724f4273b637a938ffb3171ebc0e5c96d020f98d",
+        "family": "rosbot"
+      },
+      "rosbot_husarion_gz_worlds": {
+        "url": "https://github.com/husarion/husarion_gz_worlds",
+        "revision": "4f1fdd1d09b4d524261d9c335816439c5f11fb44",
+        "family": "rosbot"
+      },
+      "rosbot_tf_namespace_bridge": {
+        "url": "https://github.com/husarion/tf_namespace_bridge",
+        "revision": "48ea8cd5184630d79ab54060e3a959881d58182c",
+        "family": "rosbot"
+      }
+    },
+    "packages": {
+      "rosbot_description-e98176c0": {
+        "name": "rosbot_description",
+        "version": "1.3.0",
+        "licenses": [
+          "Apache License 2.0"
+        ],
+        "authors": [
+          "Krzysztof Wojciechowski",
+          "Maciej Stepien",
+          "Jakub Delicat",
+          "Rafa\u0142 Gorecki"
+        ],
+        "urls": [
+          "https://husarion.com/",
+          "https://github.com/husarion/rosbot_ros",
+          "https://github.com/husarion/rosbot_ros/issues"
+        ],
+        "notices": []
+      },
+      "depthai_descriptions-1f29d111": {
+        "name": "depthai_descriptions",
+        "version": "2.12.2",
+        "licenses": [
+          "MIT"
+        ],
+        "authors": [
+          "Adam Serafin"
+        ],
+        "urls": [],
+        "notices": [
+          "notices/depthai_descriptions-1f29d111-copyright"
+        ]
+      },
+      "husarion_components_description-c9041150": {
+        "name": "husarion_components_description",
+        "version": "0.1.1",
+        "licenses": [
+          "Apache License 2.0"
+        ],
+        "authors": [
+          "Jakub Delikat",
+          "Rafal Gorecki",
+          "Dawid Kmak",
+          "Pawel Kowalski",
+          "Krzysztof Wojciechowski"
+        ],
+        "urls": [
+          "https://husarion.com",
+          "https://github.com/husarion/husarion_components_description/",
+          "https://github.com/husarion/husarion_components_description/issues"
+        ],
+        "notices": []
+      }
+    },
+    "meshes": [
+      {
+        "uri": "package://rosbot_description/meshes/rosbot/body.glb",
+        "sha256": "cf7082f857b358ccb47e98eca0ad26d1ca5ef70cd8ac657ad062dce4de0f447c"
+      },
+      {
+        "uri": "package://rosbot_description/meshes/rosbot/camera_holder_collision.stl",
+        "sha256": "05e929d7e3976e84b7a95f1cb751e153ee51b6cebe1c244393c59b2d19e4a802"
+      },
+      {
+        "uri": "package://rosbot_description/meshes/rosbot/wheel_l.glb",
+        "sha256": "72cbc56d65825df184dad32382f8db445e798cb685c51f234f93e7ca2e4ba13d"
+      },
+      {
+        "uri": "package://rosbot_description/meshes/rosbot/wheel_r.glb",
+        "sha256": "83cd2bee607d8e684ea7e0c63088b66315037d865e704cc6e104203cae0335e7"
+      },
+      {
+        "uri": "package://rosbot_description/meshes/rosbot/wheel_l.glb",
+        "sha256": "72cbc56d65825df184dad32382f8db445e798cb685c51f234f93e7ca2e4ba13d"
+      },
+      {
+        "uri": "package://rosbot_description/meshes/rosbot/wheel_r.glb",
+        "sha256": "83cd2bee607d8e684ea7e0c63088b66315037d865e704cc6e104203cae0335e7"
+      },
+      {
+        "uri": "package://depthai_descriptions/urdf/models/OAK-D-PRO.stl",
+        "sha256": "6299ed40993b5a8feb2e16f43c81323ec349a87f05ac375a81711fc13df825c2"
+      },
+      {
+        "uri": "package://husarion_components_description/meshes/rplidar/s2.glb",
+        "sha256": "1c5077426d5edef678e30a5d1dc38d887577282564b7b2e2ea8b97dbd5425ec3"
+      }
+    ],
+    "preview_sha256": "ece2322db7a2cc77ad85f8675d71f3543144456fd430450398dde325126300f3",
+    "renderer": "Blender 4.5.14 LTS",
+    "camera": "Orthographic, front three-quarter",
+    "resolution": [
+      640,
+      480
+    ],
+    "samples": 32
+  },
+  {
+    "robot_id": "rosbot_xl",
+    "label": "ROSbot XL",
+    "description_sha256": "c0e1885588443d3e3ad3fd68c53c586feb5235ada4e8fc63f50bd401b102de73",
+    "source_revisions": {
+      "rosbot": {
+        "url": "https://github.com/husarion/rosbot_ros.git",
+        "revision": "ff77c662bdfd1fac933af74df488c917f987afc5",
+        "family": "rosbot"
+      },
+      "rosbot_husarion_asset_msgs": {
+        "url": "https://github.com/husarion/husarion_asset_msgs.git",
+        "revision": "45e1d686c761431e6cbb7fae066f2eb516b091da",
+        "family": "rosbot"
+      },
+      "rosbot_husarion_components_description": {
+        "url": "https://github.com/husarion/husarion_components_description.git",
+        "revision": "5f783f89961bb16098184f5381b1a76058cec19e",
+        "family": "rosbot"
+      },
+      "rosbot_husarion_controllers": {
+        "url": "https://github.com/husarion/husarion_controllers",
+        "revision": "724f4273b637a938ffb3171ebc0e5c96d020f98d",
+        "family": "rosbot"
+      },
+      "rosbot_husarion_gz_worlds": {
+        "url": "https://github.com/husarion/husarion_gz_worlds",
+        "revision": "4f1fdd1d09b4d524261d9c335816439c5f11fb44",
+        "family": "rosbot"
+      },
+      "rosbot_tf_namespace_bridge": {
+        "url": "https://github.com/husarion/tf_namespace_bridge",
+        "revision": "48ea8cd5184630d79ab54060e3a959881d58182c",
+        "family": "rosbot"
+      }
+    },
+    "packages": {
+      "rosbot_description-e98176c0": {
+        "name": "rosbot_description",
+        "version": "1.3.0",
+        "licenses": [
+          "Apache License 2.0"
+        ],
+        "authors": [
+          "Krzysztof Wojciechowski",
+          "Maciej Stepien",
+          "Jakub Delicat",
+          "Rafa\u0142 Gorecki"
+        ],
+        "urls": [
+          "https://husarion.com/",
+          "https://github.com/husarion/rosbot_ros",
+          "https://github.com/husarion/rosbot_ros/issues"
+        ],
+        "notices": []
+      },
+      "depthai_descriptions-1f29d111": {
+        "name": "depthai_descriptions",
+        "version": "2.12.2",
+        "licenses": [
+          "MIT"
+        ],
+        "authors": [
+          "Adam Serafin"
+        ],
+        "urls": [],
+        "notices": [
+          "notices/depthai_descriptions-1f29d111-copyright"
+        ]
+      },
+      "husarion_components_description-c9041150": {
+        "name": "husarion_components_description",
+        "version": "0.1.1",
+        "licenses": [
+          "Apache License 2.0"
+        ],
+        "authors": [
+          "Jakub Delikat",
+          "Rafal Gorecki",
+          "Dawid Kmak",
+          "Pawel Kowalski",
+          "Krzysztof Wojciechowski"
+        ],
+        "urls": [
+          "https://husarion.com",
+          "https://github.com/husarion/husarion_components_description/",
+          "https://github.com/husarion/husarion_components_description/issues"
+        ],
+        "notices": []
+      }
+    },
+    "meshes": [
+      {
+        "uri": "package://rosbot_description/meshes/rosbot_xl/body.dae",
+        "sha256": "e4f55005253c91cc3fa11de62a121f94481591d7bad149e7341dd4eea31bf564"
+      },
+      {
+        "uri": "package://rosbot_description/meshes/rosbot_xl/body_colision.stl",
+        "sha256": "c2a5fbb0022aa1ce94b030b646ce448e6927a5bb8bf6d1e107258c1de449ae68"
+      },
+      {
+        "uri": "package://rosbot_description/meshes/rosbot_xl/components/antenna_connector.dae",
+        "sha256": "5827e449712e29e17abde51433012813342596400fbd2d0147965d098bc15162"
+      },
+      {
+        "uri": "package://rosbot_description/meshes/rosbot_xl/components/antenna.dae",
+        "sha256": "200e0d3326a296e1ae202815f49513c1e4026345642ab30eb60e98eb2e8d43c2"
+      },
+      {
+        "uri": "package://rosbot_description/meshes/rosbot_xl/mecanum_b.dae",
+        "sha256": "00e944e9027690ddd49302e7daaf49f8ec5bf43723cdfa9f07bfacdcfa5646a5"
+      },
+      {
+        "uri": "package://rosbot_description/meshes/rosbot_xl/mecanum_a.dae",
+        "sha256": "5d0d378218f23f1414be069b94678cac23b6843bbf18c62e8506125d99db549f"
+      },
+      {
+        "uri": "package://rosbot_description/meshes/rosbot_xl/mecanum_a.dae",
+        "sha256": "5d0d378218f23f1414be069b94678cac23b6843bbf18c62e8506125d99db549f"
+      },
+      {
+        "uri": "package://rosbot_description/meshes/rosbot_xl/mecanum_b.dae",
+        "sha256": "00e944e9027690ddd49302e7daaf49f8ec5bf43723cdfa9f07bfacdcfa5646a5"
+      },
+      {
+        "uri": "package://depthai_descriptions/urdf/models/OAK-D-PRO.stl",
+        "sha256": "6299ed40993b5a8feb2e16f43c81323ec349a87f05ac375a81711fc13df825c2"
+      },
+      {
+        "uri": "package://rosbot_description/meshes/rosbot_xl/components/camera_mount_bot.dae",
+        "sha256": "828b37374d765aee0581f2716edd4d86feda7c831d5c3c8d2ad3f7894950b5fb"
+      },
+      {
+        "uri": "package://rosbot_description/meshes/rosbot_xl/components/camera_mount_mid.dae",
+        "sha256": "e36ec4baaef8ea6aeb51b41283644db46f59c974e7732bad0dca0c5a37f5b78b"
+      },
+      {
+        "uri": "package://rosbot_description/meshes/rosbot_xl/components/camera_mount_top.dae",
+        "sha256": "cac340441c70f049e76b31a80279700177f04e523c32c20fcd79972afd266b3c"
+      },
+      {
+        "uri": "package://husarion_components_description/meshes/rplidar/s3.glb",
+        "sha256": "4fa51af3cbadbffab86697d5b8e9eb48b052371d2a6990adc88b473d13bdddff"
+      }
+    ],
+    "preview_sha256": "906b688dcd98ef3abce96c2e5248d133c724c58722e361e9008c8f94a0fcfabc",
+    "renderer": "Blender 4.5.14 LTS",
+    "camera": "Orthographic, front three-quarter",
+    "resolution": [
+      640,
+      480
+    ],
+    "samples": 32
+  },
+  {
+    "robot_id": "tb3_burger",
+    "label": "TurtleBot3 Burger",
+    "description_sha256": "06d6fb9fad6d0056e7779e06344de4ee298a2b121a1b12be826bdee4c0de1949",
+    "source_revisions": {},
+    "packages": {
+      "turtlebot3_gazebo-708a2c5a": {
+        "name": "turtlebot3_gazebo",
+        "version": "2.3.7",
+        "licenses": [
+          "Apache 2.0"
+        ],
+        "authors": [
+          "Darby Lim",
+          "Pyo",
+          "Ryan Shim",
+          "Hyungyu Kim"
+        ],
+        "urls": [
+          "http://turtlebot3.robotis.com",
+          "https://github.com/ROBOTIS-GIT/turtlebot3_simulations",
+          "https://github.com/ROBOTIS-GIT/turtlebot3_simulations/issues"
+        ],
+        "notices": [
+          "notices/turtlebot3_gazebo-708a2c5a-copyright"
+        ]
+      }
+    },
+    "meshes": [
+      {
+        "uri": "package://turtlebot3_gazebo/models/turtlebot3_common/meshes/bases/burger_base.stl",
+        "sha256": "7d7f3329a437b43bbcbbec59f9a2d1df1d88b59c3882c543d979baf73670f025"
+      },
+      {
+        "uri": "package://turtlebot3_gazebo/models/turtlebot3_common/meshes/wheels/left_tire.stl",
+        "sha256": "578c9452ee51c2f71e5e6723b503d784e58a6ac317fa53ee308e645f204c8d6a"
+      },
+      {
+        "uri": "package://turtlebot3_gazebo/models/turtlebot3_common/meshes/wheels/right_tire.stl",
+        "sha256": "407aaf271ba7051c6186b220e1dc36b2a6eca688fced66a3347f49747b684596"
+      },
+      {
+        "uri": "package://turtlebot3_gazebo/models/turtlebot3_common/meshes/sensors/lds.stl",
+        "sha256": "98f0bd7046159f83caab9509293112ef13534368535669124b91b5114c3132f6"
+      }
+    ],
+    "preview_sha256": "464e18cb0766e48857c826f388bcb3669739cdfacce2eb1364fea75a718af2e6",
+    "renderer": "Blender 4.5.14 LTS",
+    "camera": "Orthographic, front three-quarter",
+    "resolution": [
+      640,
+      480
+    ],
+    "samples": 32
+  },
+  {
+    "robot_id": "tb3_waffle_pi",
+    "label": "TurtleBot3 Waffle Pi",
+    "description_sha256": "331fe7b76776108f49ed280b7e14006d55beaa7507a1cd5194fcafcde5b50110",
+    "source_revisions": {},
+    "packages": {
+      "turtlebot3_gazebo-708a2c5a": {
+        "name": "turtlebot3_gazebo",
+        "version": "2.3.7",
+        "licenses": [
+          "Apache 2.0"
+        ],
+        "authors": [
+          "Darby Lim",
+          "Pyo",
+          "Ryan Shim",
+          "Hyungyu Kim"
+        ],
+        "urls": [
+          "http://turtlebot3.robotis.com",
+          "https://github.com/ROBOTIS-GIT/turtlebot3_simulations",
+          "https://github.com/ROBOTIS-GIT/turtlebot3_simulations/issues"
+        ],
+        "notices": [
+          "notices/turtlebot3_gazebo-708a2c5a-copyright"
+        ]
+      }
+    },
+    "meshes": [
+      {
+        "uri": "package://turtlebot3_gazebo/models/turtlebot3_common/meshes/bases/waffle_pi_base.stl",
+        "sha256": "706230121a287ff953c4c84d344014a147fc27615b0e95221aaf04cb0dca7e42"
+      },
+      {
+        "uri": "package://turtlebot3_gazebo/models/turtlebot3_common/meshes/wheels/left_tire.stl",
+        "sha256": "578c9452ee51c2f71e5e6723b503d784e58a6ac317fa53ee308e645f204c8d6a"
+      },
+      {
+        "uri": "package://turtlebot3_gazebo/models/turtlebot3_common/meshes/wheels/right_tire.stl",
+        "sha256": "407aaf271ba7051c6186b220e1dc36b2a6eca688fced66a3347f49747b684596"
+      },
+      {
+        "uri": "package://turtlebot3_gazebo/models/turtlebot3_common/meshes/sensors/lds.stl",
+        "sha256": "98f0bd7046159f83caab9509293112ef13534368535669124b91b5114c3132f6"
+      }
+    ],
+    "preview_sha256": "821a770d3a14242defe95f6a8b58d64779a2caea4603aba44c09c4b18e2b5c02",
+    "renderer": "Blender 4.5.14 LTS",
+    "camera": "Orthographic, front three-quarter",
+    "resolution": [
+      640,
+      480
+    ],
+    "samples": 32
+  },
+  {
+    "robot_id": "tb4_standard",
+    "label": "TurtleBot4 Standard",
+    "description_sha256": "40b70f48345b4a53b73383d5c737402a32a15b6d7ba7448e15525a08821a1d03",
+    "source_revisions": {},
+    "packages": {
+      "irobot_create_description-a167b726": {
+        "name": "irobot_create_description",
+        "version": "3.0.4",
+        "licenses": [
+          "BSD"
+        ],
+        "authors": [
+          "iRobot"
+        ],
+        "urls": [],
+        "notices": [
+          "notices/irobot_create_description-a167b726-copyright"
+        ]
+      },
+      "turtlebot4_description-a1fbf3c6": {
+        "name": "turtlebot4_description",
+        "version": "2.1.1",
+        "licenses": [
+          "Apache 2.0"
+        ],
+        "authors": [
+          "Roni Kreinin"
+        ],
+        "urls": [],
+        "notices": [
+          "notices/turtlebot4_description-a1fbf3c6-copyright"
+        ]
+      }
+    },
+    "meshes": [
+      {
+        "uri": "package://irobot_create_description/meshes/body_visual.dae",
+        "sha256": "8a769b51aeac9489613f8aa7ebd89358681d145abcd7bfca1e4fe45c5df6cabf"
+      },
+      {
+        "uri": "package://irobot_create_description/meshes/bumper_visual.dae",
+        "sha256": "aa01eb9cbeb8b75cf2ae2aca545e8528b7940bf1a54a434c63efb60e51141d97"
+      },
+      {
+        "uri": "package://irobot_create_description/meshes/bumper_collision.dae",
+        "sha256": "f727eaf549c0a2fdd546af9703f2a518d75c4dc6ea4628662dce8898b05d51dd"
+      },
+      {
+        "uri": "package://turtlebot4_description/meshes/shell.dae",
+        "sha256": "7c97b3b6e83da249cb96ade95e093bf0e548b5731813f16e7907e3984f3d480f"
+      },
+      {
+        "uri": "package://turtlebot4_description/meshes/shell_collision.dae",
+        "sha256": "9797524ea49c0127ab0287635cc6b065c771ef29fd8650603c8286afe0f29670"
+      },
+      {
+        "uri": "package://turtlebot4_description/meshes/weight_block.dae",
+        "sha256": "29bc618bada01ef526aac1a822c630ad5ee4f78d16157f75cb550f552010e6d5"
+      },
+      {
+        "uri": "package://turtlebot4_description/meshes/weight_block.dae",
+        "sha256": "29bc618bada01ef526aac1a822c630ad5ee4f78d16157f75cb550f552010e6d5"
+      },
+      {
+        "uri": "package://turtlebot4_description/meshes/weight_block.dae",
+        "sha256": "29bc618bada01ef526aac1a822c630ad5ee4f78d16157f75cb550f552010e6d5"
+      },
+      {
+        "uri": "package://turtlebot4_description/meshes/weight_block.dae",
+        "sha256": "29bc618bada01ef526aac1a822c630ad5ee4f78d16157f75cb550f552010e6d5"
+      },
+      {
+        "uri": "package://turtlebot4_description/meshes/tower_standoff.dae",
+        "sha256": "aae113441ca01c5d3cd137c2f4b5f9c704b6036e3d075513f384ed1c33038bc6"
+      },
+      {
+        "uri": "package://turtlebot4_description/meshes/tower_standoff.dae",
+        "sha256": "aae113441ca01c5d3cd137c2f4b5f9c704b6036e3d075513f384ed1c33038bc6"
+      },
+      {
+        "uri": "package://turtlebot4_description/meshes/tower_standoff.dae",
+        "sha256": "aae113441ca01c5d3cd137c2f4b5f9c704b6036e3d075513f384ed1c33038bc6"
+      },
+      {
+        "uri": "package://turtlebot4_description/meshes/tower_standoff.dae",
+        "sha256": "aae113441ca01c5d3cd137c2f4b5f9c704b6036e3d075513f384ed1c33038bc6"
+      },
+      {
+        "uri": "package://turtlebot4_description/meshes/tower_sensor_plate.dae",
+        "sha256": "857a80bde1a6ce798690ea9d9a94b7e3cc73a17304143d48a0de48fb6af501dc"
+      },
+      {
+        "uri": "package://turtlebot4_description/meshes/rplidar.dae",
+        "sha256": "286069ee666ae858b02859838668ce2f9ac2adb2732eaffaf15a034e81b2a949"
+      },
+      {
+        "uri": "package://turtlebot4_description/meshes/camera_bracket.dae",
+        "sha256": "66b83ccc9129183259be86ac5b8838004ab7b2eaa807b7aad941dcadca35474a"
+      },
+      {
+        "uri": "package://turtlebot4_description/meshes/oakd_pro.dae",
+        "sha256": "f858257010f74fb7c8189b0ba3c9d570a7cf477762b547c170294dc0816cc68b"
+      }
+    ],
+    "preview_sha256": "e746fcd359ad819e7d80703eab03de44f38701c4de52dc1571877cc6a98a31b4",
+    "renderer": "Blender 4.5.14 LTS",
+    "camera": "Orthographic, front three-quarter",
+    "resolution": [
+      640,
+      480
+    ],
+    "samples": 32
+  }
+]

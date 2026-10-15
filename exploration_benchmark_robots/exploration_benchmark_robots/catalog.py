@@ -26,6 +26,35 @@ def profile_hash(profile):
     return hashlib.sha256(json.dumps(profile, sort_keys=True).encode()).hexdigest()
 
 
+def resolve_physical_settings(profile, overrides=None):
+    profile = deepcopy(profile)
+    overrides = {} if overrides is None else overrides
+    if not isinstance(overrides, dict):
+        raise ValueError("robot_overrides must be a mapping")
+    if overrides and profile["id"] != "mogi":
+        raise ValueError("Robot settings can only be changed for MOGI")
+    defaults = dict(movement_speed=profile["max_linear_speed"],
+                    turning_speed=profile["max_angular_speed"],
+                    lidar_range=profile["lidar"]["range_max"])
+    requested = {}
+    for name, value in overrides.items():
+        if name not in defaults:
+            raise ValueError(f"Unknown MOGI setting: {name}; use {', '.join(defaults)}")
+        if type(value) not in (int, float) or not math.isfinite(value) or value <= 0:
+            raise ValueError(f"{name} must be a positive finite number")
+        if name == "lidar_range" and value <= profile["lidar"]["range_min"]:
+            raise ValueError(f"lidar_range must exceed {profile['lidar']['range_min']} m")
+        requested[name] = float(value)
+    if profile["id"] == "mogi":
+        effective = dict(defaults, **requested)
+        profile["benchmark_settings"] = dict(defaults=defaults, requested=requested, effective=effective)
+        profile["benchmark_overrides"] = {k: v for k, v in requested.items() if v != defaults[k]}
+        profile["max_linear_speed"] = effective["movement_speed"]
+        profile["max_angular_speed"] = effective["turning_speed"]
+        profile["lidar"]["range_max"] = effective["lidar_range"]
+    return profile
+
+
 class RobotCatalog:
     def __init__(self, directory=None, package_lookup=None):
         from ament_index_python.packages import get_package_share_directory
@@ -72,45 +101,7 @@ class RobotCatalog:
         return True, ""
 
     def require(self, robot_id, world, overrides=None):
-        profile = self.profile(robot_id)
-        overrides = {} if overrides is None else overrides
-        if not isinstance(overrides, dict):
-            raise ValueError("robot_overrides must be a mapping")
-        if overrides and robot_id != "mogi":
-            raise ValueError("Robot settings can only be changed for MOGI")
-        defaults = dict(
-            movement_speed=profile["max_linear_speed"],
-            turning_speed=profile["max_angular_speed"],
-            lidar_range=profile["lidar"]["range_max"],
-        )
-        requested = {}
-        for name, value in overrides.items():
-            if name not in defaults:
-                raise ValueError(
-                    f"Unknown MOGI setting: {name}; use {', '.join(defaults)}"
-                )
-            if (
-                type(value) not in (int, float)
-                or not math.isfinite(value)
-                or value <= 0
-            ):
-                raise ValueError(f"{name} must be a positive finite number")
-            if name == "lidar_range" and value <= profile["lidar"]["range_min"]:
-                raise ValueError(
-                    f"lidar_range must exceed {profile['lidar']['range_min']} m"
-                )
-            requested[name] = float(value)
-        if robot_id == "mogi":
-            effective = dict(defaults, **requested)
-            profile["benchmark_settings"] = dict(
-                defaults=defaults, requested=requested, effective=effective
-            )
-            profile["benchmark_overrides"] = {
-                k: v for k, v in requested.items() if v != defaults[k]
-            }
-            profile["max_linear_speed"] = effective["movement_speed"]
-            profile["max_angular_speed"] = effective["turning_speed"]
-            profile["lidar"]["range_max"] = effective["lidar_range"]
+        profile = resolve_physical_settings(self.profile(robot_id), overrides)
         available, reason = self.availability(robot_id)
         if not available:
             raise ValueError(f"{profile['label']}: {reason}")

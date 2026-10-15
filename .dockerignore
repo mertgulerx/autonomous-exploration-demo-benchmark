@@ -9,13 +9,25 @@ log
 logs
 results
 assets
+docs
+AGENTS.md
+**/AGENTS.md
 
 **/__pycache__
 **/*.py[cod]
+**/*.egg-info
 
 *.swp
 *.swo
 *~
 .DS_Store
 Thumbs.db
+
+.venv-suite
+.venv-suite-engine
+.venv-suite-gui
+.mypy_cache
+.ruff_cache
+.pytest_cache
+.codex
 

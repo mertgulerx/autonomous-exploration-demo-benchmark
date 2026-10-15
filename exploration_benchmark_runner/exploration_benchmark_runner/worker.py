@@ -98,7 +98,13 @@ NAV_ACTIVATION_TIMEOUT_SECONDS = 60.0
 
 class Worker:
     def __init__(self, config):
+        self.initialized = False
+        from .launch_spec import WorkerLaunchSpec
+
+        config = WorkerLaunchSpec.from_configuration(config).dictionary()
         self.config = config
+        self.campaign = bool(config.get("suite_identity"))
+        self.runtime = None
         self.single = config["single"]
         self.id = config["run_id"]
         self.slot = config["slot"]
@@ -114,7 +120,7 @@ class Worker:
         descriptor = config["scenario"]["coverage_reference"]
         self.coverage_reference = Reference(descriptor["metadata_file"])
         self.coverage_reference.validate_scenario(
-            config["project_root"], config["scenario"]
+            config["project_root"], config["scenario"], allow_custom_spawn=self.campaign
         )
         if self.coverage_reference.metadata_hash != descriptor["metadata_sha256"]:
             raise ValueError("Coverage reference changed after the start request")
@@ -154,30 +160,22 @@ class Worker:
         self.logged_state = None
         self.simulation_scope = ProcessScope(config["process_token"] + "_simulation")
         self.explorer_scope = ProcessScope(config["process_token"] + "_explorer")
-        self.observer_context = Context()
-        rclpy.init(
-            context=self.observer_context,
-            domain_id=config["observer_domain"],
-            signal_handler_options=rclpy.signals.SignalHandlerOptions.NO,
-        )
-        self.observer = Node(
-            "benchmark_observer_" + self.slot,
-            context=self.observer_context,
-            use_global_arguments=False,
-        )
-        self.observer_executor = SingleThreadedExecutor(context=self.observer_context)
-        self.observer_executor.add_node(self.observer)
-        self.state_pub = self.observer.create_publisher(
-            RunState, self.session + "/workers/" + self.slot + "/state", LATCHED
-        )
-        self.metrics_pub = self.observer.create_publisher(
-            RunMetrics, self.session + "/metrics", 20
-        )
-        self.observer.create_service(
-            WorkerCommand,
-            self.session + "/workers/" + self.slot + "/command",
-            self.command,
-        )
+        if self.campaign:
+            from benchmark_suite.worker_runtime import WorkerRuntime
+
+            self.runtime = WorkerRuntime(self)
+        else:
+            self.observer_context = Context()
+            rclpy.init(context=self.observer_context, domain_id=config["observer_domain"],
+                       signal_handler_options=rclpy.signals.SignalHandlerOptions.NO)
+            self.observer = Node("benchmark_observer_" + self.slot,
+                                 context=self.observer_context, use_global_arguments=False)
+            self.observer_executor = SingleThreadedExecutor(context=self.observer_context)
+            self.observer_executor.add_node(self.observer)
+            self.state_pub = self.observer.create_publisher(
+                RunState, self.session + "/workers/" + self.slot + "/state", LATCHED)
+            self.metrics_pub = self.observer.create_publisher(RunMetrics, self.session + "/metrics", 20)
+            self.observer.create_service(WorkerCommand, self.session + "/workers/" + self.slot + "/command", self.command)
         self.worker_context = Context()
         rclpy.init(
             context=self.worker_context,
@@ -190,6 +188,20 @@ class Worker:
             use_global_arguments=False,
             parameter_overrides=[Parameter("use_sim_time", value=True)],
         )
+        if self.campaign:
+            from exploration_benchmark_telemetry.msg import NavigationEvent
+
+            self.worker.create_subscription(
+                NavigationEvent, "/benchmark/navigation_events", self.runtime.navigation, 256
+            )
+            self.worker.create_subscription(
+                NavigateToPose.Impl.FeedbackMessage, "/navigate_to_pose/_action/feedback",
+                self.runtime.feedback, qos_profile_sensor_data
+            )
+            self.worker.create_subscription(
+                TFMessage, "/benchmark/ground_truth/pose", self.runtime.receive_ground_truth_pose,
+                qos_profile_sensor_data
+            )
         self.worker_executor = SingleThreadedExecutor(context=self.worker_context)
         self.worker_executor.add_node(self.worker)
         self.buffer = Buffer(node=self.worker)
@@ -234,7 +246,9 @@ class Worker:
                 LATCHED,
             ),
         ):
-            if channel not in ("imu", "odom"):
+            if self.campaign and channel not in ("clock", "scan", "imu", "odom", "map", "plan", "tf"):
+                continue
+            if not self.campaign and channel not in ("imu", "odom"):
                 self.publishers[channel] = self.observer.create_publisher(
                     kind, topic if self.single else self.root + "/" + channel, LATCHED
                 )
@@ -255,7 +269,9 @@ class Worker:
                     qos_profile_sensor_data,
                 )
             )
-        if not self.single:
+        if self.campaign:
+            pass
+        elif not self.single:
             self.publishers["path"] = self.observer.create_publisher(
                 Path, self.root + "/path", LATCHED
             )
@@ -320,6 +336,7 @@ class Worker:
         self.make_recorder(config["result_directory"])
         self.launch_simulation()
         self.publish_state()
+        self.initialized = True
 
     def environment(self, *, shared=False):
         env = dict(
@@ -341,6 +358,40 @@ class Worker:
             env = shared_environment(self.config["robot"], env)
         return env
 
+    def cleanup_initialization(self, error):
+        for name in ("explorer_scope", "simulation_scope"):
+            scope = getattr(self, name, None)
+            if scope:
+                scope.stop()
+        executor = getattr(self, "worker_executor", None)
+        if executor:
+            executor.shutdown(timeout_sec=3)
+        thread = getattr(self, "thread", None)
+        if thread and thread.is_alive():
+            thread.join(timeout=3)
+        node = getattr(self, "worker", None)
+        if node:
+            node.destroy_node()
+        context = getattr(self, "worker_context", None)
+        if context and context.ok():
+            context.shutdown()
+        recorder = getattr(self, "recorder", None)
+        if recorder:
+            recorder.finish("startup_failure", str(error), {}, None, None, -1, [])
+        runtime = getattr(self, "runtime", None)
+        if runtime:
+            runtime.close()
+        else:
+            executor = getattr(self, "observer_executor", None)
+            if executor:
+                executor.shutdown(timeout_sec=3)
+            node = getattr(self, "observer", None)
+            if node:
+                node.destroy_node()
+            context = getattr(self, "observer_context", None)
+            if context and context.ok():
+                context.shutdown()
+
     def spin_worker(self):
         try:
             self.worker_executor.spin()
@@ -354,13 +405,13 @@ class Worker:
         destination = FilePath(directory)
         destination.mkdir(parents=True, exist_ok=True)
         profile = self.profile
-        self.recorder = Recorder(
-            directory,
-            dict(self.config, spec=self.spec.dictionary()),
-            profile,
-            self.config["project_root"],
-            coverage_reference=self.coverage_reference,
-        )
+        if self.campaign:
+            from benchmark_suite.recording import Recorder as SuiteRecorder
+
+            self.recorder = SuiteRecorder(directory, dict(self.config, spec=self.spec.dictionary()), self.coverage_reference)
+        else:
+            self.recorder = Recorder(directory, dict(self.config, spec=self.spec.dictionary()),
+                                     profile, self.config["project_root"], coverage_reference=self.coverage_reference)
         params, overrides = adapters.resolve_parameters(self.spec, directory)
         self.parameter_file = params
         self.recorder.manifest["instrumentation_overrides"] = overrides
@@ -374,6 +425,10 @@ class Worker:
 
         robot = self.config["robot"]
         generated, robot_file = prepare_robot(robot, scenario, directory)
+        if self.campaign and self.config.get("suite_diagnostics", True):
+            from benchmark_suite.instrumentation import prepare as instrument
+
+            instrument(generated)
         self.native_controller_names = generated.get("controllers", [])
         self.navigation_parameters = generated["navigation"]
         self.slam_parameters = generated["slam"]
@@ -452,6 +507,8 @@ class Worker:
                 and self.phase == "RUNNING"
             ):
                 self.measure_odometry(message, now)
+            if self.campaign and channel in ("scan", "imu", "tf", "tf_static", "robot_description"):
+                return
             if channel in ("tf", "tf_static"):
                 for transform in message.transforms:
                     self.tf_cache[channel][transform.child_frame_id] = deepcopy(
@@ -494,6 +551,8 @@ class Worker:
         with self.lock:
             if self.phase != "RUNNING":
                 return
+            if self.runtime:
+                self.runtime.command(topic, message)
             values = (message.linear.x, message.linear.y, message.angular.z)
             counters = self.robot_diagnostics.setdefault("commands", {})
             entry = counters.setdefault(
@@ -611,6 +670,8 @@ class Worker:
                 self.map_received_wall,
                 self.map_received_unix,
             )
+        if self.runtime:
+            self.runtime.odometry(message, wall)
 
     def prepare_coverage(self):
         transform = self.buffer.lookup_transform(
@@ -626,6 +687,8 @@ class Worker:
         x, y = transform.translation.x, transform.translation.y
         alignment = (spawn[0] - c * x + s * y, spawn[1] - s * x - c * y, yaw)
         self.coverage = Coverage(Calculator(self.coverage_reference, alignment))
+        if self.runtime:
+            self.runtime.align_odometry(alignment)
         self.recorder.manifest["coverage"]["alignment"] = dict(
             world_from_map=list(alignment),
             anchor="stationary_spawn_and_map_to_base_tf",
@@ -667,6 +730,9 @@ class Worker:
             self.recorder.coverage_checkpoint(self.coverage)
 
     def publish_metrics(self, snapshot):
+        if self.runtime:
+            self.runtime.publish_metrics(snapshot)
+            return
         fields = dict(snapshot)
         fields["coverage_milestones"] = [
             CoverageMilestone(
@@ -894,7 +960,7 @@ class Worker:
                 "rotation_threshold_rad": Measurements.MOTION_ROTATION_RADIANS,
                 "simulation_origin": "odometry_header_stamp",
                 "wall_origin": "odometry_receipt_monotonic_time",
-                "time_limit_origin": "explorer_activation",
+                "time_limit_origin": "first_raw_odometry_movement" if self.campaign else "explorer_activation",
                 "resource_and_quality_origin": "explorer_activation",
             },
             first_motion=None,
@@ -919,7 +985,7 @@ class Worker:
         self.publishers["path"].publish(self.path)
 
     def publish_initial_pose(self):
-        if not self.single or self.initial_pose_sent:
+        if self.campaign or not self.single or self.initial_pose_sent:
             return
         try:
             transform = self.buffer.lookup_transform("map", "base_footprint", Time())
@@ -936,7 +1002,7 @@ class Worker:
         self.initial_pose_sent = True
 
     def record_path(self):
-        if self.phase != "RUNNING":
+        if self.campaign or self.phase != "RUNNING":
             return
         try:
             transform = self.buffer.lookup_transform("map", "base_footprint", Time())
@@ -1023,12 +1089,22 @@ class Worker:
                     self.recorder.event("first_motion", **first_motion)
                     self.recorder.flush()
         if self.recorder and self.phase == "RUNNING":
+            if self.campaign:
+                self.recorder.clock = self.clock_value
+                self.recorder.origins = self.measurements.movement_simulation_start, self.measurements.movement_wall_start
+                snapshot["explorer_pid"] = self.explorer_identity[0] if self.explorer_identity else None
+                snapshot["explorer_resources_available"] = cpu is not None and rss is not None
+                self.runtime.sample_resources(wall)
             self.recorder.sample(snapshot)
         self.publish_metrics(snapshot)
 
     def stop(self, outcome, detail="", native_code=-1):
         if self.phase in ("STOPPING", "FINISHED"):
             return
+        recorder = self.recorder
+        if self.campaign and recorder and recorder.error:
+            outcome, detail = "storage_failure", str(recorder.error)
+            self.recorder = None
         # Close callback input atomically at the trigger. Geometry calculation
         # and process accounting must not admit another map/odometry afterwards.
         with self.lock:
@@ -1039,16 +1115,37 @@ class Worker:
                 native_code,
             )
             terminal_wall = time.monotonic()
+            if self.campaign and self.recorder:
+                self.recorder.manifest.update(
+                    terminal_trigger_utc_ns=time.time_ns(),
+                    terminal_trigger_monotonic_ns=round(terminal_wall * 1e9),
+                    terminal_trigger_simulation_ns=round(self.clock_value * 1e9),
+                )
         # Freeze before cancellation and process teardown add extra distance/time.
         if self.measurements:
-            self.sample(terminal_wall, coverage_force=True)
+            try:
+                self.sample(terminal_wall, coverage_force=True)
+            except OSError as error:
+                if not self.campaign:
+                    raise
+                self.outcome, self.detail = "storage_failure", str(error)
+                self.recorder = None
             with self.lock:
                 self.measurements.freeze()
                 if self.coverage:
                     self.measurements.latest.update(self.coverage.freeze())
-                    self.recorder.coverage_checkpoint(self.coverage)
-            if self.recorder:
-                self.recorder.sample(self.measurements.latest)
+            try:
+                if self.recorder:
+                    if self.coverage:
+                        self.recorder.coverage_checkpoint(self.coverage)
+                    self.recorder.sample(self.measurements.latest)
+            except OSError as error:
+                if not self.campaign:
+                    raise
+                self.outcome, self.detail = "storage_failure", str(error)
+                self.recorder = None
+            if self.campaign:
+                self.publish_metrics(self.measurements.latest)
         self.publish_state()
         for client in self.cancel_clients:
             if client.service_is_ready():
@@ -1059,23 +1156,31 @@ class Worker:
         self.explorer_scope.stop()
         self.simulation_scope.stop()
         self.close_source()
-        if self.recorder:
-            self.recorder.manifest["robot_diagnostics"] = self.robot_diagnostics
+        if recorder:
+            recorder.manifest["robot_diagnostics"] = self.robot_diagnostics
             snapshot = self.measurements.latest if self.measurements else {}
-            self.recorder.finish(
-                outcome,
-                detail,
-                snapshot,
-                self.cache.get("map"),
-                self.path,
-                native_code,
-                self.simulation_scope.commands + self.explorer_scope.commands,
-            )
+            try:
+                recorder.finish(
+                    self.outcome,
+                    self.detail,
+                    snapshot,
+                    self.cache.get("map"),
+                    self.path,
+                    native_code,
+                    self.simulation_scope.commands + self.explorer_scope.commands,
+                )
+            except OSError as error:
+                if not self.campaign:
+                    raise
+                self.outcome, self.detail = "storage_failure", str(error)
+                recorder.thread.join(timeout=3)
             self.recorder = None
         self.phase = "FINISHED"
         self.publish_state()
         if self.measurements:
             self.sample(time.monotonic())
+        if self.campaign:
+            self.closed = True
 
     def close_source(self):
         if self.source_closed:
@@ -1093,6 +1198,9 @@ class Worker:
         }
 
     def publish_state(self):
+        if self.runtime:
+            self.runtime.publish_state()
+            return
         description = (self.phase, self.outcome, self.detail)
         if description != self.logged_state:
             self.logged_state = description
@@ -1117,6 +1225,11 @@ class Worker:
 
     def tick(self):
         wall = time.monotonic()
+        if self.runtime:
+            self.runtime.tick()
+            if self.recorder and self.recorder.error:
+                self.stop("storage_failure", str(self.recorder.error))
+                return
         while not self.commands.empty():
             request = self.commands.get_nowait()
             if request.command == "start":
@@ -1155,7 +1268,8 @@ class Worker:
                 except (TransformException, ValueError) as exc:
                     self.stop("startup_failure", f"Coverage alignment failed: {exc}")
                     return
-                self.gazebo_pause(True)
+                if not self.campaign:
+                    self.gazebo_pause(True)
                 self.phase = "READY"
                 self.detail = "Ready" if self.single else "Ready; warm-up complete"
                 self.publish_initial_pose()
@@ -1176,6 +1290,8 @@ class Worker:
                         pass
                 if self.recorder:
                     self.recorder.event("ready", simulation=self.clock_value)
+                if self.campaign:
+                    self.start_explorer()
             elif wall - self.started_wall > self.config.get("startup_timeout", 180):
                 self.stop("startup_failure", self.detail)
         if self.phase in ("STARTING", "READY", "RUNNING"):
@@ -1222,10 +1338,18 @@ class Worker:
                     )
                 )
             limit = self.config["simulation_time_limit"]
-            if limit and self.clock_value - self.start_sim >= limit:
+            limit_origin = self.measurements.movement_simulation_start if self.campaign else self.start_sim
+            if limit and limit_origin is not None and self.clock_value - limit_origin >= limit:
                 self.terminal.put(
                     ("time_limit", f"Simulation-time limit ({limit:g} seconds)", -1)
                 )
+            if self.campaign:
+                if not self.measurements.motion_started and self.clock_value-self.start_sim >= 180:
+                    self.terminal.put(("no_movement", "No planar motion within 180 simulation seconds after activation", -1))
+                required = self.config["robot"]["required_streams"] + ["clock"]
+                stale = [name for name in required if wall-self.streams.get(name,self.started_wall)>10.]
+                if stale:
+                    self.terminal.put(("runtime_failure", "Required stream stopped: " + ", ".join(stale), -1))
             if wall - self.last_path >= 0.2:
                 self.last_path = wall
                 self.record_path()
@@ -1250,7 +1374,10 @@ class Worker:
     def run(self):
         try:
             while not self.closed:
-                self.observer_executor.spin_once(timeout_sec=0.05)
+                if self.campaign:
+                    time.sleep(0.05)
+                else:
+                    self.observer_executor.spin_once(timeout_sec=0.05)
                 self.tick()
         except Exception as error:
             self.stop(
@@ -1268,10 +1395,13 @@ class Worker:
             self.explorer_scope.stop()
             self.simulation_scope.stop()
             self.close_source()
-            self.observer_executor.shutdown()
-            self.observer.destroy_node()
-            if self.observer_context.ok():
-                self.observer_context.shutdown()
+            if self.runtime:
+                self.runtime.close()
+            else:
+                self.observer_executor.shutdown()
+                self.observer.destroy_node()
+                if self.observer_context.ok():
+                    self.observer_context.shutdown()
 
 
 def main():
@@ -1290,13 +1420,16 @@ def main():
     signal.signal(signal.SIGINT, exit_signal)
     signal.signal(signal.SIGTERM, exit_signal)
     try:
-        worker = Worker(config)
+        worker = Worker.__new__(Worker)
+        Worker.__init__(worker, config)
         worker.run()
     except BaseException as exc:
         traceback.print_exc()
         if worker is not None:
             try:
-                if worker.phase not in ("STOPPING", "FINISHED"):
+                if not getattr(worker, "initialized", False):
+                    worker.cleanup_initialization(exc)
+                elif worker.phase not in ("STOPPING", "FINISHED"):
                     worker.stop(
                         (
                             "startup_failure"

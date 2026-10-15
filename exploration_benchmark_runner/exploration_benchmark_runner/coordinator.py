@@ -424,6 +424,9 @@ class Coordinator(Node):
             startup_timeout=self.startup_timeout,
             robot=self.robot,
         )
+        from .launch_spec import WorkerLaunchSpec
+
+        config = WorkerLaunchSpec.from_configuration(config).dictionary()
         write_json(directory / "worker_configuration.json", config)
         state = RunState(
             run_id=run_id,

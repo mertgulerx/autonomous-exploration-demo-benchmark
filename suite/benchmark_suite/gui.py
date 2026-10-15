@@ -1,0 +1,1155 @@
+# Copyright 2026 Mert Güler
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+import json
+from math import degrees
+from pathlib import Path
+import sys
+from typing import Any
+import uuid
+
+from PySide6 import QtCore, QtGui, QtWidgets
+
+from .gui_support import MapView, PagedTable, TextSelection, Transport, button
+from .gui_pages import SpawnEditor
+from .gui_builder import CampaignBuilder
+from .gui_campaigns import CampaignOverview, CampaignTable
+from .gui_profiles import ProfileEditor, SweepEditor
+from .gui_style import (
+    DetailsPanel,
+    Badge,
+    COLORS,
+    humanize,
+    icon,
+    label,
+    stylesheet,
+    surface,
+)
+from .gui_monitor import WorkerCards, RunMetrics
+from .gui_reports import ReportBrowser
+from .gui_logs import LogViewer
+from .gui_exports import ExportBrowser
+
+
+def metric_number(value: Any, decimals: int = 2) -> str:
+    return f"{value:.{decimals}f}" if isinstance(value, (float, int)) else "—"
+
+
+class Window(QtWidgets.QMainWindow):
+    def __init__(self, socket: Path):
+        super().__init__()
+        app = QtWidgets.QApplication.instance()
+        if isinstance(app, QtWidgets.QApplication):
+            self.text_selection = app.findChild(TextSelection) or TextSelection(app)
+            app.installEventFilter(self.text_selection)
+        self.setWindowTitle("Exploration · Benchmark Suite")
+        self.resize(1440, 960)
+        self.setMinimumSize(1100, 720)
+        self.settings = QtCore.QSettings("Mert Güler", "Exploration Benchmark Suite")
+        self.transport = Transport(socket)
+        self.catalog: dict[str, Any] = {}
+        self.catalog_pending = True
+        self.status: dict[str, Any] = {}
+        self.campaign_id: str | None = None
+        self.experiment_id: str | None = None
+        self.profile_row: dict[str, Any] | None = None
+        self.profile_reference: dict[str, Any] | None = None
+        self.result_selection: str | None = None
+        self.inspection_id: str | None = None
+        self.inspection_requested: str | None = None
+        self.selected_attempt: str | None = None
+        self.profile_detail_tag = ""
+        self.inspection_sequence, self.map_revision, self.event_sequence = 0, 0, 0
+        self.status_pending, self.inspection_pending, self.events_pending = False, False, False
+        self.campaign_status_pending = False
+        self.page_widgets: dict[str, QtWidgets.QWidget] = {}
+        self.pages = QtWidgets.QStackedWidget()
+        central = QtWidgets.QWidget()
+        root = QtWidgets.QVBoxLayout(central)
+        root.setContentsMargins(0, 0, 0, 0)
+        root.setSpacing(0)
+        topbar = QtWidgets.QWidget()
+        topbar.setObjectName("topbar")
+        navigation_bar = QtWidgets.QHBoxLayout(topbar)
+        navigation_bar.setContentsMargins(24, 4, 24, 4)
+        navigation_bar.setSpacing(24)
+        navigation_bar.addWidget(label("Exploration", "brand"))
+        self.navigation = QtWidgets.QListWidget()
+        self.navigation.setObjectName("navigation")
+        self.navigation.setIconSize(QtCore.QSize(20, 20))
+        self.navigation.setFlow(QtWidgets.QListView.Flow.LeftToRight)
+        self.navigation.setWrapping(False)
+        self.navigation.setMovement(QtWidgets.QListView.Movement.Static)
+        self.navigation.setResizeMode(QtWidgets.QListView.ResizeMode.Adjust)
+        self.navigation.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.navigation.setVerticalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.navigation.setFixedHeight(48)
+        navigation_bar.addWidget(self.navigation, 1)
+        root.addWidget(topbar)
+        root.addWidget(self.pages, 1)
+        self.setCentralWidget(central)
+        self.tables: list[PagedTable] = []
+        self.make_dashboard()
+        self.make_monitor()
+        self.make_profiles()
+        self.make_spawns()
+        self.make_results()
+        self.make_builder()
+        self.navigation.currentRowChanged.connect(self.show_page)
+        self.navigation.setCurrentRow(0)
+        self.apply_style()
+        geometry = self.settings.value("geometry")
+        if isinstance(geometry, QtCore.QByteArray):
+            self.restoreGeometry(geometry)
+        for split in self.findChildren(QtWidgets.QSplitter):
+            if split.objectName():
+                state = self.settings.value("split/" + split.objectName())
+                if isinstance(state, QtCore.QByteArray):
+                    split.restoreState(state)
+        self.transport.received.connect(self.received)
+        self.transport.failed.connect(self.failed)
+        self.transport.start()
+        self.transport.submit("catalog", "catalog.get")
+        self.poll = QtCore.QTimer(self)
+        self.poll.setInterval(1000)
+        self.poll.timeout.connect(self.refresh_status)
+        self.poll.start()
+        self.refresh_status()
+
+    def page(
+        self, name: str, key: str, *, navigation: bool = True, heading: bool = True
+    ) -> QtWidgets.QVBoxLayout:
+        widget = QtWidgets.QWidget()
+        widget.setObjectName("page-" + key)
+        self.pages.addWidget(widget)
+        self.page_widgets[key] = widget
+        if navigation:
+            item = QtWidgets.QListWidgetItem(name)
+            item.setData(QtCore.Qt.ItemDataRole.UserRole, key)
+            self.navigation.addItem(item)
+        layout = QtWidgets.QVBoxLayout(widget)
+        layout.setContentsMargins(24, 24, 24, 24)
+        layout.setSpacing(16)
+        if heading:
+            layout.addWidget(label(name, "title"))
+        return layout
+
+    def go(self, key: str) -> None:
+        self.pages.setCurrentWidget(self.page_widgets[key])
+        for index in range(self.navigation.count()):
+            if self.navigation.item(index).data(QtCore.Qt.ItemDataRole.UserRole) == key:
+                self.navigation.setCurrentRow(index)
+                break
+        else:
+            self.navigation.clearSelection()
+        for table in self.tables:
+            if table.isVisible():
+                table.refresh()
+        if key != "monitor":
+            self.close_inspection()
+        else:
+            self.inspect_selected()
+
+    def current_page(self) -> str:
+        return self.pages.currentWidget().objectName().removeprefix("page-")
+
+    def open_builder(self) -> None:
+        self.go("builder")
+        self.builder.show_step(0)
+
+    def make_dashboard(self) -> None:
+        layout = self.page("Campaigns", "campaigns", heading=False)
+        heading = QtWidgets.QHBoxLayout()
+        heading.addWidget(label("Campaigns", "title"))
+        self.campaign_total = Badge("—")
+        self.campaign_total.setAccessibleName("Campaign count")
+        heading.addWidget(self.campaign_total)
+        heading.addSpacing(16)
+        self.hide_finished = QtWidgets.QCheckBox("Hide finished campaigns")
+        self.hide_finished.setChecked(
+            bool(self.settings.value("hide_finished_campaigns", False, type=bool))
+        )
+        heading.addWidget(self.hide_finished)
+        heading.addStretch()
+        heading.addWidget(label("Active workers", "muted"))
+        self.active_worker_count = label("—", "section")
+        self.active_worker_count.setAccessibleName("Active workers")
+        heading.addWidget(self.active_worker_count)
+        heading.addSpacing(16)
+        button("New campaign", self.open_builder, heading, glyph="plus")
+        layout.addLayout(heading)
+        self.summary = label("Connecting to the background engine…", "muted")
+        self.summary.setWordWrap(True)
+        layout.addWidget(self.summary)
+        self.campaign_overview = CampaignOverview()
+        self.progress_bar = self.campaign_overview.progress
+        layout.addWidget(self.campaign_overview)
+        self.campaigns = CampaignTable(self.transport)
+        self.campaigns.selected.connect(self.select_campaign)
+        self.campaigns.action_requested.connect(self.control_campaign_row)
+        if self.hide_finished.isChecked():
+            self.campaigns.filters = {"hide_finished": True}
+        self.hide_finished.toggled.connect(self.filter_campaigns)
+        self.tables.append(self.campaigns)
+        layout.addWidget(self.campaigns, 1)
+        bar = QtWidgets.QHBoxLayout()
+        bar.addStretch()
+        more = button("Queue actions", lambda: None, bar)
+        menu = QtWidgets.QMenu(more)
+        menu.addAction("Move earlier", lambda: self.move_campaign("up"))
+        menu.addAction("Move later", lambda: self.move_campaign("down"))
+        menu.addSeparator()
+        menu.addAction("Repeat finished campaign", self.repeat_campaign)
+        more.setMenu(menu)
+        self.end_campaign_button = button(
+            "End campaign", lambda: self.control_campaign("end"), bar, role="danger"
+        )
+        self.end_campaign_button.setEnabled(False)
+        layout.addLayout(bar)
+
+    def make_builder(self) -> None:
+        layout = self.page("New campaign", "builder", navigation=False)
+        self.builder = CampaignBuilder(self.transport)
+        self.builder.edit_profile.connect(self.edit_builder_profile)
+        self.builder.edit_spawn.connect(self.edit_builder_spawn)
+        layout.addWidget(self.builder, 1)
+
+    def make_profiles(self) -> None:
+        layout = self.page("Profiles", "profiles")
+        search = QtWidgets.QHBoxLayout()
+        self.profile_robot = QtWidgets.QComboBox()
+        self.profile_robot.currentIndexChanged.connect(self.refresh_profile_list)
+        self.profile_search = QtWidgets.QLineEdit()
+        self.profile_search.setPlaceholderText("Search profiles…")
+        self.profile_tag = QtWidgets.QLineEdit()
+        self.profile_tag.setPlaceholderText("Filter by tag")
+        self.profile_tag.setMaximumWidth(160)
+        for field in (self.profile_robot, self.profile_search, self.profile_tag):
+            search.addWidget(field)
+        button("Search", self.refresh_profile_list, search)
+        button(
+            "New profile", lambda: self.open_profile("new"), search, role="primary", glyph="plus"
+        )
+        self.profile_search.returnPressed.connect(self.refresh_profile_list)
+        self.profile_tag.returnPressed.connect(self.refresh_profile_list)
+        layout.addLayout(search)
+        split = QtWidgets.QSplitter()
+        split.setObjectName("profiles-split")
+        self.profiles = PagedTable(
+            self.transport,
+            "profile-table",
+            "library",
+            [("name", "Profile"), ("revision", "Revision"), ("created_ns", "Created")],
+            method="profiles.list",
+        )
+        self.profiles.filters = {"archived": False}
+        self.profiles.selected.connect(self.select_profile)
+        self.tables.append(self.profiles)
+        split.addWidget(self.profiles)
+        panel = surface()
+        details = QtWidgets.QVBoxLayout(panel)
+        details.setContentsMargins(20, 20, 20, 20)
+        self.profile_details = DetailsPanel("Profile details")
+        details.addWidget(self.profile_details, 1)
+        bar = QtWidgets.QHBoxLayout()
+        button("Edit", lambda: self.open_profile("edit"), bar)
+        button("Clone", lambda: self.open_profile("clone"), bar)
+        button("Use in campaign", self.add_profile_to_campaign, bar)
+        details.addLayout(bar)
+        self.profile_reference_label = label(
+            "Choose a reference to compare parameter changes", "muted"
+        )
+        self.profile_reference_label.setWordWrap(True)
+        details.addWidget(self.profile_reference_label)
+        bar = QtWidgets.QHBoxLayout()
+        button("Set reference", self.set_profile_reference, bar, role="quiet")
+        button("Compare", self.compare_profile, bar, role="quiet")
+        details.addLayout(bar)
+        self.profile_difference = DetailsPanel("Parameter changes")
+        details.addWidget(self.profile_difference)
+        split.addWidget(panel)
+        split.setSizes([650, 420])
+        layout.addWidget(split, 1)
+        bar = QtWidgets.QHBoxLayout()
+        button("Parameter sweep", self.open_sweep, bar)
+        button("Import profile", self.import_profile, bar)
+        button("Export profile", self.export_profile, bar)
+        bar.addStretch()
+        button("Archive", self.archive_profile, bar, role="danger")
+        layout.addLayout(bar)
+
+    def make_spawns(self) -> None:
+        layout = self.page("Worlds & Spawns", "worlds")
+        self.spawn_editor = SpawnEditor(self.transport)
+        self.spawn_editor.changed.connect(self.refresh_libraries)
+        self.spawn_editor.return_requested.connect(self.return_to_builder)
+        self.tables.extend(self.spawn_editor.tables)
+        layout.addWidget(self.spawn_editor, 1)
+
+    def make_monitor(self) -> None:
+        layout = self.page("Monitor", "monitor")
+        self.workers = WorkerCards()
+        self.workers.chosen.connect(self.choose_worker)
+        layout.addWidget(self.workers)
+        self.focus_title = label("No worker selected", "section")
+        layout.addWidget(self.focus_title)
+        bar = QtWidgets.QHBoxLayout()
+        self.stop_run_button = button(
+            "Stop run", lambda: self.control_run("stop"), bar, role="danger"
+        )
+        self.restart_run_button = button("Restart run", lambda: self.control_run("restart"), bar)
+        bar.addStretch()
+        for control in (self.stop_run_button, self.restart_run_button):
+            control.setEnabled(False)
+        layout.addLayout(bar)
+        self.focus_tabs = QtWidgets.QTabWidget()
+        inspection = QtWidgets.QSplitter()
+        inspection.setObjectName("monitor-inspection-split")
+        self.live_map = MapView()
+        inspection.addWidget(self.live_map)
+        panel = surface()
+        pane = QtWidgets.QVBoxLayout(panel)
+        pane.setContentsMargins(16, 16, 16, 16)
+        head = QtWidgets.QHBoxLayout()
+        head.addWidget(label("Run measurements", "section"), 1)
+        button("Fit map", self.live_map.fit_map, head, role="quiet")
+        pane.addLayout(head)
+        scroll = QtWidgets.QScrollArea()
+        scroll.setWidgetResizable(True)
+        self.run_metrics = RunMetrics()
+        scroll.setWidget(self.run_metrics)
+        pane.addWidget(scroll, 1)
+        panel.setMinimumWidth(290)
+        inspection.addWidget(panel)
+        inspection.setSizes([760, 310])
+        inspection.setStretchFactor(0, 1)
+        self.focus_tabs.addTab(inspection, "Map && metrics")
+        self.log_viewer = LogViewer(self.transport)
+        self.focus_tabs.addTab(self.log_viewer, "Logs")
+        events = QtWidgets.QWidget()
+        event_layout = QtWidgets.QVBoxLayout(events)
+        event_layout.setContentsMargins(0, 12, 0, 0)
+        self.log_filter = QtWidgets.QLineEdit()
+        self.log_filter.setPlaceholderText("Filter lifecycle events…")
+        event_layout.addWidget(self.log_filter)
+        self.logs = QtWidgets.QPlainTextEdit()
+        self.logs.setReadOnly(True)
+        self.logs.document().setMaximumBlockCount(2000)
+        event_layout.addWidget(self.logs, 1)
+        self.focus_tabs.addTab(events, "Events")
+        layout.addWidget(self.focus_tabs, 1)
+
+    def make_results(self) -> None:
+        layout = self.page("Results", "results")
+        self.results_context = label("Choose a campaign in Campaigns to narrow this view", "muted")
+        layout.addWidget(self.results_context)
+        tabs = QtWidgets.QTabWidget()
+        runs = QtWidgets.QWidget()
+        run_layout = QtWidgets.QVBoxLayout(runs)
+        run_layout.setContentsMargins(0, 12, 0, 0)
+        bar = QtWidgets.QHBoxLayout()
+        self.result_kind = QtWidgets.QComboBox()
+        self.result_kind.addItems(["Attempts", "Experiments"])
+        self.result_robot, self.result_world = QtWidgets.QComboBox(), QtWidgets.QComboBox()
+        self.result_outcome = QtWidgets.QComboBox()
+        self.result_outcome.addItem("All outcomes", None)
+        for value in (
+            "completed",
+            "time_limit",
+            "no_movement",
+            "startup_failure",
+            "runtime_failure",
+            "timing_rejection",
+            "engine_interruption",
+            "manual_discard",
+            "storage_failure",
+        ):
+            self.result_outcome.addItem(humanize(value), value)
+        for field in (self.result_kind, self.result_robot, self.result_world, self.result_outcome):
+            bar.addWidget(field)
+        button("Apply filters", self.filter_results, bar)
+        run_layout.addLayout(bar)
+        secondary = QtWidgets.QHBoxLayout()
+        self.result_profile, self.result_spawn = QtWidgets.QComboBox(), QtWidgets.QComboBox()
+        self.result_profile.addItem("All profiles", None)
+        self.result_spawn.addItem("All spawns", None)
+        secondary.addWidget(self.result_profile)
+        secondary.addWidget(self.result_spawn)
+        secondary.addStretch()
+        run_layout.addLayout(secondary)
+        split = QtWidgets.QSplitter()
+        split.setObjectName("results-split")
+        self.results = PagedTable(
+            self.transport, "result-table", "attempts", self.result_columns("attempts")
+        )
+        self.results.selected.connect(self.select_result)
+        self.results.view.horizontalHeader().setSectionResizeMode(
+            QtWidgets.QHeaderView.ResizeMode.ResizeToContents
+        )
+        self.tables.append(self.results)
+        split.addWidget(self.results)
+        panel = surface()
+        pane = QtWidgets.QVBoxLayout(panel)
+        pane.setContentsMargins(20, 20, 20, 20)
+        self.result_detail = DetailsPanel("Run summary")
+        pane.addWidget(self.result_detail, 1)
+        split.addWidget(panel)
+        split.setSizes([760, 330])
+        run_layout.addWidget(split, 1)
+        tabs.addTab(runs, "Runs")
+        self.report_browser = ReportBrowser(self.transport)
+        self.reports = self.report_browser.reports
+        self.tables.append(self.reports)
+        tabs.addTab(self.report_browser, "Reports")
+        self.export_browser = ExportBrowser(self.transport)
+        self.tables.append(self.export_browser.table)
+        tabs.addTab(self.export_browser, "Exports")
+        tabs.currentChanged.connect(lambda: self.refresh_visible_tables())
+        layout.addWidget(tabs, 1)
+
+    @staticmethod
+    def result_columns(table: str) -> list[tuple[str, str]]:
+        return [
+            ("robot_id", "Robot"),
+            ("outcome", "Outcome"),
+            ("world_id", "World"),
+            ("profile_name", "Profile"),
+            ("spawn_name", "Spawn"),
+            ("repetition", "Repeat"),
+        ]
+
+    def refresh_visible_tables(self) -> None:
+        for table in self.tables:
+            if table.isVisible():
+                table.refresh()
+
+    def return_to_builder(self) -> None:
+        self.go("builder")
+        self.builder.show_step(1)
+
+    def show_page(self, index: int) -> None:
+        if index >= 0:
+            self.go(self.navigation.item(index).data(QtCore.Qt.ItemDataRole.UserRole))
+
+    def refresh_status(self) -> None:
+        if not self.status_pending:
+            self.status_pending = True
+            self.transport.submit("status", "engine.status")
+        if self.current_page() == "monitor" and not self.events_pending:
+            self.events_pending = True
+            self.transport.submit(
+                "events", "events.read", {"after_sequence": self.event_sequence, "limit": 100}
+            )
+        if self.inspection_id and not self.inspection_pending:
+            self.inspection_pending = True
+            self.inspection_requested = self.inspection_id
+            self.transport.submit(
+                "inspection",
+                "inspection.get",
+                {
+                    "attempt_id": self.inspection_id,
+                    "after_sequence": self.inspection_sequence,
+                    "map_revision": self.map_revision,
+                },
+            )
+        if self.campaign_id and not self.campaign_status_pending:
+            self.campaign_status_pending = True
+            self.transport.submit(
+                "campaign-status", "campaign.status", {"campaign_id": self.campaign_id}
+            )
+
+    def received(self, tag: str, result: Any) -> None:
+        if tag == "catalog":
+            self.catalog_pending = False
+            self.catalog = result
+            self.fill_catalog()
+        elif tag == "status":
+            self.status_pending, self.status = False, result
+            self.summary.hide()
+            self.active_worker_count.setText(str(len(result["active"])))
+            self.campaign_total.setText(f"{result['campaigns']['total']:,}")
+            if not self.catalog and not self.catalog_pending:
+                self.catalog_pending = True
+                self.transport.submit("catalog", "catalog.get")
+            if self.campaigns.isVisible():
+                self.campaigns.refresh()
+            self.workers.update_runs(result["active"], self.catalog)
+            selected = next(
+                (r for r in result["active"] if r["attempt"]["id"] == self.selected_attempt), None
+            )
+            for control in (self.stop_run_button, self.restart_run_button):
+                control.setEnabled(
+                    selected is not None and selected["attempt"]["phase"] in {"READY", "RUNNING"}
+                )
+            if selected:
+                self.run_metrics.update_metrics(selected["metrics"])
+                if self.current_page() == "monitor":
+                    self.inspect_selected()
+            elif self.inspection_id:
+                self.close_inspection()
+                self.focus_title.setText("Run ended · retained live snapshot")
+        elif tag == "submit":
+            self.select_campaign({"id": result["campaign_id"], "name": self.builder.name.text()})
+            self.campaigns.refresh()
+            self.go("campaigns")
+        elif tag == "campaign-repeat":
+            self.builder.apply_design(result["specification"])
+            self.go("builder")
+        elif tag.startswith("library-"):
+            self.fill_revisions(tag, result)
+        elif tag == "editor-default":
+            self.show_editor(result)
+        elif tag in ("profile-open:edit", "profile-open:clone"):
+            self.show_editor(result, clone=tag.endswith("clone"))
+        elif tag.startswith("builder-profile:") and tag == getattr(self, "builder_profile_tag", ""):
+            editor = self.show_editor(result)
+            owner, reference = self.builder_profile_context
+            editor.accepted.connect(
+                lambda profile, r=owner, old=reference: self.accept_builder_profile(r, old, profile)
+            )
+        elif tag == self.profile_detail_tag:
+            if self.profile_row and result["id"] == self.profile_row["id"]:
+                self.profile_details.set_record(
+                    {
+                        "name": result["name"],
+                        "robot": result["robot_id"],
+                        "revision": result.get("revision"),
+                        "description": result.get("description", ""),
+                        "changed_parameters": len(result.get("requested", {})),
+                        "configuration": result,
+                    }
+                )
+        elif tag == "result-detail" and result["id"] == self.result_selection:
+            metrics = result.get("metrics") or {}
+            summary = {
+                key: value
+                for key, value in self.result_row.items()
+                if key
+                in {
+                    "robot_id",
+                    "world_id",
+                    "profile_name",
+                    "spawn_name",
+                    "repetition",
+                    "outcome",
+                    "phase",
+                    "state",
+                }
+            }
+            for key in (
+                "simulation_elapsed",
+                "wall_elapsed",
+                "coverage_percent",
+                "distance_m",
+                "cpu_average_percent",
+                "rss_average_mib",
+                "rtf",
+                "coverage_status",
+            ):
+                summary[key] = metrics.get(key)
+            summary["record"] = result
+            self.result_detail.set_record(summary)
+        elif tag == "events":
+            self.events_pending = False
+            self.event_sequence = result["last_sequence"]
+            for event in result["events"]:
+                line = f"{event['sequence']} {event['kind']} {json.dumps(event['payload'], ensure_ascii=False)}"
+                if self.log_filter.text().lower() in line.lower():
+                    self.logs.appendPlainText(line)
+        elif tag == "inspection":
+            self.inspection_pending = False
+            if self.inspection_id and result.get("attempt_id") == self.inspection_id:
+                self.inspection_sequence = result.get("sequence", self.inspection_sequence)
+                self.map_revision = result.get("map_revision", self.map_revision)
+                if result.get("map"):
+                    self.live_map.set_map(result["map"])
+                self.live_map.append_path(result.get("path", []), result.get("reset", False))
+                if result.get("pose"):
+                    self.live_map.set_pose(*result["pose"])
+                goal, plan = result.get("goal"), result.get("plan", [])
+                self.live_map.goal.setData([goal[0]] if goal else [], [goal[1]] if goal else [])
+                self.live_map.plan.setData([p[0] for p in plan], [p[1] for p in plan])
+                x_points, y_points = [], []
+                for incident in result.get("incidents", []):
+                    x1, y1, x2, y2 = incident["bbox"]
+                    x_points.extend([x1, x2, x2, x1, x1, float("nan")])
+                    y_points.extend([y1, y1, y2, y2, y1, float("nan")])
+                self.live_map.incidents.setData(x_points, y_points)
+                self.live_map.setToolTip(result.get("incident_scope", ""))
+        elif tag == "sweep":
+            self.statusBar().showMessage(f"{result['count']} sweep profiles", 8000)
+            self.refresh_libraries()
+        elif tag in ("profile-import", "profile-archive", "spawn-save"):
+            self.refresh_libraries()
+            self.statusBar().showMessage("Library saved", 6000)
+        elif tag.endswith("-read"):
+            self.read_import(tag, result["text"])
+        elif tag == "profile-export":
+            self.transport.submit(
+                "file-saved", "local.write", {"path": self.export_path, "text": result["yaml"]}
+            )
+        elif tag == "file-saved":
+            self.statusBar().showMessage("Export saved", 5000)
+        elif tag == "queue-move":
+            self.campaigns.refresh()
+        elif tag.startswith("campaign-control:"):
+            self.campaigns.finish_control(
+                tag.removeprefix("campaign-control:"), result.get("state", "PAUSING")
+            )
+        elif tag == "campaign-status":
+            self.campaign_status_pending = False
+            campaign, counters = result["campaign"], result["counters"]
+            if campaign["id"] != self.campaign_id:
+                return
+            self.campaign_overview.update_campaign(campaign, counters)
+            self.end_campaign_button.setEnabled(
+                campaign["state"] in {"RUNNING", "RETRYING", "PAUSING", "PAUSED"}
+            )
+        elif tag == "profile-difference":
+            self.profile_difference.set_difference(result)
+
+    def failed(self, tag: str, error: str) -> None:
+        if tag.startswith("report-generate:") and tag != self.report_browser.generation_tag:
+            return
+        if tag.startswith("dataset-export:") and tag != self.export_browser.preparation_tag:
+            return
+        if tag == "catalog":
+            self.catalog_pending = False
+        if tag == "status":
+            self.status_pending = False
+            self.summary.setText("Engine connection unavailable: " + error)
+            self.summary.show()
+            self.active_worker_count.setText("—")
+            self.campaign_total.setText("—")
+        elif tag == "inspection":
+            self.inspection_pending = False
+            if self.inspection_requested == self.inspection_id:
+                self.close_inspection()
+        elif tag == "events":
+            self.events_pending = False
+        elif tag == "campaign-status":
+            self.campaign_status_pending = False
+        elif tag.startswith("campaign-control:"):
+            self.campaigns.finish_control(tag.removeprefix("campaign-control:"))
+        self.statusBar().showMessage(error, 12000)
+
+    def fill_catalog(self) -> None:
+        self.spawn_editor.catalog = self.catalog
+        self.builder.catalog = self.catalog
+        self.results.model.names = {
+            "robot_id": {r["id"]: r["label"] for r in self.catalog["robots"]},
+            "world_id": {w["id"]: w["label"] for w in self.catalog["worlds"]},
+        }
+        self.builder.robot_selector.set_catalog(self.catalog["robots"])
+        self.builder.world_tree.clear()
+        self.result_robot.clear()
+        self.result_world.clear()
+        self.result_robot.addItem("All robots", None)
+        self.result_world.addItem("All worlds", None)
+        for combo in (
+            self.profile_robot,
+            self.spawn_editor.spawn_robot,
+            self.spawn_editor.spawn_world,
+        ):
+            combo.blockSignals(True)
+            combo.clear()
+        for robot in self.catalog["robots"]:
+            identity, label = robot["id"], robot["label"]
+            self.profile_robot.addItem(label, identity)
+            self.result_robot.addItem(label, identity)
+            self.spawn_editor.spawn_robot.addItem(label, identity)
+        for world in self.catalog["worlds"]:
+            item = QtWidgets.QTreeWidgetItem([world["label"]])
+            item.setData(0, QtCore.Qt.ItemDataRole.UserRole, world["id"])
+            item.setCheckState(0, QtCore.Qt.CheckState.Unchecked)
+            pose = world["default_spawn"]
+            default = QtWidgets.QTreeWidgetItem(
+                ["Default", f"({pose['x']:.2f}, {pose['y']:.2f}) m · {degrees(pose['yaw']):.1f}°"]
+            )
+            default.setData(0, QtCore.Qt.ItemDataRole.UserRole, "Default")
+            default.setCheckState(0, QtCore.Qt.CheckState.Checked)
+            item.addChild(default)
+            self.builder.world_tree.addTopLevelItem(item)
+            self.spawn_editor.spawn_world.addItem(world["label"], world["id"])
+            self.result_world.addItem(world["label"], world["id"])
+        for combo in (
+            self.profile_robot,
+            self.spawn_editor.spawn_robot,
+            self.spawn_editor.spawn_world,
+        ):
+            combo.blockSignals(False)
+        self.builder.world_tree.expandAll()
+        self.refresh_libraries()
+        self.spawn_editor.load_world_map()
+        self.builder.update_summary()
+
+    def refresh_libraries(self) -> None:
+        self.refresh_profile_list()
+        self.spawn_editor.spawns.refresh()
+        for robot in self.catalog.get("robots", []):
+            owner = robot["id"]
+            self.transport.submit(
+                "library-" + owner,
+                "profiles.list",
+                {"robot_id": owner, "limit": 250, "summary": True},
+            )
+        for index in range(self.builder.world_tree.topLevelItemCount()):
+            parent = self.builder.world_tree.topLevelItem(index)
+            assert parent is not None
+            owner = parent.data(0, QtCore.Qt.ItemDataRole.UserRole)
+            self.transport.submit(
+                "library-" + owner,
+                "spawns.list",
+                {"world_id": owner, "limit": 250, "summary": True},
+            )
+
+    def fill_revisions(self, tag: str, result: Any) -> None:
+        owner = tag[8:]
+        if any(robot["id"] == owner for robot in self.catalog.get("robots", [])):
+            self.builder.robot_selector.set_profiles(
+                owner, result["rows"], result["next_offset"] is not None
+            )
+        for index in range(self.builder.world_tree.topLevelItemCount()):
+            parent = self.builder.world_tree.topLevelItem(index)
+            assert parent is not None
+            if parent.data(0, QtCore.Qt.ItemDataRole.UserRole) != owner:
+                continue
+            children = [parent.child(i) for i in range(parent.childCount())]
+            checked = set()
+            retained = []
+            shown = {row["id"] for row in result["rows"]}
+            for child in children:
+                data = child.data(0, QtCore.Qt.ItemDataRole.UserRole)
+                identity = data["id"] if isinstance(data, dict) else data
+                if child.checkState(0) == QtCore.Qt.CheckState.Checked:
+                    checked.add(identity)
+                    if isinstance(data, dict) or identity != "Default" and identity not in shown:
+                        retained.append(child)
+            while parent.childCount() > 1:
+                parent.takeChild(1)
+            for row in result["rows"]:
+                item = QtWidgets.QTreeWidgetItem([f"{row['name']} · r{row['revision']}"])
+                item.setData(0, QtCore.Qt.ItemDataRole.UserRole, row["id"])
+                item.setCheckState(
+                    0,
+                    QtCore.Qt.CheckState.Checked
+                    if row["id"] in checked
+                    else QtCore.Qt.CheckState.Unchecked,
+                )
+                parent.addChild(item)
+            for child in retained:
+                parent.addChild(child)
+            if result["next_offset"] is not None:
+                parent.setToolTip(
+                    0, "First 250 revisions shown. Use library search to select older profiles."
+                )
+        spawn_options = []
+        for i in range(self.builder.world_tree.topLevelItemCount()):
+            parent = self.builder.world_tree.topLevelItem(i)
+            assert parent is not None
+            for j in range(parent.childCount()):
+                child = parent.child(j)
+                spawn_options.append(
+                    (
+                        parent.data(0, QtCore.Qt.ItemDataRole.UserRole),
+                        parent.text(0),
+                        child.data(0, QtCore.Qt.ItemDataRole.UserRole),
+                        child.text(0),
+                    )
+                )
+        for options, combo in (
+            (self.builder.robot_selector.profile_options(), self.result_profile),
+            (spawn_options, self.result_spawn),
+        ):
+            selected = combo.currentData()
+            combo.blockSignals(True)
+            combo.clear()
+            combo.addItem("All profiles" if combo is self.result_profile else "All spawns", None)
+            for owner_id, owner_label, reference, profile_label in options:
+                identity = (
+                    reference["id"]
+                    if isinstance(reference, dict)
+                    else "default-" + owner_id
+                    if reference == "Default"
+                    else reference
+                )
+                combo.addItem(owner_label + " · " + profile_label, identity)
+            combo.setCurrentIndex(max(0, combo.findData(selected)))
+            combo.blockSignals(False)
+
+    def select_campaign(self, row: dict[str, Any]) -> None:
+        if self.campaign_id == row["id"]:
+            return
+        self.end_campaign_button.setEnabled(False)
+        self.campaign_id = row["id"]
+        self.campaign_overview.reset(row.get("name", "Selected campaign"))
+        self.results_context.setText(row.get("name", "Selected campaign") + " · recorded outcomes")
+        self.result_selection = None
+        self.result_detail.clear()
+        self.export_browser.set_campaign(self.campaign_id)
+        self.report_browser.set_campaign(self.campaign_id)
+        self.filter_results()
+
+    def filter_results(self) -> None:
+        self.result_selection = None
+        self.result_row: dict[str, Any] = {}
+        self.result_detail.clear()
+        filters: dict[str, Any] = {"campaign_id": self.campaign_id} if self.campaign_id else {}
+        for key, value in (
+            ("robot_id", self.result_robot.currentData()),
+            ("world_id", self.result_world.currentData()),
+            ("profile_id", self.result_profile.currentData()),
+            ("spawn_id", self.result_spawn.currentData()),
+        ):
+            if value:
+                filters[key] = value
+        if self.result_outcome.currentIndex() > 0:
+            filters["outcome"] = self.result_outcome.currentData()
+        self.results.table = "experiments" if self.result_kind.currentIndex() == 1 else "attempts"
+        self.results.filters, self.results.offset = filters, 0
+        self.results.model.set_columns(self.result_columns(self.results.table))
+        self.results.model.replace([])
+        self.results.refresh()
+
+    def filter_campaigns(self, checked: bool) -> None:
+        self.settings.setValue("hide_finished_campaigns", checked)
+        self.campaigns.filters = {"hide_finished": True} if checked else {}
+        self.campaigns.reset_page()
+
+    def control_campaign_row(self, identity: str, operation: str) -> None:
+        self.transport.submit(
+            "campaign-control:" + identity, "campaign." + operation, {"campaign_id": identity}
+        )
+
+    def control_campaign(self, operation: str) -> None:
+        if self.campaign_id:
+            if operation == "end" and not self.confirm_discard(
+                "End campaign",
+                "Active attempts will stop and their partial measurements will be discarded. Completed results remain available.",
+            ):
+                return
+            self.transport.submit(
+                "control", "campaign." + operation, {"campaign_id": self.campaign_id}
+            )
+
+    def repeat_campaign(self) -> None:
+        if self.campaign_id:
+            self.transport.submit(
+                "campaign-repeat", "campaign.repeat", {"campaign_id": self.campaign_id}
+            )
+
+    def move_campaign(self, direction: str) -> None:
+        if self.campaign_id:
+            self.transport.submit(
+                "queue-move",
+                "campaign.move",
+                {"campaign_id": self.campaign_id, "direction": direction},
+            )
+
+    def refresh_profile_list(self, *args: Any) -> None:
+        robot = self.profile_robot.currentData()
+        if robot:
+            self.profile_row = None
+            self.profiles.filters = {
+                "robot_id": robot,
+                "archived": False,
+                "search": self.profile_search.text().strip(),
+                "tag": self.profile_tag.text().strip(),
+            }
+            self.profiles.offset = 0
+            self.profiles.refresh()
+
+    def set_profile_reference(self) -> None:
+        if self.profile_row:
+            self.profile_reference = self.profile_row
+            self.profile_reference_label.setText(
+                f"Reference: {self.profile_row['name']} · revision {self.profile_row['revision']}"
+            )
+
+    def compare_profile(self) -> None:
+        if self.profile_reference and self.profile_row:
+            self.transport.submit(
+                "profile-difference",
+                "profiles.diff",
+                {
+                    "left": self.profile_reference["id"],
+                    "right": self.profile_row["id"],
+                },
+            )
+
+    def add_profile_to_campaign(self) -> None:
+        if not self.profile_row:
+            return
+        owner, identity = self.profile_row["owner"], self.profile_row["id"]
+        self.builder.robot_selector.add_profile(
+            owner, identity, self.profile_row["name"] + f" · r{self.profile_row['revision']}"
+        )
+
+    def open_profile(self, operation: str) -> None:
+        if operation == "new":
+            self.transport.submit(
+                "editor-default",
+                "parameters.resolve",
+                {"robot_id": self.profile_robot.currentData()},
+            )
+        elif self.profile_row:
+            self.transport.submit(
+                "profile-open:" + operation, "profiles.get", {"revision_id": self.profile_row["id"]}
+            )
+
+    def show_editor(self, profile: dict[str, Any], clone: bool = False) -> ProfileEditor:
+        editor = ProfileEditor(self.transport, self.catalog, profile, clone)
+        editor.setParent(self, editor.windowFlags())
+        editor.saved.connect(self.refresh_libraries)
+        editor.show()
+        return editor
+
+    def archive_profile(self) -> None:
+        if self.profile_row:
+            self.transport.submit(
+                "profile-archive", "profiles.archive", {"revision_id": self.profile_row["id"]}
+            )
+
+    def open_sweep(self) -> None:
+        robot = self.profile_robot.currentData()
+        if not robot:
+            return
+        parent_id = self.profile_row["id"] if self.profile_row else None
+        editor = SweepEditor(self.transport, self.catalog, robot, parent_id)
+        editor.setParent(self, editor.windowFlags())
+        editor.saved.connect(self.refresh_libraries)
+        editor.show()
+
+    def select_profile(self, row: dict[str, Any]) -> None:
+        self.profile_row = row
+        self.profile_details.set_record(row)
+        self.profile_detail_tag = "profile-detail-" + uuid.uuid4().hex
+        self.transport.submit(self.profile_detail_tag, "profiles.get", {"revision_id": row["id"]})
+
+    def edit_builder_profile(self, robot: str, reference: Any) -> None:
+        self.builder_profile_context = robot, reference
+        self.builder_profile_tag = "builder-profile:" + uuid.uuid4().hex
+        if isinstance(reference, dict):
+            self.transport.submit(self.builder_profile_tag, "parameters.resolve", reference)
+        elif reference == "Default":
+            self.transport.submit(
+                self.builder_profile_tag, "parameters.resolve", {"robot_id": robot}
+            )
+        else:
+            self.transport.submit(
+                self.builder_profile_tag, "profiles.get", {"revision_id": reference}
+            )
+
+    def accept_builder_profile(self, robot: str, reference: Any, profile: dict[str, Any]) -> None:
+        self.builder.robot_selector.replace_profile(robot, reference, profile)
+        self.refresh_libraries()
+
+    def edit_builder_spawn(self, world: str) -> None:
+        index = self.spawn_editor.spawn_world.findData(world)
+        if index >= 0:
+            self.spawn_editor.spawn_world.setCurrentIndex(index)
+        self.go("worlds")
+
+    def choose_worker(self, identity: str) -> None:
+        active = next(
+            (r for r in self.status.get("active", []) if r["attempt"]["id"] == identity), None
+        )
+        if not active:
+            return
+        self.selected_attempt, self.experiment_id = identity, active["experiment"]["id"]
+        self.workers.select(identity)
+        experiment = active["experiment"]
+        self.focus_title.setText(
+            f"{humanize(experiment['world_id'])} · {experiment['profile_name']} · {experiment['spawn_name']} · repetition {experiment['repetition'] + 1}"
+        )
+        self.run_metrics.update_metrics(active["metrics"])
+        self.log_viewer.select_attempt(identity, active["attempt"]["directory"])
+        for control in (self.stop_run_button, self.restart_run_button):
+            control.setEnabled(active["attempt"]["phase"] in {"READY", "RUNNING"})
+        self.focus_tabs.setCurrentIndex(0)
+        self.inspect_selected()
+
+    def confirm_discard(self, title: str, explanation: str) -> bool:
+        return (
+            QtWidgets.QMessageBox.warning(
+                self,
+                title,
+                explanation,
+                QtWidgets.QMessageBox.StandardButton.Yes
+                | QtWidgets.QMessageBox.StandardButton.Cancel,
+                QtWidgets.QMessageBox.StandardButton.Cancel,
+            )
+            == QtWidgets.QMessageBox.StandardButton.Yes
+        )
+
+    def control_run(self, operation: str) -> None:
+        active = next(
+            (
+                r
+                for r in self.status.get("active", [])
+                if r["attempt"]["id"] == self.selected_attempt
+            ),
+            None,
+        )
+        if self.experiment_id and active:
+            if not self.confirm_discard(
+                humanize(operation) + " run",
+                "This attempt's partial measurements will be discarded. "
+                + (
+                    "A fresh attempt will start with the accepted configuration."
+                    if operation == "restart"
+                    else "The experiment will remain Not done."
+                ),
+            ):
+                return
+            self.transport.submit(
+                "control", "experiment." + operation, {"experiment_id": self.experiment_id}
+            )
+
+    def inspect_selected(self) -> None:
+        if self.selected_attempt and self.inspection_id != self.selected_attempt:
+            active = next(
+                (
+                    row
+                    for row in self.status.get("active", [])
+                    if row["attempt"]["id"] == self.selected_attempt
+                ),
+                None,
+            )
+            if active is None:
+                return
+            robot = next(
+                row
+                for row in self.catalog["robots"]
+                if row["id"] == active["experiment"]["robot_id"]
+            )
+            self.inspection_id = self.selected_attempt
+            self.inspection_sequence, self.map_revision = 0, 0
+            self.live_map.clear_view()
+            self.live_map.set_pose(0, 0, 0, robot["footprint"])
+
+    def close_inspection(self) -> None:
+        self.inspection_id = None
+
+    def select_result(self, row: dict[str, Any]) -> None:
+        self.result_selection = row["id"]
+        self.result_row = row
+        self.result_detail.setPlainText(json.dumps(row, indent=2, ensure_ascii=False))
+        self.transport.submit(
+            "result-detail", "results.get", {"table": self.results.table, "id": row["id"]}
+        )
+        identity = row["id"] if self.results.table == "attempts" else row.get("final_attempt_id")
+        if identity:
+            self.log_viewer.select_attempt(identity, row.get("directory"))
+
+    def import_profile(self) -> None:
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, "Import suite profile", "", "YAML (*.yaml *.yml)"
+        )
+        if path:
+            self.transport.submit("profile-read", "local.read", {"path": path})
+
+    def export_profile(self) -> None:
+        if self.profile_row:
+            path, _ = QtWidgets.QFileDialog.getSaveFileName(
+                self, "Export suite profile", "suite-profile.yaml", "YAML (*.yaml)"
+            )
+            if path:
+                self.export_path = path
+                self.transport.submit(
+                    "profile-export",
+                    "profiles.export",
+                    {"revision_id": self.profile_row["id"], "format": "suite"},
+                )
+
+    def read_import(self, tag: str, source: str) -> None:
+        if tag == "profile-read":
+            self.transport.submit("profile-import", "profiles.import", {"yaml_text": source})
+
+    def apply_style(self) -> None:
+        application = QtWidgets.QApplication.instance()
+        if isinstance(application, QtWidgets.QApplication):
+            application.styleHints().setColorScheme(QtCore.Qt.ColorScheme.Light)
+            application.setAttribute(QtCore.Qt.ApplicationAttribute.AA_DontUseNativeDialogs)
+            palette = QtGui.QPalette()
+            for role, color in (
+                (QtGui.QPalette.ColorRole.Window, "surface.base"),
+                (QtGui.QPalette.ColorRole.Base, "surface.raised"),
+                (QtGui.QPalette.ColorRole.AlternateBase, "surface.sunken"),
+                (QtGui.QPalette.ColorRole.WindowText, "text.body"),
+                (QtGui.QPalette.ColorRole.Text, "text.body"),
+                (QtGui.QPalette.ColorRole.Button, "surface.raised"),
+                (QtGui.QPalette.ColorRole.ButtonText, "text.heading"),
+                (QtGui.QPalette.ColorRole.Highlight, "surface.selected"),
+                (QtGui.QPalette.ColorRole.HighlightedText, "text.heading"),
+                (QtGui.QPalette.ColorRole.Link, "text.accent"),
+                (QtGui.QPalette.ColorRole.LinkVisited, "text.accent"),
+                (QtGui.QPalette.ColorRole.ToolTipBase, "surface.raised"),
+                (QtGui.QPalette.ColorRole.ToolTipText, "text.body"),
+                (QtGui.QPalette.ColorRole.PlaceholderText, "text.muted"),
+                (QtGui.QPalette.ColorRole.Light, "surface.raised"),
+                (QtGui.QPalette.ColorRole.Midlight, "surface.base"),
+                (QtGui.QPalette.ColorRole.Mid, "border.subtle"),
+                (QtGui.QPalette.ColorRole.Dark, "border.control"),
+                (QtGui.QPalette.ColorRole.Shadow, "text.strong"),
+                (QtGui.QPalette.ColorRole.BrightText, "text.on-accent"),
+                (QtGui.QPalette.ColorRole.Accent, "accent.default"),
+            ):
+                palette.setColor(role, QtGui.QColor(COLORS[color]))
+            for role in (
+                QtGui.QPalette.ColorRole.WindowText,
+                QtGui.QPalette.ColorRole.Text,
+                QtGui.QPalette.ColorRole.ButtonText,
+                QtGui.QPalette.ColorRole.PlaceholderText,
+            ):
+                palette.setColor(
+                    QtGui.QPalette.ColorGroup.Disabled, role, QtGui.QColor(COLORS["text.disabled"])
+                )
+            application.setPalette(palette)
+            application.setStyleSheet(stylesheet())
+        for i in range(self.navigation.count()):
+            item = self.navigation.item(i)
+            item.setIcon(icon(item.data(QtCore.Qt.ItemDataRole.UserRole)))
+            item.setSizeHint(
+                QtCore.QSize(
+                    self.navigation.fontMetrics().horizontalAdvance(item.text())
+                    + self.navigation.iconSize().width()
+                    + 64,
+                    44,
+                )
+            )
+
+    def closeEvent(self, event: Any) -> None:
+        self.settings.setValue("geometry", self.saveGeometry())
+        for split in self.findChildren(QtWidgets.QSplitter):
+            if split.objectName():
+                self.settings.setValue("split/" + split.objectName(), split.saveState())
+        self.settings.sync()
+        self.poll.stop()
+        copy_closed = self.export_browser.close_copy()
+        if self.transport.close() and copy_closed:
+            event.accept()
+        else:
+            event.ignore()
+            QtCore.QTimer.singleShot(200, self.close)
+
+
+def run(socket: Path) -> int:
+    application = QtWidgets.QApplication(sys.argv[:1])
+    application.setApplicationName("Exploration Benchmark Suite")
+    application.setOrganizationName("Mert Güler")
+    application.setStyle("Fusion")
+    window = Window(socket)
+    window.show()
+    return application.exec()

@@ -37,11 +37,21 @@ def validate_spawn(profile, spawn, reference):
     height, width = reference.collision.shape
     if min(low) < 0 or high[0] >= width or high[1] >= height:
         raise ValueError(
-            f"{profile['label']}: fixed spawn footprint exceeds verified world geometry"
+            f"{profile['label']}: spawn footprint exceeds world geometry"
         )
-    # Reject any collision cell in the rotated footprint's bounding region.
-    # The small region is deliberately conservative around cell boundaries.
-    if reference.collision[low[1] : high[1] + 1, low[0] : high[0] + 1].any():
+    yy, xx = np.mgrid[low[1] : high[1] + 1, low[0] : high[0] + 1]
+    centres = np.stack((xx + .5, yy + .5), axis=-1)
+    overlaps = np.ones(xx.shape, dtype=bool)
+    edges = np.roll(grid, -1, axis=0) - grid
+    axes = np.concatenate((np.eye(2), np.stack((-edges[:, 1], edges[:, 0]), axis=1)))
+    for axis in axes:
+        projection = grid @ axis
+        middle = centres @ axis
+        radius = .5 * np.abs(axis).sum()
+        overlaps &= (middle + radius > projection.min()) & (middle - radius < projection.max())
+    if (reference.collision[low[1] : high[1] + 1, low[0] : high[0] + 1] & overlaps).any():
         raise ValueError(
-            f"{profile['label']}: fixed spawn footprint overlaps static collision geometry; choose another supported world"
+            f"{profile['label']}: spawn footprint overlaps static collision geometry; choose another pose"
         )
+    if (~reference.inclusion[low[1] : high[1] + 1, low[0] : high[0] + 1] & overlaps).any():
+        raise ValueError(f"{profile['label']}: spawn footprint leaves the included world region")

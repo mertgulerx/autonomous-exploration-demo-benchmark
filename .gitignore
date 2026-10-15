@@ -32,3 +32,11 @@ core
 core.*
 /docs
 AGENTS.md
+/.venv-suite/
+/.venv-suite-gui/
+/results/campaigns/
+/results/performance/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/

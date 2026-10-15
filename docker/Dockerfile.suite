@@ -1,0 +1,46 @@
+# Copyright 2026 Mert Güler
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+ARG BENCHMARK_BASE=autonomous-exploration-benchmark:jazzy-harmonic
+FROM ${BENCHMARK_BASE}
+LABEL org.benchmark.suite="1"
+USER root
+RUN apt-get update && apt-get install -y --no-install-recommends python3.12-venv \
+    && rm -rf /var/lib/apt/lists/* \
+    && python3 -m venv --system-site-packages /opt/benchmark-suite-env
+COPY suite/requirements-engine.lock /opt/benchmark-suite/requirements-engine.lock
+RUN /opt/benchmark-suite-env/bin/pip install --no-cache-dir -r /opt/benchmark-suite/requirements-engine.lock
+COPY exploration_benchmark_telemetry /opt/benchmark-telemetry/source/exploration_benchmark_telemetry
+RUN /bin/bash -c 'source /opt/ros/jazzy/setup.bash && \
+    CMAKE_BUILD_PARALLEL_LEVEL=2 colcon --log-base /opt/benchmark-telemetry/log build \
+    --base-paths /opt/benchmark-telemetry/source --build-base /opt/benchmark-telemetry/build \
+    --install-base /opt/benchmark-telemetry/install --executor sequential \
+    --cmake-args -DBUILD_TESTING=OFF -DPython3_EXECUTABLE=/usr/bin/python3'
+COPY suite /opt/benchmark-suite/source
+COPY exploration_benchmark_runner/exploration_benchmark_runner /opt/benchmark-suite/plugins/runner/exploration_benchmark_runner
+COPY exploration_benchmark_robots/exploration_benchmark_robots /opt/benchmark-suite/plugins/robots/exploration_benchmark_robots
+RUN /opt/benchmark-suite-env/bin/pip install --no-deps /opt/benchmark-suite/source \
+    && cp -a /root/.gz/fuel /opt/benchmark-fuel \
+    && chmod -R a+rX /opt/benchmark-fuel \
+    && install -d -m 1777 /tmp/benchmark-suite-runtime \
+    && mkdir -p /usr/share/glvnd/egl_vendor.d \
+    && printf '%s\n' '{"file_format_version":"1.0.0","ICD":{"library_path":"libEGL_nvidia.so.0"}}' \
+       > /usr/share/glvnd/egl_vendor.d/10_nvidia.json
+COPY docker/suite_entrypoint.sh /opt/benchmark-suite/entrypoint.sh
+ENV BENCHMARK_TELEMETRY_INSTALL=/opt/benchmark-telemetry/install \
+    GZ_FUEL_CACHE_PATH=/opt/benchmark-fuel \
+    BENCHMARK_FUEL_CACHE=/opt/benchmark-fuel \
+    OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1 \
+    MPLBACKEND=Agg PYTHONUNBUFFERED=1
+ENTRYPOINT ["/bin/bash", "/opt/benchmark-suite/entrypoint.sh"]

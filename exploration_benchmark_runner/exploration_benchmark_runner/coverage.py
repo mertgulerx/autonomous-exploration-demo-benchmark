@@ -22,6 +22,7 @@ import hashlib
 from io import BytesIO
 import json
 import math
+import os
 from pathlib import Path
 from urllib.parse import quote, unquote, urlparse
 from zipfile import BadZipFile
@@ -65,7 +66,8 @@ def resolve_asset(root, identity):
         or not parts[4].isdigit()
     ):
         raise ValueError(f"Coverage requires a versioned Fuel model: {uri}")
-    base = Path.home() / ".gz/fuel" / parsed.netloc / parts[1] / "models"
+    cache = Path(os.environ.get("BENCHMARK_FUEL_CACHE", str(Path.home() / ".gz/fuel")))
+    base = cache / parsed.netloc / parts[1] / "models"
     names = (parts[3], quote(parts[3], safe=""))
     path = next(
         (
@@ -131,10 +133,10 @@ class Reference:
         ) as exc:
             raise ValueError(f"Invalid coverage reference {self.file}: {exc}") from exc
 
-    def validate_scenario(self, root, scenario):
+    def validate_scenario(self, root, scenario, *, allow_custom_spawn=False):
         root = Path(root).resolve()
         data = self.metadata
-        if data["world"] != scenario["world"] or data["spawn"] != scenario["spawn"]:
+        if data["world"] != scenario["world"] or (not allow_custom_spawn and data["spawn"] != scenario["spawn"]):
             raise ValueError(
                 "Coverage reference does not match the selected world/spawn"
             )

@@ -23,6 +23,16 @@ import yaml
 GAZEBO_SEED = 1234
 
 
+def robot_parameter_schema(schema, robot):
+    from copy import deepcopy
+
+    schema = deepcopy(schema)
+    if robot.get("adapter") != "mogi":
+        schema.defaults.update(max_linear_speed_vmax=float(robot["max_linear_speed"]),
+                               max_angular_speed_wmax=float(robot["max_angular_speed"]))
+    return schema
+
+
 @dataclass(frozen=True)
 class Specification:
     profile: str = "default"
@@ -88,15 +98,7 @@ class Catalog:
         )
 
     def schema_for_robot(self, robot):
-        from copy import deepcopy
-
-        schema = deepcopy(self.schema)
-        if robot.get("adapter") != "mogi":
-            schema.defaults.update(
-                max_linear_speed_vmax=float(robot["max_linear_speed"]),
-                max_angular_speed_wmax=float(robot["max_angular_speed"]),
-            )
-        return schema
+        return robot_parameter_schema(self.schema, robot)
 
     def validate(self, specs, limit, comparison=True, robot=None):
         if comparison and not 2 <= len(specs) <= 4:
