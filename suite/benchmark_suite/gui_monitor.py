@@ -45,11 +45,11 @@ class WorkerCard(QtWidgets.QFrame):
         self.context.setWordWrap(True)
         layout.addWidget(self.context)
         metrics = QtWidgets.QGridLayout()
-        self.coverage, self.elapsed, self.rtf = (label("—") for _ in range(3))
+        self.coverage, self.elapsed, self.distance = (label("—") for _ in range(3))
         for column, title, value in (
             (0, "Coverage", self.coverage),
             (1, "Elapsed · sim", self.elapsed),
-            (2, "RTF", self.rtf),
+            (2, "Distance", self.distance),
         ):
             value.setWordWrap(True)
             metrics.addWidget(label(title, "muted"), 0, column)
@@ -89,13 +89,7 @@ class WorkerCard(QtWidgets.QFrame):
         status = metrics.get("coverage_status", "valid")
         self.coverage.setText(coverage + (" · " + humanize(status) if status != "valid" else ""))
         self.elapsed.setText(duration(metrics.get("simulation_elapsed")))
-        self.rtf.setText(
-            number(metrics.get("rtf"), digits=3)
-            + (" · flagged" if metrics.get("quality_flags") else "")
-        )
-        self.rtf.setToolTip(
-            ", ".join(metrics.get("quality_flags", [])) or "No recorded timing flags"
-        )
+        self.distance.setText(number(metrics.get("distance_m"), " m"))
         self.setAccessibleName(robot + ": " + self.context.text())
 
     def set_selected(self, selected: bool) -> None:

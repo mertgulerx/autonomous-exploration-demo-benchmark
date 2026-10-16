@@ -96,6 +96,7 @@ class Recorder:
                 threshold_policy="first_valid_observed_crossing_no_interpolation",
             ),
             policy=dict(
+                simulation_time_limit_seconds=configuration.get("simulation_time_limit"),
                 rtf_threshold=0.90,
                 window_wall_seconds=5,
                 persistence_wall_seconds=10,

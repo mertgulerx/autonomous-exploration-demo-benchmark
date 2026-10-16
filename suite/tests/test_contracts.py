@@ -54,7 +54,7 @@ class ContractTests(unittest.TestCase):
         raw["robots"]["robot-0"][0]["effective"]["weight"] = 9.0
         self.assertEqual(accepted.dictionary()["robots"]["robot-0"][0]["effective"]["weight"], 0.0)
         with self.assertRaises(FrozenInstanceError):
-            accepted.limit = 10
+            accepted.world_time_limits = (("world-0", 10.0),)
 
     def test_count_handles_nonuniform_profiles_and_explicit_exclusions(self):
         raw = design()

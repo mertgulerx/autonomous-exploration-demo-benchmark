@@ -12,8 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
-from math import degrees
 from pathlib import Path
 import sys
 from typing import Any
@@ -30,6 +28,7 @@ from .gui_style import (
     DetailsPanel,
     Badge,
     COLORS,
+    cell_text,
     humanize,
     icon,
     label,
@@ -62,7 +61,6 @@ class Window(QtWidgets.QMainWindow):
         self.catalog_pending = True
         self.status: dict[str, Any] = {}
         self.campaign_id: str | None = None
-        self.experiment_id: str | None = None
         self.profile_row: dict[str, Any] | None = None
         self.profile_reference: dict[str, Any] | None = None
         self.result_selection: str | None = None
@@ -73,6 +71,7 @@ class Window(QtWidgets.QMainWindow):
         self.inspection_sequence, self.map_revision, self.event_sequence = 0, 0, 0
         self.status_pending, self.inspection_pending, self.events_pending = False, False, False
         self.campaign_status_pending = False
+        self._campaign_page = "campaigns"
         self.page_widgets: dict[str, QtWidgets.QWidget] = {}
         self.pages = QtWidgets.QStackedWidget()
         central = QtWidgets.QWidget()
@@ -146,19 +145,26 @@ class Window(QtWidgets.QMainWindow):
         return layout
 
     def go(self, key: str) -> None:
+        if key in ("campaigns", "builder"):
+            self._campaign_page = key
         self.pages.setCurrentWidget(self.page_widgets[key])
+        navigation_key = "campaigns" if key == "builder" else key
+        blocker = QtCore.QSignalBlocker(self.navigation)
         for index in range(self.navigation.count()):
-            if self.navigation.item(index).data(QtCore.Qt.ItemDataRole.UserRole) == key:
+            if self.navigation.item(index).data(QtCore.Qt.ItemDataRole.UserRole) == navigation_key:
                 self.navigation.setCurrentRow(index)
+                self.navigation.item(index).setSelected(True)
                 break
         else:
             self.navigation.clearSelection()
+        del blocker
         for table in self.tables:
             if table.isVisible():
                 table.refresh()
         if key != "monitor":
             self.close_inspection()
         else:
+            self.follow_single_worker()
             self.inspect_selected()
 
     def current_page(self) -> str:
@@ -166,7 +172,6 @@ class Window(QtWidgets.QMainWindow):
 
     def open_builder(self) -> None:
         self.go("builder")
-        self.builder.show_step(0)
 
     def make_dashboard(self) -> None:
         layout = self.page("Campaigns", "campaigns", heading=False)
@@ -203,24 +208,11 @@ class Window(QtWidgets.QMainWindow):
         self.hide_finished.toggled.connect(self.filter_campaigns)
         self.tables.append(self.campaigns)
         layout.addWidget(self.campaigns, 1)
-        bar = QtWidgets.QHBoxLayout()
-        bar.addStretch()
-        more = button("Queue actions", lambda: None, bar)
-        menu = QtWidgets.QMenu(more)
-        menu.addAction("Move earlier", lambda: self.move_campaign("up"))
-        menu.addAction("Move later", lambda: self.move_campaign("down"))
-        menu.addSeparator()
-        menu.addAction("Repeat finished campaign", self.repeat_campaign)
-        more.setMenu(menu)
-        self.end_campaign_button = button(
-            "End campaign", lambda: self.control_campaign("end"), bar, role="danger"
-        )
-        self.end_campaign_button.setEnabled(False)
-        layout.addLayout(bar)
 
     def make_builder(self) -> None:
-        layout = self.page("New campaign", "builder", navigation=False)
+        layout = self.page("New campaign", "builder", navigation=False, heading=False)
         self.builder = CampaignBuilder(self.transport)
+        self.builder.return_requested.connect(lambda: self.go("campaigns"))
         self.builder.edit_profile.connect(self.edit_builder_profile)
         self.builder.edit_spawn.connect(self.edit_builder_spawn)
         layout.addWidget(self.builder, 1)
@@ -237,12 +229,15 @@ class Window(QtWidgets.QMainWindow):
         self.profile_tag.setMaximumWidth(160)
         for field in (self.profile_robot, self.profile_search, self.profile_tag):
             search.addWidget(field)
-        button("Search", self.refresh_profile_list, search)
         button(
             "New profile", lambda: self.open_profile("new"), search, role="primary", glyph="plus"
         )
-        self.profile_search.returnPressed.connect(self.refresh_profile_list)
-        self.profile_tag.returnPressed.connect(self.refresh_profile_list)
+        self.profile_filter_timer = QtCore.QTimer(self)
+        self.profile_filter_timer.setSingleShot(True)
+        self.profile_filter_timer.setInterval(250)
+        self.profile_filter_timer.timeout.connect(self.refresh_profile_list)
+        self.profile_search.textChanged.connect(lambda _: self.profile_filter_timer.start())
+        self.profile_tag.textChanged.connect(lambda _: self.profile_filter_timer.start())
         layout.addLayout(search)
         split = QtWidgets.QSplitter()
         split.setObjectName("profiles-split")
@@ -273,8 +268,8 @@ class Window(QtWidgets.QMainWindow):
         self.profile_reference_label.setWordWrap(True)
         details.addWidget(self.profile_reference_label)
         bar = QtWidgets.QHBoxLayout()
-        button("Set reference", self.set_profile_reference, bar, role="quiet")
-        button("Compare", self.compare_profile, bar, role="quiet")
+        button("Set reference", self.set_profile_reference, bar, role="outlined")
+        button("Compare", self.compare_profile, bar, role="outlined")
         details.addLayout(bar)
         self.profile_difference = DetailsPanel("Parameter changes")
         details.addWidget(self.profile_difference)
@@ -304,15 +299,6 @@ class Window(QtWidgets.QMainWindow):
         layout.addWidget(self.workers)
         self.focus_title = label("No worker selected", "section")
         layout.addWidget(self.focus_title)
-        bar = QtWidgets.QHBoxLayout()
-        self.stop_run_button = button(
-            "Stop run", lambda: self.control_run("stop"), bar, role="danger"
-        )
-        self.restart_run_button = button("Restart run", lambda: self.control_run("restart"), bar)
-        bar.addStretch()
-        for control in (self.stop_run_button, self.restart_run_button):
-            control.setEnabled(False)
-        layout.addLayout(bar)
         self.focus_tabs = QtWidgets.QTabWidget()
         inspection = QtWidgets.QSplitter()
         inspection.setObjectName("monitor-inspection-split")
@@ -321,10 +307,7 @@ class Window(QtWidgets.QMainWindow):
         panel = surface()
         pane = QtWidgets.QVBoxLayout(panel)
         pane.setContentsMargins(16, 16, 16, 16)
-        head = QtWidgets.QHBoxLayout()
-        head.addWidget(label("Run measurements", "section"), 1)
-        button("Fit map", self.live_map.fit_map, head, role="quiet")
-        pane.addLayout(head)
+        pane.addWidget(label("Run measurements", "section"))
         scroll = QtWidgets.QScrollArea()
         scroll.setWidgetResizable(True)
         self.run_metrics = RunMetrics()
@@ -378,7 +361,6 @@ class Window(QtWidgets.QMainWindow):
             self.result_outcome.addItem(humanize(value), value)
         for field in (self.result_kind, self.result_robot, self.result_world, self.result_outcome):
             bar.addWidget(field)
-        button("Apply filters", self.filter_results, bar)
         run_layout.addLayout(bar)
         secondary = QtWidgets.QHBoxLayout()
         self.result_profile, self.result_spawn = QtWidgets.QComboBox(), QtWidgets.QComboBox()
@@ -417,6 +399,19 @@ class Window(QtWidgets.QMainWindow):
         tabs.addTab(self.export_browser, "Exports")
         tabs.currentChanged.connect(lambda: self.refresh_visible_tables())
         layout.addWidget(tabs, 1)
+        self.result_filter_timer = QtCore.QTimer(self)
+        self.result_filter_timer.setSingleShot(True)
+        self.result_filter_timer.setInterval(0)
+        self.result_filter_timer.timeout.connect(self.filter_results)
+        for field in (
+            self.result_kind,
+            self.result_robot,
+            self.result_world,
+            self.result_outcome,
+            self.result_profile,
+            self.result_spawn,
+        ):
+            field.currentIndexChanged.connect(lambda _: self.result_filter_timer.start())
 
     @staticmethod
     def result_columns(table: str) -> list[tuple[str, str]]:
@@ -436,11 +431,11 @@ class Window(QtWidgets.QMainWindow):
 
     def return_to_builder(self) -> None:
         self.go("builder")
-        self.builder.show_step(1)
 
     def show_page(self, index: int) -> None:
         if index >= 0:
-            self.go(self.navigation.item(index).data(QtCore.Qt.ItemDataRole.UserRole))
+            key = self.navigation.item(index).data(QtCore.Qt.ItemDataRole.UserRole)
+            self.go(self._campaign_page if key == "campaigns" else key)
 
     def refresh_status(self) -> None:
         if not self.status_pending:
@@ -482,16 +477,12 @@ class Window(QtWidgets.QMainWindow):
             if not self.catalog and not self.catalog_pending:
                 self.catalog_pending = True
                 self.transport.submit("catalog", "catalog.get")
-            if self.campaigns.isVisible():
-                self.campaigns.refresh()
             self.workers.update_runs(result["active"], self.catalog)
+            if self.current_page() == "monitor":
+                self.follow_single_worker()
             selected = next(
                 (r for r in result["active"] if r["attempt"]["id"] == self.selected_attempt), None
             )
-            for control in (self.stop_run_button, self.restart_run_button):
-                control.setEnabled(
-                    selected is not None and selected["attempt"]["phase"] in {"READY", "RUNNING"}
-                )
             if selected:
                 self.run_metrics.update_metrics(selected["metrics"])
                 if self.current_page() == "monitor":
@@ -501,11 +492,9 @@ class Window(QtWidgets.QMainWindow):
                 self.focus_title.setText("Run ended · retained live snapshot")
         elif tag == "submit":
             self.select_campaign({"id": result["campaign_id"], "name": self.builder.name.text()})
+            self.builder.show_step(0)
             self.campaigns.refresh()
             self.go("campaigns")
-        elif tag == "campaign-repeat":
-            self.builder.apply_design(result["specification"])
-            self.go("builder")
         elif tag.startswith("library-"):
             self.fill_revisions(tag, result)
         elif tag == "editor-default":
@@ -523,11 +512,12 @@ class Window(QtWidgets.QMainWindow):
                 self.profile_details.set_record(
                     {
                         "name": result["name"],
-                        "robot": result["robot_id"],
+                        "robot": self.results.model.names.get("robot_id", {}).get(
+                            result["robot_id"], humanize(result["robot_id"])
+                        ),
                         "revision": result.get("revision"),
                         "description": result.get("description", ""),
                         "changed_parameters": len(result.get("requested", {})),
-                        "configuration": result,
                     }
                 )
         elif tag == "result-detail" and result["id"] == self.result_selection:
@@ -558,13 +548,26 @@ class Window(QtWidgets.QMainWindow):
                 "coverage_status",
             ):
                 summary[key] = metrics.get(key)
-            summary["record"] = result
+            for key, title in (("robot_id", "robot"), ("world_id", "world")):
+                if key in summary:
+                    identity = summary.pop(key)
+                    summary[title] = self.results.model.names.get(key, {}).get(
+                        identity, humanize(identity)
+                    )
             self.result_detail.set_record(summary)
         elif tag == "events":
             self.events_pending = False
             self.event_sequence = result["last_sequence"]
             for event in result["events"]:
-                line = f"{event['sequence']} {event['kind']} {json.dumps(event['payload'], ensure_ascii=False)}"
+                payload = event["payload"]
+                parts = [
+                    cell_text("utc_ns", event.get("utc_ns")),
+                    humanize(event["kind"].replace(".", " ")),
+                ]
+                for key in ("phase", "state", "outcome", "detail", "direction"):
+                    if isinstance(payload, dict) and payload.get(key):
+                        parts.append(cell_text(key, payload[key]))
+                line = " · ".join(parts)
                 if self.log_filter.text().lower() in line.lower():
                     self.logs.appendPlainText(line)
         elif tag == "inspection":
@@ -601,21 +604,25 @@ class Window(QtWidgets.QMainWindow):
             )
         elif tag == "file-saved":
             self.statusBar().showMessage("Export saved", 5000)
-        elif tag == "queue-move":
-            self.campaigns.refresh()
         elif tag.startswith("campaign-control:"):
-            self.campaigns.finish_control(
-                tag.removeprefix("campaign-control:"), result.get("state", "PAUSING")
+            identity = tag.removeprefix("campaign-control:")
+            name = next(
+                (row["name"] for _, row in self.campaigns.model.records() if row["id"] == identity),
+                "Restarted campaign",
             )
+            self.campaigns.finish_control(
+                identity, result.get("source_state", result.get("state", "PAUSING"))
+            )
+            if result.get("source_campaign_id"):
+                self.campaigns.view.clearSelection()
+                self.campaigns.view.setCurrentIndex(QtCore.QModelIndex())
+                self.select_campaign({"id": result["campaign_id"], "name": name})
         elif tag == "campaign-status":
             self.campaign_status_pending = False
             campaign, counters = result["campaign"], result["counters"]
             if campaign["id"] != self.campaign_id:
                 return
             self.campaign_overview.update_campaign(campaign, counters)
-            self.end_campaign_button.setEnabled(
-                campaign["state"] in {"RUNNING", "RETRYING", "PAUSING", "PAUSED"}
-            )
         elif tag == "profile-difference":
             self.profile_difference.set_difference(result)
 
@@ -651,8 +658,8 @@ class Window(QtWidgets.QMainWindow):
             "robot_id": {r["id"]: r["label"] for r in self.catalog["robots"]},
             "world_id": {w["id"]: w["label"] for w in self.catalog["worlds"]},
         }
-        self.builder.robot_selector.set_catalog(self.catalog["robots"])
-        self.builder.world_tree.clear()
+        self.builder.robot_selector.set_catalog(self.catalog["robots"], self.catalog["parameters"])
+        self.builder.world_selector.set_catalog(self.catalog["worlds"])
         self.result_robot.clear()
         self.result_world.clear()
         self.result_robot.addItem("All robots", None)
@@ -670,17 +677,6 @@ class Window(QtWidgets.QMainWindow):
             self.result_robot.addItem(label, identity)
             self.spawn_editor.spawn_robot.addItem(label, identity)
         for world in self.catalog["worlds"]:
-            item = QtWidgets.QTreeWidgetItem([world["label"]])
-            item.setData(0, QtCore.Qt.ItemDataRole.UserRole, world["id"])
-            item.setCheckState(0, QtCore.Qt.CheckState.Unchecked)
-            pose = world["default_spawn"]
-            default = QtWidgets.QTreeWidgetItem(
-                ["Default", f"({pose['x']:.2f}, {pose['y']:.2f}) m · {degrees(pose['yaw']):.1f}°"]
-            )
-            default.setData(0, QtCore.Qt.ItemDataRole.UserRole, "Default")
-            default.setCheckState(0, QtCore.Qt.CheckState.Checked)
-            item.addChild(default)
-            self.builder.world_tree.addTopLevelItem(item)
             self.spawn_editor.spawn_world.addItem(world["label"], world["id"])
             self.result_world.addItem(world["label"], world["id"])
         for combo in (
@@ -689,7 +685,6 @@ class Window(QtWidgets.QMainWindow):
             self.spawn_editor.spawn_world,
         ):
             combo.blockSignals(False)
-        self.builder.world_tree.expandAll()
         self.refresh_libraries()
         self.spawn_editor.load_world_map()
         self.builder.update_summary()
@@ -704,14 +699,12 @@ class Window(QtWidgets.QMainWindow):
                 "profiles.list",
                 {"robot_id": owner, "limit": 250, "summary": True},
             )
-        for index in range(self.builder.world_tree.topLevelItemCount()):
-            parent = self.builder.world_tree.topLevelItem(index)
-            assert parent is not None
-            owner = parent.data(0, QtCore.Qt.ItemDataRole.UserRole)
+        for world in self.catalog.get("worlds", []):
+            owner = world["id"]
             self.transport.submit(
                 "library-" + owner,
                 "spawns.list",
-                {"world_id": owner, "limit": 250, "summary": True},
+                {"world_id": owner, "limit": 250},
             )
 
     def fill_revisions(self, tag: str, result: Any) -> None:
@@ -720,57 +713,13 @@ class Window(QtWidgets.QMainWindow):
             self.builder.robot_selector.set_profiles(
                 owner, result["rows"], result["next_offset"] is not None
             )
-        for index in range(self.builder.world_tree.topLevelItemCount()):
-            parent = self.builder.world_tree.topLevelItem(index)
-            assert parent is not None
-            if parent.data(0, QtCore.Qt.ItemDataRole.UserRole) != owner:
-                continue
-            children = [parent.child(i) for i in range(parent.childCount())]
-            checked = set()
-            retained = []
-            shown = {row["id"] for row in result["rows"]}
-            for child in children:
-                data = child.data(0, QtCore.Qt.ItemDataRole.UserRole)
-                identity = data["id"] if isinstance(data, dict) else data
-                if child.checkState(0) == QtCore.Qt.CheckState.Checked:
-                    checked.add(identity)
-                    if isinstance(data, dict) or identity != "Default" and identity not in shown:
-                        retained.append(child)
-            while parent.childCount() > 1:
-                parent.takeChild(1)
-            for row in result["rows"]:
-                item = QtWidgets.QTreeWidgetItem([f"{row['name']} · r{row['revision']}"])
-                item.setData(0, QtCore.Qt.ItemDataRole.UserRole, row["id"])
-                item.setCheckState(
-                    0,
-                    QtCore.Qt.CheckState.Checked
-                    if row["id"] in checked
-                    else QtCore.Qt.CheckState.Unchecked,
-                )
-                parent.addChild(item)
-            for child in retained:
-                parent.addChild(child)
-            if result["next_offset"] is not None:
-                parent.setToolTip(
-                    0, "First 250 revisions shown. Use library search to select older profiles."
-                )
-        spawn_options = []
-        for i in range(self.builder.world_tree.topLevelItemCount()):
-            parent = self.builder.world_tree.topLevelItem(i)
-            assert parent is not None
-            for j in range(parent.childCount()):
-                child = parent.child(j)
-                spawn_options.append(
-                    (
-                        parent.data(0, QtCore.Qt.ItemDataRole.UserRole),
-                        parent.text(0),
-                        child.data(0, QtCore.Qt.ItemDataRole.UserRole),
-                        child.text(0),
-                    )
-                )
+        elif any(world["id"] == owner for world in self.catalog.get("worlds", [])):
+            self.builder.world_selector.set_spawns(
+                owner, result["rows"], result["next_offset"] is not None
+            )
         for options, combo in (
             (self.builder.robot_selector.profile_options(), self.result_profile),
-            (spawn_options, self.result_spawn),
+            (self.builder.world_selector.spawn_options(), self.result_spawn),
         ):
             selected = combo.currentData()
             combo.blockSignals(True)
@@ -791,7 +740,6 @@ class Window(QtWidgets.QMainWindow):
     def select_campaign(self, row: dict[str, Any]) -> None:
         if self.campaign_id == row["id"]:
             return
-        self.end_campaign_button.setEnabled(False)
         self.campaign_id = row["id"]
         self.campaign_overview.reset(row.get("name", "Selected campaign"))
         self.results_context.setText(row.get("name", "Selected campaign") + " · recorded outcomes")
@@ -828,34 +776,22 @@ class Window(QtWidgets.QMainWindow):
         self.campaigns.reset_page()
 
     def control_campaign_row(self, identity: str, operation: str) -> None:
+        if operation in ("stop", "restart"):
+            message = (
+                "Stop every active worker and leave remaining experiments Not done? "
+                if operation == "stop"
+                else "Stop every active worker and restart the entire campaign from the beginning? "
+            )
+            if not self.confirm_discard(
+                operation.capitalize() + " campaign",
+                message
+                + "Active partial measurements will be discarded. Completed results remain available.",
+            ):
+                self.campaigns.finish_control(identity)
+                return
         self.transport.submit(
             "campaign-control:" + identity, "campaign." + operation, {"campaign_id": identity}
         )
-
-    def control_campaign(self, operation: str) -> None:
-        if self.campaign_id:
-            if operation == "end" and not self.confirm_discard(
-                "End campaign",
-                "Active attempts will stop and their partial measurements will be discarded. Completed results remain available.",
-            ):
-                return
-            self.transport.submit(
-                "control", "campaign." + operation, {"campaign_id": self.campaign_id}
-            )
-
-    def repeat_campaign(self) -> None:
-        if self.campaign_id:
-            self.transport.submit(
-                "campaign-repeat", "campaign.repeat", {"campaign_id": self.campaign_id}
-            )
-
-    def move_campaign(self, direction: str) -> None:
-        if self.campaign_id:
-            self.transport.submit(
-                "queue-move",
-                "campaign.move",
-                {"campaign_id": self.campaign_id, "direction": direction},
-            )
 
     def refresh_profile_list(self, *args: Any) -> None:
         robot = self.profile_robot.currentData()
@@ -961,13 +897,18 @@ class Window(QtWidgets.QMainWindow):
             self.spawn_editor.spawn_world.setCurrentIndex(index)
         self.go("worlds")
 
-    def choose_worker(self, identity: str) -> None:
+    def follow_single_worker(self) -> None:
+        active = self.status.get("active", [])
+        if len(active) == 1 and self.selected_attempt != active[0]["attempt"]["id"]:
+            self.choose_worker(active[0]["attempt"]["id"], focus_map=False)
+
+    def choose_worker(self, identity: str, *, focus_map: bool = True) -> None:
         active = next(
             (r for r in self.status.get("active", []) if r["attempt"]["id"] == identity), None
         )
         if not active:
             return
-        self.selected_attempt, self.experiment_id = identity, active["experiment"]["id"]
+        self.selected_attempt = identity
         self.workers.select(identity)
         experiment = active["experiment"]
         self.focus_title.setText(
@@ -975,9 +916,8 @@ class Window(QtWidgets.QMainWindow):
         )
         self.run_metrics.update_metrics(active["metrics"])
         self.log_viewer.select_attempt(identity, active["attempt"]["directory"])
-        for control in (self.stop_run_button, self.restart_run_button):
-            control.setEnabled(active["attempt"]["phase"] in {"READY", "RUNNING"})
-        self.focus_tabs.setCurrentIndex(0)
+        if focus_map:
+            self.focus_tabs.setCurrentIndex(0)
         self.inspect_selected()
 
     def confirm_discard(self, title: str, explanation: str) -> bool:
@@ -993,30 +933,6 @@ class Window(QtWidgets.QMainWindow):
             == QtWidgets.QMessageBox.StandardButton.Yes
         )
 
-    def control_run(self, operation: str) -> None:
-        active = next(
-            (
-                r
-                for r in self.status.get("active", [])
-                if r["attempt"]["id"] == self.selected_attempt
-            ),
-            None,
-        )
-        if self.experiment_id and active:
-            if not self.confirm_discard(
-                humanize(operation) + " run",
-                "This attempt's partial measurements will be discarded. "
-                + (
-                    "A fresh attempt will start with the accepted configuration."
-                    if operation == "restart"
-                    else "The experiment will remain Not done."
-                ),
-            ):
-                return
-            self.transport.submit(
-                "control", "experiment." + operation, {"experiment_id": self.experiment_id}
-            )
-
     def inspect_selected(self) -> None:
         if self.selected_attempt and self.inspection_id != self.selected_attempt:
             active = next(
@@ -1030,10 +946,15 @@ class Window(QtWidgets.QMainWindow):
             if active is None:
                 return
             robot = next(
-                row
-                for row in self.catalog["robots"]
-                if row["id"] == active["experiment"]["robot_id"]
+                (
+                    row
+                    for row in self.catalog.get("robots", [])
+                    if row["id"] == active["experiment"]["robot_id"]
+                ),
+                None,
             )
+            if robot is None:
+                return
             self.inspection_id = self.selected_attempt
             self.inspection_sequence, self.map_revision = 0, 0
             self.live_map.clear_view()
@@ -1045,7 +966,23 @@ class Window(QtWidgets.QMainWindow):
     def select_result(self, row: dict[str, Any]) -> None:
         self.result_selection = row["id"]
         self.result_row = row
-        self.result_detail.setPlainText(json.dumps(row, indent=2, ensure_ascii=False))
+        self.result_detail.set_record(
+            {
+                key.removesuffix("_id"): self.results.model.names.get(key, {}).get(value, value)
+                for key, value in row.items()
+                if key
+                in {
+                    "robot_id",
+                    "world_id",
+                    "outcome",
+                    "phase",
+                    "state",
+                    "profile_name",
+                    "spawn_name",
+                    "repetition",
+                }
+            }
+        )
         self.transport.submit(
             "result-detail", "results.get", {"table": self.results.table, "id": row["id"]}
         )

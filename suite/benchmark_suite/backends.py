@@ -30,6 +30,7 @@ class WorkerHandle(Protocol):
 class Backend(Protocol):
     synthetic: bool
 
+    def preflight(self) -> None: ...
     def start(
         self, attempt: dict[str, Any], experiment: dict[str, Any], campaign: dict[str, Any]
     ) -> WorkerHandle: ...
@@ -86,6 +87,9 @@ class SyntheticBackend:
     ):
         self.outcome = outcome or (lambda experiment, retry: "completed")
         self.steps = steps
+
+    def preflight(self) -> None:
+        return
 
     def start(
         self, attempt: dict[str, Any], experiment: dict[str, Any], campaign: dict[str, Any]

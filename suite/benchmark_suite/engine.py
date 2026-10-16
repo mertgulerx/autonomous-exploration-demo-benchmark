@@ -203,12 +203,20 @@ class Engine:
                     )
                     self._record_artifacts(attempt, manifest)
         for campaign in self.store.rows(
-            "SELECT id FROM campaigns WHERE state IN "
+            "SELECT id,state FROM campaigns WHERE state IN "
             "('RUNNING','RETRYING','PAUSING','PAUSED','STOPPING','BLOCKED','REPORTING')"
         ):
-            self.store.set_state(
-                campaign["id"], "RECOVERY_REQUIRED", "Engine restarted; Resume is required"
-            )
+            if campaign["state"] == "STOPPING":
+                self.store.set_state(campaign["id"], "STOPPED")
+                replacement = self._restart_replacement(campaign["id"])
+                if replacement and self.store.campaign(replacement)["state"] == "QUEUED":
+                    self.store.set_state(
+                        replacement, "RECOVERY_REQUIRED", "Engine restarted; Resume is required"
+                    )
+            else:
+                self.store.set_state(
+                    campaign["id"], "RECOVERY_REQUIRED", "Engine restarted; Resume is required"
+                )
 
     def handle(self, request: dict[str, Any]) -> dict[str, Any]:
         try:
@@ -439,6 +447,7 @@ class Engine:
                     "Campaign cannot start/resume from " + campaign["state"],
                     "conflict",
                 )
+            self.backend.preflight()
             self.current, self.queue_enabled = identity, True
             self.store.db.execute(
                 "UPDATE experiments SET held=0 WHERE campaign_id=? AND state='NOT_DONE'",
@@ -454,22 +463,70 @@ class Engine:
             self.queue_enabled = False
             self.store.set_state(identity, "PAUSING" if self.active else "PAUSED")
             return {"operation_id": operation_id, "accepted": True}
-        if method == "campaign.end":
+        if method in ("campaign.stop", "campaign.end"):
             identity = text(params.get("campaign_id"), "campaign_id")
             campaign = self.store.campaign(identity)
-            if self.current != identity or campaign["state"] == "REPORTING":
+            if campaign["state"] not in {
+                "QUEUED",
+                "RUNNING",
+                "RETRYING",
+                "PAUSING",
+                "PAUSED",
+                "BLOCKED",
+                "RECOVERY_REQUIRED",
+            }:
                 raise ContractError(
-                    "campaign_id", "End requires an active or paused campaign", "conflict"
+                    "campaign_id", "Campaign cannot stop from " + campaign["state"], "conflict"
                 )
-            self.queue_enabled = False
-            self.store.set_state(identity, "STOPPING")
-            self.store.db.execute(
-                "UPDATE experiments SET state='NOT_DONE' WHERE campaign_id=? AND state='PENDING'",
-                (identity,),
+            state = self._stop_campaign(identity, operation_id)
+            return {"operation_id": operation_id, "accepted": True, "state": state}
+        if method == "campaign.restart":
+            identity = text(params.get("campaign_id"), "campaign_id")
+            campaign = self.store.campaign(identity)
+            if (
+                self.exports.identity
+                or self.job
+                or self.report_import
+                or (self.current and self.current != identity)
+            ):
+                raise ContractError("campaign_id", "Another operation owns execution", "conflict")
+            if campaign["state"] not in {
+                "RUNNING",
+                "RETRYING",
+                "PAUSING",
+                "PAUSED",
+                "STOPPED",
+                "BLOCKED",
+                "RECOVERY_REQUIRED",
+                "FINISHED",
+            }:
+                raise ContractError(
+                    "campaign_id", "Campaign cannot restart from " + campaign["state"], "conflict"
+                )
+            self.backend.preflight()
+            specification = json.loads(campaign["specification"])
+            specification["source_campaign_id"] = identity
+            replacement = self.store.submit(CampaignSpec.accepted(specification))
+            self.store.event(
+                "campaign.restart_requested",
+                {"replacement_campaign_id": replacement, "operation_id": operation_id},
+                identity,
             )
-            for attempt_id in self.active:
-                self._request_discard(attempt_id, False, operation_id)
-            return {"operation_id": operation_id, "accepted": True}
+            if campaign["state"] not in ("FINISHED", "STOPPED"):
+                source_state = self._stop_campaign(identity, operation_id)
+            else:
+                source_state = campaign["state"]
+            if self.current != identity:
+                self.current, self.queue_enabled = replacement, True
+                self.store.set_state(replacement, "RUNNING")
+            return {
+                "operation_id": operation_id,
+                "accepted": True,
+                "campaign_id": replacement,
+                "source_campaign_id": identity,
+                "source_state": source_state,
+                "state": self.store.campaign(replacement)["state"],
+            }
         if method in ("experiment.stop", "experiment.restart"):
             experiment_id = text(params.get("experiment_id"), "experiment_id")
             selected_attempt = self.store.one(
@@ -497,6 +554,8 @@ class Engine:
                 params.get("limit", 100),
                 summary=params.get("summary", False),
                 cursor=params.get("cursor"),
+                sort_by=params.get("sort_by"),
+                sort_descending=params.get("sort_descending", False),
             )
         if method == "results.get":
             table = params.get("table")
@@ -583,6 +642,28 @@ class Engine:
             "available": True,
         }
 
+    def _restart_replacement(self, identity: str) -> str | None:
+        event = self.store.one(
+            "SELECT payload FROM events WHERE campaign_id=? AND kind='campaign.restart_requested' "
+            "ORDER BY sequence DESC LIMIT 1",
+            (identity,),
+        )
+        return str(json.loads(event["payload"])["replacement_campaign_id"]) if event else None
+
+    def _stop_campaign(self, identity: str, operation_id: str) -> str:
+        self.store.db.execute(
+            "UPDATE experiments SET state='NOT_DONE' WHERE campaign_id=? "
+            "AND state IN ('PENDING','RETRY')",
+            (identity,),
+        )
+        state = "STOPPING" if self.current == identity else "STOPPED"
+        self.store.set_state(identity, state)
+        if self.current == identity:
+            self.queue_enabled = False
+            for attempt_id in self.active:
+                self._request_discard(attempt_id, False, operation_id)
+        return state
+
     def _request_discard(self, identity: str, restart: bool, operation_id: str) -> None:
         attempt = self.store.attempt(identity)
         self.store.db.execute(
@@ -668,7 +749,13 @@ class Engine:
 
     def _launch(
         self, experiment: dict[str, Any], retry: bool, slot: int, campaign: dict[str, Any]
-    ) -> None:
+    ) -> bool:
+        try:
+            self.backend.preflight()
+        except ContractError as exc:
+            self.queue_enabled = False
+            self.store.set_state(campaign["id"], "BLOCKED", str(exc))
+            return False
         attempt = self._reserve(experiment, retry, slot)
         try:
             worker = self.backend.start(attempt, experiment, campaign)
@@ -705,6 +792,7 @@ class Engine:
                     (str(exc), attempt["id"]),
                 )
             self._finish(self.store.attempt(attempt["id"]))
+        return True
 
     def _finish(self, attempt: dict[str, Any]) -> None:
         if attempt["discard_intent"]:
@@ -904,6 +992,12 @@ class Engine:
                 self.store.set_state(
                     self.current, "PAUSED" if campaign["state"] == "PAUSING" else "STOPPED"
                 )
+                if campaign["state"] == "STOPPING":
+                    replacement = self._restart_replacement(self.current)
+                    self.current = None
+                    if replacement and self.store.campaign(replacement)["state"] == "QUEUED":
+                        self.current, self.queue_enabled = replacement, True
+                        self.store.set_state(replacement, "RUNNING")
             return
         if campaign["state"] not in ("RUNNING", "RETRYING"):
             return
@@ -931,7 +1025,8 @@ class Engine:
                     retry = True
                     self.store.set_state(self.current, "RETRYING")
             if experiment:
-                self._launch(experiment, retry, slot, campaign)
+                if not self._launch(experiment, retry, slot, campaign):
+                    return
                 if retry:
                     break
         remaining = self.store.one(

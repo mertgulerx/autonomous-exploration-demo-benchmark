@@ -278,6 +278,8 @@ class Store:
         *,
         summary: bool = False,
         cursor: dict[str, Any] | None = None,
+        sort_by: str | None = None,
+        sort_descending: bool = False,
     ) -> dict[str, Any]:
         columns = {
             "experiments": {
@@ -313,13 +315,27 @@ class Store:
         order = {
             "experiments": "position",
             "attempts": "a.reserved_ns DESC,a.id DESC",
-            "campaigns": "queue_position",
+            "campaigns": "(state='FINISHED') ASC,queue_position,id",
             "reports": "created_ns DESC",
             "exports": "created_ns DESC",
             "library": "created_ns DESC",
         }[table]
         if type(summary) is not bool:
             raise ContractError("summary", "Expected boolean")
+        if type(sort_descending) is not bool:
+            raise ContractError("sort_descending", "Expected boolean")
+        if sort_by is not None:
+            if (
+                table != "campaigns"
+                or type(sort_by) is not str
+                or sort_by not in {"name", "state", "count", "report_state", "created_ns"}
+            ):
+                raise ContractError("sort_by", "Choose a campaign table column")
+            direction = "DESC" if sort_descending else "ASC"
+            collation = " COLLATE NOCASE" if sort_by in {"name", "state", "report_state"} else ""
+            order = f"(state='FINISHED') ASC,{sort_by}{collation} {direction},queue_position,id"
+        elif sort_descending:
+            raise ContractError("sort_by", "Choose a column before setting the sort direction")
         terms: list[str] = []
         arguments: list[Any] = []
         for key, value in filters.items():

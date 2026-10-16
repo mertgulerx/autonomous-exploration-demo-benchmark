@@ -33,6 +33,7 @@ class Experiment:
     profile: Profile
     spawn: Spawn
     repetition: int
+    time_limit: float
 
     def dictionary(self) -> dict[str, object]:
         return {
@@ -45,12 +46,14 @@ class Experiment:
             "profile": self.profile.dictionary(),
             "spawn": self.spawn.dictionary(),
             "repetition": self.repetition,
+            "time_limit": self.time_limit,
         }
 
 
 def experiments(spec: CampaignSpec, campaign_id: str) -> Iterator[Experiment]:
     namespace = uuid.UUID(campaign_id)
     excluded = set(spec.exclusions)
+    limits = dict(spec.world_time_limits)
     blocks = []
     for robot, profiles in spec.robots:
         for world, spawns in spec.worlds:
@@ -78,5 +81,6 @@ def experiments(spec: CampaignSpec, campaign_id: str) -> Iterator[Experiment]:
                 profile,
                 spawn,
                 repetition,
+                limits[world],
             )
             position += 1

@@ -69,7 +69,7 @@ class ExportBrowser(QtWidgets.QWidget):
             "export-table",
             "exports",
             [
-                ("id", "Export"),
+                ("created_ns", "Created"),
                 ("state", "State"),
                 ("detail", "Details"),
                 ("path", "Bundle directory"),
@@ -80,18 +80,12 @@ class ExportBrowser(QtWidgets.QWidget):
         controls = QtWidgets.QHBoxLayout()
         button("Prepare export", self.prepare, controls, role="primary")
         button("Copy bundle", self.copy, controls)
-        self.status = QtWidgets.QLabel(
-            "Portable Parquet, maps, logs, configuration and hash receipts"
-        )
+        self.status = QtWidgets.QLabel("Measurements, maps, logs and saved configurations")
         self.status.setWordWrap(True)
         controls.addWidget(self.status, 1)
         layout.addLayout(controls)
         transport.received.connect(self.received)
         transport.failed.connect(self.failed)
-        timer = QtCore.QTimer(self)
-        timer.setInterval(1000)
-        timer.timeout.connect(lambda: self.table.refresh() if self.isVisible() else None)
-        timer.start()
 
     def set_campaign(self, identity: str) -> None:
         if identity == self.campaign_id:
@@ -142,7 +136,7 @@ class ExportBrowser(QtWidgets.QWidget):
 
     def received(self, tag: str, result: Any) -> None:
         if tag == self.preparation_tag:
-            self.status.setText("Preparing export: " + result["export_id"])
+            self.status.setText("Preparing export…")
             self.table.refresh()
 
     def failed(self, tag: str, message: str) -> None:

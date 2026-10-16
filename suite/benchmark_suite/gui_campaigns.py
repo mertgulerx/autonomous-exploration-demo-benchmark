@@ -14,7 +14,7 @@
 
 from typing import Any
 
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
 from .gui_style import Badge, COLORS, humanize, icon, label
 from .gui_support import PagedTable, Transport
@@ -26,6 +26,25 @@ class CampaignTable(PagedTable):
         "start": {"QUEUED"},
         "pause": {"RUNNING", "RETRYING"},
         "resume": {"PAUSED", "STOPPED", "RECOVERY_REQUIRED", "BLOCKED"},
+        "stop": {
+            "QUEUED",
+            "RUNNING",
+            "RETRYING",
+            "PAUSING",
+            "PAUSED",
+            "BLOCKED",
+            "RECOVERY_REQUIRED",
+        },
+        "restart": {
+            "RUNNING",
+            "RETRYING",
+            "PAUSING",
+            "PAUSED",
+            "STOPPED",
+            "BLOCKED",
+            "RECOVERY_REQUIRED",
+            "FINISHED",
+        },
     }
 
     def __init__(self, transport: Transport) -> None:
@@ -43,85 +62,152 @@ class CampaignTable(PagedTable):
             ],
         )
         self.pending: set[str] = set()
-        self.row_buttons: dict[str, dict[str, QtWidgets.QToolButton]] = {}
+        self.row_buttons: dict[str, QtWidgets.QToolButton] = {}
+        self.row_menus: dict[str, QtWidgets.QToolButton] = {}
+        self.row_actions: dict[str, dict[str, QtGui.QAction]] = {}
+        self.action_rows: dict[int, str] = {}
         header = self.view.horizontalHeader()
         header.setStretchLastSection(False)
         header.setSectionResizeMode(0, QtWidgets.QHeaderView.ResizeMode.Stretch)
-        for column, width in ((1, 100), (2, 100), (3, 100), (4, 190), (5, 120)):
+        for column, width in ((1, 100), (2, 100), (3, 100), (4, 190), (5, 112)):
             self.view.setColumnWidth(column, width)
         header.setSectionResizeMode(5, QtWidgets.QHeaderView.ResizeMode.Fixed)
-        self.model.modelReset.connect(self.rebuild_actions)
+        header.setSectionsClickable(True)
+        header.setSortIndicatorShown(False)
+        header.sectionClicked.connect(self.sort_column)
+        self.model.pages_changed.connect(self.rebuild_actions)
         self.model.dataChanged.connect(self.update_actions)
 
+    def sort_column(self, column: int) -> None:
+        key = self.model.columns[column][0]
+        if key == "actions":
+            return
+        self.sort_descending = not self.sort_descending if self.sort_by == key else False
+        self.sort_by = key
+        header = self.view.horizontalHeader()
+        header.setSortIndicator(
+            column,
+            QtCore.Qt.SortOrder.DescendingOrder
+            if self.sort_descending
+            else QtCore.Qt.SortOrder.AscendingOrder,
+        )
+        header.setSortIndicatorShown(True)
+        self.reset_page()
+
     def rebuild_actions(self) -> None:
-        self.row_buttons.clear()
-        for row, record in enumerate(self.model.rows):
+        records = list(self.model.records())
+        positions = {row: record["id"] for row, record in records}
+        for row, identity in list(self.action_rows.items()):
+            if (
+                positions.get(row) != identity
+                or self.view.indexWidget(self.model.index(row, 5)) is None
+            ):
+                self.view.setIndexWidget(self.model.index(row, 5), None)  # type: ignore[arg-type]
+                self.row_buttons.pop(identity, None)
+                self.row_menus.pop(identity, None)
+                self.row_actions.pop(identity, None)
+                del self.action_rows[row]
+        for row, record in records:
             identity = record["id"]
+            if self.action_rows.get(row) == identity:
+                continue
             group = QtWidgets.QWidget()
             layout = QtWidgets.QHBoxLayout(group)
             layout.setContentsMargins(8, 2, 8, 2)
-            layout.setSpacing(2)
-            controls = {}
-            for operation in self.permitted:
-                control = QtWidgets.QToolButton()
-                control.setProperty("tableAction", True)
-                control.setIcon(
-                    icon("pause" if operation == "pause" else "play", COLORS["text.heading"])
-                )
-                control.setIconSize(QtCore.QSize(16, 16))
-                control.setFixedSize(32, 32)
-                control.setAccessibleName(f"{operation.capitalize()} {record['name']}")
-                control.setToolTip(operation.capitalize())
-                control.clicked.connect(
-                    lambda checked=False, op=operation, selected=identity: self.trigger(
+            control = QtWidgets.QToolButton()
+            control.setObjectName("campaignPlaybackButton")
+            control.setProperty("tableAction", True)
+            control.setIconSize(QtCore.QSize(16, 16))
+            control.setFixedSize(32, 32)
+            control.clicked.connect(lambda checked=False, selected=identity: self.trigger(selected))
+            layout.addStretch()
+            layout.addWidget(control)
+            more = QtWidgets.QToolButton()
+            more.setText("⋯")
+            more.setProperty("tableAction", True)
+            more.setFixedSize(32, 32)
+            more.setPopupMode(QtWidgets.QToolButton.ToolButtonPopupMode.InstantPopup)
+            more.setAccessibleName("Actions for " + record["name"])
+            more.setToolTip("Campaign actions")
+            menu = QtWidgets.QMenu(more)
+            actions = {}
+            for operation in ("stop", "restart"):
+                action = menu.addAction(operation.capitalize() + " campaign")
+                action.triggered.connect(
+                    lambda checked=False, selected=identity, op=operation: self.trigger(
                         selected, op
                     )
                 )
-                layout.addWidget(control)
-                controls[operation] = control
-            self.row_buttons[identity] = controls
+                actions[operation] = action
+            more.setMenu(menu)
+            layout.addWidget(more)
+            layout.addStretch()
+            self.row_buttons[identity] = control
+            self.row_menus[identity] = more
+            self.row_actions[identity] = actions
+            self.action_rows[row] = identity
             self.view.setIndexWidget(self.model.index(row, 5), group)
         self.update_actions()
 
-    def update_actions(self, *args: Any) -> None:
-        for record in self.model.rows:
-            for operation, control in self.row_buttons.get(record["id"], {}).items():
-                enabled = (
-                    record["state"] in self.permitted[operation]
-                    and record["id"] not in self.pending
-                )
-                control.setEnabled(enabled)
-                control.setAccessibleName(f"{operation.capitalize()} {record['name']}")
-                control.setToolTip(
-                    operation.capitalize()
-                    if enabled
-                    else "Waiting for the engine"
-                    if record["id"] in self.pending
-                    else f"{operation.capitalize()} unavailable while {humanize(record['state']).lower()}"
-                )
+    @classmethod
+    def operation_for_state(cls, state: str) -> str | None:
+        return next((op for op in ("start", "pause", "resume") if state in cls.permitted[op]), None)
 
-    def trigger(self, identity: str, operation: str) -> None:
+    def update_actions(self, *args: Any) -> None:
+        for _, record in self.model.records():
+            control = self.row_buttons.get(record["id"])
+            if control is None:
+                continue
+            operation = self.operation_for_state(record["state"])
+            pending = record["id"] in self.pending
+            for menu_operation, menu_action in self.row_actions[record["id"]].items():
+                menu_action.setEnabled(
+                    not pending and record["state"] in self.permitted[menu_operation]
+                )
+            self.row_menus[record["id"]].setEnabled(
+                any(action.isEnabled() for action in self.row_actions[record["id"]].values())
+            )
+            control.setIcon(
+                icon(
+                    "pause" if record["state"] in {"RUNNING", "RETRYING", "PAUSING"} else "play",
+                    COLORS["text.heading"],
+                )
+            )
+            control.setEnabled(operation is not None and not pending)
+            control.setVisible(record["state"] != "FINISHED")
+            action = operation.capitalize() if operation else humanize(record["state"])
+            control.setAccessibleName(f"{action} {record['name']}")
+            control.setToolTip(
+                "Waiting for the engine"
+                if pending
+                else "Pause after active runs finish"
+                if operation == "pause"
+                else action
+            )
+
+    def trigger(self, identity: str, operation: str | None = None) -> None:
         if identity in self.pending:
             return
-        for row, record in enumerate(self.model.rows):
-            if record["id"] == identity and record["state"] in self.permitted[operation]:
+        for row, record in self.model.records():
+            selected_operation = operation or self.operation_for_state(record["state"])
+            if (
+                record["id"] == identity
+                and selected_operation is not None
+                and record["state"] in self.permitted.get(selected_operation, set())
+            ):
                 self.view.setCurrentIndex(self.model.index(row, 0))
                 self.pending.add(identity)
                 self.update_actions()
-                self.action_requested.emit(identity, operation)
+                self.action_requested.emit(identity, selected_operation)
                 return
 
     def finish_control(self, identity: str, state: str | None = None) -> None:
         self.pending.discard(identity)
         if state is not None:
-            self.model.replace(
-                [
-                    dict(record, state=state) if record["id"] == identity else record
-                    for record in self.model.rows
-                ]
-            )
-        else:
-            self.update_actions()
+            for _, record in self.model.records():
+                if record["id"] == identity:
+                    record["state"] = state
+        self.update_actions()
         self.refresh()
 
 

@@ -33,6 +33,7 @@ from exploration_benchmark_robots.preflight import validate_spawn
 from .contracts import (
     CampaignSpec,
     ContractError,
+    DEFAULT_LIMIT,
     HIDDEN_GROUPS,
     canonical,
     content_hash,
@@ -289,6 +290,7 @@ class Library:
                 {
                     "id": identity,
                     "label": identity.capitalize(),
+                    "default_time_limit": DEFAULT_LIMIT,
                     "reference": reference.descriptor(),
                     "default_spawn": {
                         "id": "default-" + identity,
@@ -310,7 +312,7 @@ class Library:
             "baseline_hash": self.baseline_hash,
             "metadata_hash": self.metadata_hash,
             "source": "native" if self.native else "synthetic",
-            "defaults": {"concurrency": 1, "time_limit": 1800},
+            "defaults": {"concurrency": 1},
         }
 
     def _revision(self, identity: str, kind: str) -> dict[str, Any]:
@@ -330,6 +332,7 @@ class Library:
             "repetitions",
             "concurrency",
             "time_limit",
+            "world_time_limits",
             "exclusions",
             "source_campaign_id",
         }

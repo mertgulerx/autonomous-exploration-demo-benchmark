@@ -31,3 +31,9 @@ Thumbs.db
 .pytest_cache
 .codex
 
+CLAUDE.md
+**/CLAUDE.md
+CLAUDE.local.md
+**/CLAUDE.local.md
+.claude
+**/.claude

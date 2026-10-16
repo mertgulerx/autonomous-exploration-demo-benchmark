@@ -32,7 +32,7 @@ from exploration_benchmark_runner.coverage import Reference
 from exploration_benchmark_runner.launch_spec import WorkerLaunchSpec
 from exploration_benchmark_runner.processes import DomainLease, ProcessScope
 
-from .contracts import ContractError
+from .contracts import ContractError, resolve_world_time_limits
 from .datasets import finalize_attempt, finalize_partial
 from .protocol import Client
 from .storage import atomic_json, file_hash, put_object, load_object
@@ -252,6 +252,7 @@ class NativeBackend:
     def __init__(self, root: Path, *, diagnostics: bool = True):
         self.root = root.resolve()
         self.diagnostics = diagnostics
+        self.graphics_checked_at = 0.0
         self.profiles = yaml.safe_load(
             (self.root / "exploration_benchmark_runner/config/profiles.yaml").read_text()
         )["profiles"]
@@ -308,10 +309,39 @@ class NativeBackend:
             )
             self.runtime[str(package)] = result.stdout.strip() if result.returncode == 0 else None
 
+    def preflight(self) -> None:
+        if time.monotonic() - self.graphics_checked_at < 1.0:
+            return
+        try:
+            result = subprocess.run(
+                [sys.executable, "-m", "benchmark_suite.rendering"],
+                capture_output=True,
+                text=True,
+                timeout=15,
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise ContractError("runtime", "Headless GPU initialization timed out") from exc
+        if result.returncode:
+            raise ContractError(
+                "runtime",
+                "The background engine cannot access GPU rendering. "
+                "Stop the engine after active runs finish and reopen the suite. "
+                + (result.stderr.strip() or result.stdout.strip()),
+                "graphics_unavailable",
+            )
+        self.runtime["graphics"] = json.loads(result.stdout)
+        self.graphics_checked_at = time.monotonic()
+
     def start(
         self, attempt: dict[str, Any], experiment: dict[str, Any], campaign: dict[str, Any]
     ) -> NativeWorker:
         accepted = json.loads(experiment["specification"])
+        time_limit = accepted.get("time_limit")
+        if time_limit is None:
+            specification = json.loads(campaign["specification"])
+            time_limit = dict(resolve_world_time_limits(specification, specification["worlds"]))[
+                experiment["world_id"]
+            ]
         selected = accepted["profile"]
         if "object" in selected:
             selected = load_object(Path(attempt["directory"]).parents[1], selected["object"])
@@ -362,7 +392,7 @@ class NativeBackend:
             ),
             profile=self.profiles["default"],
             seed=1234,
-            simulation_time_limit=json.loads(campaign["specification"])["time_limit"],
+            simulation_time_limit=time_limit,
             startup_timeout=180.0,
             robot=robot,
             suite_socket=str(socket_dir / (attempt["token"] + ".sock")),

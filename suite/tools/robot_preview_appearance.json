@@ -1,0 +1,86 @@
+{
+  "mogi": {
+    "references": ["https://github.com/MOGI-ROS/Week-7-8-ROS2-Navigation"],
+    "notes": "Custom benchmark example; preserve the original course model."
+  },
+  "tb3_burger": {
+    "references": ["https://emanual.robotis.com/docs/en/platform/turtlebot3/features/"],
+    "reference_images": ["https://en.robotis.com/img/sub/pruduct_img_TB301_pi.png"],
+    "materials": {
+      "base_link": [0.07, 0.07, 0.07, 1.0],
+      "wheel_left_link": [0.035, 0.035, 0.035, 1.0],
+      "wheel_right_link": [0.035, 0.035, 0.035, 1.0],
+      "base_scan": [0.07, 0.07, 0.07, 1.0]
+    },
+    "notes": "Black chassis and rubber finish matched to ROBOTIS photos. Native combined STL simplifies perforations, electronics and wiring."
+  },
+  "tb3_waffle_pi": {
+    "references": ["https://emanual.robotis.com/docs/en/platform/turtlebot3/features/"],
+    "reference_images": ["https://en.robotis.com/img/sub/pruduct_img_TB301_pi.png"],
+    "materials": {
+      "base_link": [0.07, 0.07, 0.07, 1.0],
+      "wheel_left_link": [0.035, 0.035, 0.035, 1.0],
+      "wheel_right_link": [0.035, 0.035, 0.035, 1.0],
+      "base_scan": [0.07, 0.07, 0.07, 1.0]
+    },
+    "notes": "Black chassis and rubber finish matched to ROBOTIS photos. Native combined STL simplifies perforations, electronics and wiring."
+  },
+  "tb4_standard": {
+    "references": ["https://clearpathrobotics.com/turtlebot-4/"],
+    "reference_images": ["https://s3.amazonaws.com/assets.clearpathrobotics.com/wp-content/uploads/2022/05/02153515/TurtleBotsFacing.jpg"],
+    "notes": "Standard tower, circular Create 3 base and black finish match the manufacturer photos."
+  },
+  "rosbot_pro": {
+    "references": ["https://husarion.com/manuals/rosbot/"],
+    "reference_images": ["https://husarion.com/assets/images/rosbot3-preview2-d44cb2bc8eb09c7e0245834114f29037.png"],
+    "mesh_overrides": {
+      "oak_model_origin": {
+        "uri": "package://clearpath_sensors_description/meshes/oakd_pro.dae",
+        "frame": "oak_link"
+      }
+    },
+    "notes": "ROSbot 3 PRO body, red fenders, standard wheels and S2 lidar match Husarion photos. Replace the uncoloured OAK-D Pro STL with the same camera's coloured vendor COLLADA visual."
+  },
+  "rosbot_xl": {
+    "references": ["https://husarion.com/manuals/rosbot-xl/"],
+    "reference_images": ["https://husarion.com/assets/images/RbXL_5_medium-ca92a5151879ebbb176e0eecf78611e2.png"],
+    "mesh_overrides": {
+      "oak_model_origin": {
+        "uri": "package://clearpath_sensors_description/meshes/oakd_pro.dae",
+        "frame": "oak_link"
+      }
+    },
+    "notes": "White chassis, black deck and mecanum wheels match Husarion photos. The benchmark uses the OAK-D Pro/S3 accessory configuration; manufacturer gallery photos also show other supported cameras."
+  },
+  "lynx": {
+    "references": ["https://husarion.com/manuals/lynx/"],
+    "reference_images": ["https://husarion.com/assets/images/Lynx_0.2_shop_combine-dc3dc668049bdd2144d2d47a183eac7d.png"],
+    "notes": "Red fenders, black mounting rails and four off-road wheels match the manufacturer model. The benchmark adds its selected lidar."
+  },
+  "j100": {
+    "references": ["https://clearpathrobotics.com/jackal-small-unmanned-ground-vehicle/"],
+    "reference_images": ["https://s3.amazonaws.com/assets.clearpathrobotics.com/wp-content/uploads/2024/01/30202032/Jackal-Vision.67-1024x681.png"],
+    "materials": {
+      "chassis_link": [0.08, 0.08, 0.08, 1.0],
+      "front_left_wheel_link": [0.035, 0.035, 0.035, 1.0],
+      "front_right_wheel_link": [0.035, 0.035, 0.035, 1.0],
+      "rear_left_wheel_link": [0.035, 0.035, 0.035, 1.0],
+      "rear_right_wheel_link": [0.035, 0.035, 0.035, 1.0]
+    },
+    "extra_visuals": [
+      {
+        "uri": "package://clearpath_platform_description/meshes/j100/attachments/default_fender.stl",
+        "frame": "base_link",
+        "rpy": [0.0, 0.0, 0.0],
+        "rgba": [0.8, 0.8, 0.0, 1.0]
+      },
+      {
+        "uri": "package://clearpath_platform_description/meshes/j100/attachments/default_fender.stl",
+        "frame": "base_link",
+        "rpy": [0.0, 0.0, 3.141592653589793],
+        "rgba": [0.8, 0.8, 0.0, 1.0]
+      }
+    ],
+    "notes": "Restore the factory yellow front/rear fenders using Clearpath's existing attachment meshes. These are preview-only visuals; the benchmark's simulation geometry remains unchanged."
+  }
+}

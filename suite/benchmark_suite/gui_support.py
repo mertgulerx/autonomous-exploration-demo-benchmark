@@ -13,11 +13,12 @@
 # limitations under the License.
 
 import base64
+from collections import OrderedDict
 import math
 from pathlib import Path
 import queue
 import subprocess
-from typing import Any
+from typing import Any, Iterator
 import uuid
 
 import numpy as np
@@ -230,6 +231,9 @@ class TableModel(QtCore.QAbstractTableModel):
             self.rows = []
             self.endResetModel()
 
+    def record(self, row: int) -> dict[str, Any] | None:
+        return self.rows[row] if 0 <= row < len(self.rows) else None
+
     def rowCount(
         self, parent: QtCore.QModelIndex | QtCore.QPersistentModelIndex = QtCore.QModelIndex()
     ) -> int:
@@ -247,15 +251,18 @@ class TableModel(QtCore.QAbstractTableModel):
     ) -> Any:
         if not index.isValid():
             return None
+        record = self.record(index.row())
+        if record is None:
+            return None
         key = self.columns[index.column()][0]
         if key == "actions":
             return None
-        value = self.rows[index.row()].get(key)
+        value = record.get(key)
         if role == QtCore.Qt.ItemDataRole.DisplayRole:
             if key == "outcome" and value is None:
                 return cell_text(
                     "phase",
-                    self.rows[index.row()].get("state") or self.rows[index.row()].get("phase"),
+                    record.get("state") or record.get("phase"),
                 )
             if key in self.names and value in self.names[key]:
                 return self.names[key][value]
@@ -280,8 +287,92 @@ class TableModel(QtCore.QAbstractTableModel):
         return None
 
 
+class PagedTableModel(TableModel):
+    page_needed = QtCore.Signal(int)
+    pages_changed = QtCore.Signal()
+    page_size = 100
+    cache_size = 4
+
+    def __init__(self, columns: list[tuple[str, str]]):
+        super().__init__(columns)
+        self.pages: OrderedDict[int, list[dict[str, Any]]] = OrderedDict()
+        self.total = 0
+
+    def replace(self, rows: list[dict[str, Any]]) -> None:
+        self.beginResetModel()
+        self.rows, self.total = rows, len(rows)
+        self.pages.clear()
+        if rows:
+            self.pages[0] = rows
+        self.endResetModel()
+        self.pages_changed.emit()
+
+    def set_columns(self, columns: list[tuple[str, str]]) -> None:
+        if columns != self.columns:
+            self.beginResetModel()
+            self.columns = columns
+            self.rows, self.total = [], 0
+            self.pages.clear()
+            self.endResetModel()
+            self.pages_changed.emit()
+
+    def record(self, row: int) -> dict[str, Any] | None:
+        offset, position = divmod(row, self.page_size)
+        rows = self.pages.get(offset * self.page_size, [])
+        return rows[position] if 0 <= row < self.total and position < len(rows) else None
+
+    def records(self) -> Iterator[tuple[int, dict[str, Any]]]:
+        for offset, rows in sorted(self.pages.items()):
+            for position, record in enumerate(rows):
+                yield offset + position, record
+
+    def rowCount(
+        self, parent: QtCore.QModelIndex | QtCore.QPersistentModelIndex = QtCore.QModelIndex()
+    ) -> int:
+        return 0 if parent.isValid() else self.total
+
+    def data(
+        self,
+        index: QtCore.QModelIndex | QtCore.QPersistentModelIndex,
+        role: int = QtCore.Qt.ItemDataRole.DisplayRole,
+    ) -> Any:
+        if index.isValid() and self.record(index.row()) is None:
+            if role == QtCore.Qt.ItemDataRole.DisplayRole:
+                self.page_needed.emit(index.row() // self.page_size * self.page_size)
+                return "…" if index.column() == 0 else None
+            return None
+        return super().data(index, role)
+
+    def set_page(
+        self, offset: int, rows: list[dict[str, Any]], total: int, *, invalidate: bool = False
+    ) -> None:
+        if invalidate:
+            self.pages.clear()
+        if total != self.total:
+            self.pages.clear()
+            if total > self.total:
+                self.beginInsertRows(QtCore.QModelIndex(), self.total, total - 1)
+                self.total = total
+                self.endInsertRows()
+            else:
+                self.beginRemoveRows(QtCore.QModelIndex(), total, self.total - 1)
+                self.total = total
+                self.endRemoveRows()
+        self.rows = rows
+        self.pages[offset] = rows
+        self.pages.move_to_end(offset)
+        while len(self.pages) > self.cache_size:
+            self.pages.popitem(last=False)
+        if self.total and self.columns:
+            self.dataChanged.emit(
+                self.index(0, 0), self.index(self.total - 1, len(self.columns) - 1)
+            )
+        self.pages_changed.emit()
+
+
 class PagedTable(QtWidgets.QWidget):
     selected = QtCore.Signal(object)
+    loaded = QtCore.Signal(object)
 
     def __init__(
         self,
@@ -291,23 +382,24 @@ class PagedTable(QtWidgets.QWidget):
         columns: list[tuple[str, str]],
         *,
         method: str = "results.query",
+        result_key: str = "rows",
     ):
         super().__init__()
         self.transport, self.tag, self.table = transport, tag, table
-        self.method = method
+        self.method, self.result_key = method, result_key
         self.filters: dict[str, Any] = {}
+        self.sort_by: str | None = None
+        self.sort_descending = False
         self.offset, self.total, self.busy = 0, 0, False
         self.refresh_pending = False
-        self.page_cursor: dict[str, Any] | None = None
-        self.next_cursor: dict[str, Any] | None = None
-        self.previous_cursor: dict[str, Any] | None = None
-        self.cursor_context: tuple[str, str] | None = None
-        self.requested: tuple[str, int, str, str] | None = None
+        self.context: tuple[str, str] | None = None
+        self.requested: tuple[str, int, str] | None = None
+        self.invalidate_pages = False
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(12)
         self.view = QtWidgets.QTableView()
-        self.model = TableModel(columns)
+        self.model = PagedTableModel(columns)
         self.view.setModel(self.model)
         self.view.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
         self.view.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
@@ -321,63 +413,97 @@ class PagedTable(QtWidgets.QWidget):
         self.view.setShowGrid(False)
         self.view.verticalHeader().setDefaultSectionSize(40)
         self.view.horizontalHeader().setDefaultSectionSize(150)
-        self.view.selectionModel().currentRowChanged.connect(
-            lambda index, previous: self.selected.emit(self.model.rows[index.row()])
-            if index.isValid() and index.row() < len(self.model.rows)
-            else None
-        )
+        self.view.selectionModel().currentRowChanged.connect(self.select_row)
         layout.addWidget(self.view)
-        bar = QtWidgets.QHBoxLayout()
         self.label = QtWidgets.QLabel("0 records")
         self.label.setProperty("kind", "muted")
-        bar.addWidget(self.label, 1)
-        self.page_buttons: list[QtWidgets.QPushButton] = []
-        for label, delta in (("Previous", -100), ("Next", 100)):
-            control = QtWidgets.QPushButton(label)
-            control.clicked.connect(lambda checked=False, step=delta: self.page(step))
-            self.page_buttons.append(control)
-            bar.addWidget(control)
-        refresh = QtWidgets.QPushButton("Refresh")
-        refresh.clicked.connect(self.reset_page)
-        bar.addWidget(refresh)
-        layout.addLayout(bar)
+        layout.addWidget(self.label)
+        self.load_timer = QtCore.QTimer(self)
+        self.load_timer.setSingleShot(True)
+        self.load_timer.setInterval(30)
+        self.load_timer.timeout.connect(self.load_visible)
+        self.model.page_needed.connect(lambda _: self.schedule_visible())
+        self.view.verticalScrollBar().valueChanged.connect(self.schedule_visible)
+        self.view.viewport().installEventFilter(self)
+        self.sync_timer = QtCore.QTimer(self)
+        self.sync_timer.setInterval(2000)
+        self.sync_timer.timeout.connect(lambda: self.refresh() if self.isVisible() else None)
+        self.sync_timer.start()
         transport.received.connect(self._received)
         transport.failed.connect(self._failed)
 
-    def page(self, delta: int) -> None:
-        if self.busy:
+    def select_row(self, current: QtCore.QModelIndex, previous: QtCore.QModelIndex) -> None:
+        record = self.model.record(current.row()) if current.isValid() else None
+        if record is not None:
+            self.selected.emit(record)
+
+    def eventFilter(self, watched: QtCore.QObject, event: QtCore.QEvent) -> bool:
+        if event.type() in (QtCore.QEvent.Type.Show, QtCore.QEvent.Type.Resize):
+            self.schedule_visible()
+        return super().eventFilter(watched, event)
+
+    def schedule_visible(self, *args: Any) -> None:
+        self.load_timer.start()
+
+    def visible_offsets(self) -> list[int]:
+        first = max(0, self.view.rowAt(0))
+        last = self.view.rowAt(self.view.viewport().height() - 1)
+        if last < 0:
+            last = min(self.model.rowCount() - 1, first + 100)
+        return list(range(first // 100 * 100, last // 100 * 100 + 1, 100))
+
+    def load_visible(self) -> None:
+        if self.busy or not self.isVisible() or not self.isEnabled():
             return
-        candidate = max(0, self.offset + delta)
-        if self.table == "attempts":
-            cursor = self.next_cursor if delta > 0 else self.previous_cursor
-            if cursor is None:
+        for offset in self.visible_offsets():
+            if offset not in self.model.pages:
+                self.request_page(offset)
                 return
-            self.page_cursor = cursor
-        if self.table == "attempts" or candidate < self.total or candidate == 0:
-            self.offset = candidate
-            self.refresh()
 
     def reset_page(self) -> None:
-        self.offset, self.page_cursor = 0, None
-        self.next_cursor, self.previous_cursor = None, None
+        self.offset = 0
+        self.model.replace([])
+        self.view.scrollToTop()
         if self.busy:
             self.refresh_pending = True
         self.refresh()
 
+    def page_context(self) -> str:
+        return canonical(
+            {
+                "filters": self.filters,
+                "sort_by": self.sort_by,
+                "sort_descending": self.sort_descending,
+            }
+        )
+
     def refresh(self) -> None:
+        if not self.isEnabled():
+            return
+        context = self.table, self.page_context()
+        if self.busy and self.context == context:
+            return
+        if self.context is not None and self.context != context:
+            self.offset = 0
+            self.model.replace([])
+        elif self.isVisible() and self.model.rowCount():
+            self.offset = self.visible_offsets()[0]
+        self.request_page(self.offset, invalidate=True)
+
+    def request_page(self, offset: int, *, invalidate: bool = False) -> None:
         if not self.busy:
             self.busy = True
-            context = self.table, canonical(self.filters)
-            if self.cursor_context != context:
-                self.page_cursor = None
-                self.next_cursor, self.previous_cursor = None, None
-            self.cursor_context = context
-            self.requested = self.table, self.offset, context[1], canonical(self.page_cursor)
-            params = (
+            self.offset = offset
+            self.invalidate_pages = invalidate
+            self.context = self.table, self.page_context()
+            self.requested = self.table, offset, self.context[1]
+            params: dict[str, Any] = (
                 {"table": self.table, "filters": self.filters}
                 if self.method == "results.query"
                 else dict(self.filters)
             )
+            if self.sort_by is not None:
+                params.update(sort_by=self.sort_by, sort_descending=self.sort_descending)
             self.transport.submit(
                 self.tag,
                 self.method,
@@ -386,13 +512,15 @@ class PagedTable(QtWidgets.QWidget):
                     offset=self.offset,
                     limit=100,
                     summary=True,
-                    **({"cursor": self.page_cursor} if self.table == "attempts" else {}),
                 ),
             )
 
     def _received(self, tag: str, result: Any) -> None:
         if tag == self.tag:
             self.busy = False
+            if not self.isEnabled():
+                self.refresh_pending = False
+                return
             if self.refresh_pending:
                 self.refresh_pending = False
                 self.refresh()
@@ -400,41 +528,49 @@ class PagedTable(QtWidgets.QWidget):
             if self.requested != (
                 self.table,
                 self.offset,
-                canonical(self.filters),
-                canonical(self.page_cursor),
+                self.page_context(),
             ):
                 self.refresh()
                 return
             self.total = result["total"]
-            self.next_cursor, self.previous_cursor = (
-                result.get("next_cursor"),
-                result.get("previous_cursor"),
-            )
             current = self.view.currentIndex()
-            identity = (
-                self.model.rows[current.row()].get("id")
-                if current.isValid() and current.row() < len(self.model.rows)
-                else None
+            record = self.model.record(current.row()) if current.isValid() else None
+            identity = record.get("id", record.get("path")) if record else None
+            self.model.set_page(
+                self.offset, result[self.result_key], self.total, invalidate=self.invalidate_pages
             )
-            self.model.replace(result["rows"])
             if identity is not None:
                 match = next(
-                    (i for i, r in enumerate(self.model.rows) if r.get("id") == identity), None
+                    (i for i, r in self.model.records() if r.get("id", r.get("path")) == identity),
+                    None,
                 )
                 if match is not None:
                     target = self.model.index(match, current.column())
                     if self.view.currentIndex() != target:
                         self.view.setCurrentIndex(target)
-            self.page_buttons[0].setEnabled(self.offset > 0)
-            self.page_buttons[1].setEnabled(self.offset + len(result["rows"]) < self.total)
-            self.label.setText(
-                f"{self.offset + 1 if self.total else 0}–{self.offset + len(result['rows'])} of {self.total:,}"
-            )
+                    elif self.model.record(match) != record:
+                        self.selected.emit(self.model.record(match))
+                elif (
+                    self.offset <= current.row() < self.offset + 100 or current.row() >= self.total
+                ):
+                    self.view.clearSelection()
+                    self.view.setCurrentIndex(QtCore.QModelIndex())
+            elif current.isValid():
+                loaded = self.model.record(current.row())
+                if loaded is not None:
+                    self.selected.emit(loaded)
+            self.label.setText(f"{self.total:,} record{'s' if self.total != 1 else ''}")
+            self.loaded.emit(result)
+            self.schedule_visible()
 
     def _failed(self, tag: str, message: str) -> None:
         if tag == self.tag:
             self.busy, self.refresh_pending = False, False
-            self.next_cursor, self.previous_cursor = None, None
+            if not self.isEnabled():
+                return
+            if self.context != (self.table, self.page_context()):
+                self.refresh()
+                return
             self.label.setText(message)
 
 
@@ -468,6 +604,7 @@ class MapView(pg.PlotWidget):  # type: ignore[misc]
 
     def __init__(self) -> None:
         super().__init__()
+        self.plotItem.hideButtons()
         self.setAspectLocked()
         self.setLabel("bottom", "World X", units="m")
         self.setLabel("left", "World Y", units="m")
@@ -507,10 +644,6 @@ class MapView(pg.PlotWidget):  # type: ignore[misc]
         for item in (self.path, self.footprint, self.goal, self.plan, self.incidents):
             item.setData([], [])
 
-    def fit_map(self) -> None:
-        if self.map_initialized:
-            self.setRange(rect=self.image.mapRectToParent(self.image.boundingRect()), padding=0.04)
-
     def set_map(self, result: dict[str, Any]) -> None:
         image = QtGui.QImage.fromData(base64.b64decode(result["image_png"]))
         if image.isNull():
@@ -534,7 +667,7 @@ class MapView(pg.PlotWidget):  # type: ignore[misc]
         self.image.setTransform(QtGui.QTransform(c, s, -s, c, x, y))
         if not self.map_initialized:
             self.map_initialized = True
-            self.fit_map()
+            self.setRange(rect=self.image.mapRectToParent(self.image.boundingRect()), padding=0.04)
 
     def set_pose(
         self, x: float, y: float, yaw: float, vertices: list[list[float]] | None = None

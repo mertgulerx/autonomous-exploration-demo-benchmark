@@ -24,7 +24,7 @@ from PySide6 import QtCore, QtWidgets
 
 from benchmark_suite.contracts import HIDDEN_GROUPS
 from benchmark_suite.gui import ProfileEditor, Window
-from benchmark_suite.gui_support import TableModel
+from benchmark_suite.gui_support import PagedTableModel
 from benchmark_suite.library import Library
 
 
@@ -70,7 +70,7 @@ class GuiTests(unittest.TestCase):
         exports.table.model.replace([old_export])
         exports.selected = old_export
         reports.select_report({"id": "report", "campaign_id": "old"})
-        old_request = reports.request_tag
+        old_request = reports.artifact_table.tag
         reports.artifact = {"path": "/tmp/old.pdf"}
         reports.model.replace([reports.artifact])
         self.window.select_campaign({"id": "new"})
@@ -79,7 +79,9 @@ class GuiTests(unittest.TestCase):
         self.assertIsNone(reports.report_id)
         self.assertIsNone(reports.artifact)
         self.assertEqual(reports.model.rowCount(), 0)
-        reports.received(old_request, {"artifacts": [{"path": "/tmp/old.pdf"}]})
+        reports.artifact_table._received(
+            old_request, {"artifacts": [{"path": "/tmp/old.pdf"}], "total": 1}
+        )
         self.assertEqual(reports.model.rowCount(), 0)
         exports.selected = old_export
         with patch.object(QtWidgets.QFileDialog, "getExistingDirectory") as destination:
@@ -95,7 +97,7 @@ class GuiTests(unittest.TestCase):
         )
         self.assertEqual(self.window.inspection_sequence, 0)
 
-    def test_refresh_during_a_request_is_reissued_and_failure_clears_page_links(self):
+    def test_refresh_during_a_request_is_reissued_and_failure_can_recover(self):
         table = self.window.results
         calls = []
         self.window.transport.submit = lambda *args: calls.append(args)
@@ -105,11 +107,12 @@ class GuiTests(unittest.TestCase):
         table._received(table.tag, {"rows": [], "total": 0})
         self.assertEqual(len(calls), 2)
         self.assertTrue(table.busy)
-        table.next_cursor = {"reserved_ns": 1000, "id": "old", "direction": "after"}
         table._failed(table.tag, "Disconnected")
-        table.page(100)
-        self.assertIsNone(table.next_cursor)
-        self.assertEqual(len(calls), 2)
+        self.assertFalse(table.busy)
+        self.assertEqual(table.label.text(), "Disconnected")
+        table.refresh()
+        self.assertTrue(table.busy)
+        self.assertEqual(len(calls), 3)
 
     @classmethod
     def setUpClass(cls):
@@ -173,8 +176,9 @@ class GuiTests(unittest.TestCase):
         finally:
             editor.close()
         builder = self.window.builder
-        builder.limit.setValue(0.04)
-        self.assertEqual(builder.design()["time_limit"], 0.04)
+        builder.world_selector.select_world("bookstore", True)
+        builder.world_selector._cards["bookstore"].time_limit.setValue(0.04)
+        self.assertEqual(builder.design()["world_time_limits"]["bookstore"], 0.04)
         pose = (1.2345678901234567, -2.9876543210123456, 0.12345678901234567)
         self.window.spawn_editor.map_pose(*pose)
         self.assertEqual(self.window.spawn_editor.pose(), pose)
@@ -226,16 +230,67 @@ class GuiTests(unittest.TestCase):
         )
         self.assertEqual(self.window.progress_bar.value(), 667)
 
-    def test_large_table_has_only_one_page_and_fast_model_access(self):
-        model = TableModel([("id", "Attempt"), ("phase", "Phase")])
+    def test_large_table_has_bounded_scroll_cache_and_fast_model_access(self):
+        model = PagedTableModel([("id", "Attempt"), ("phase", "Phase")])
         started = time.perf_counter()
         for page in range(450):
-            model.replace([{"id": page * 100 + i, "phase": "FINISHED"} for i in range(100)])
-            self.assertEqual(model.rowCount(), 100)
-            self.assertEqual(model.data(model.index(0, 1)), "Finished")
+            model.set_page(
+                page * 100,
+                [{"id": page * 100 + i, "phase": "FINISHED"} for i in range(100)],
+                45000,
+            )
+            self.assertEqual(model.rowCount(), 45000)
+            self.assertEqual(model.data(model.index(page * 100, 1)), "Finished")
+            self.assertLessEqual(sum(len(rows) for rows in model.pages.values()), 400)
         elapsed = time.perf_counter() - started
-        print(f"450 table pages: {elapsed:.3f}s; final rows {model.rowCount()}")
+        self.assertIsNone(model.record(0))
+        self.assertEqual(model.record(44999)["id"], 44999)
         self.assertLess(elapsed, 2.0)
+
+    def test_scroll_loads_distant_rows_and_visible_tables_sync_without_buttons(self):
+        calls = []
+        self.window.transport.submit = lambda *args: calls.append(args)
+        self.window.show()
+        self.window.go("results")
+        self.app.processEvents()
+        table = self.window.results
+        table.busy = False
+        table.refresh_pending = False
+        table.refresh()
+        table._received(
+            table.tag,
+            {"rows": [{"id": str(i)} for i in range(100)], "total": 45000},
+        )
+        self.app.processEvents()
+        table.view.scrollTo(
+            table.model.index(22500, 0), QtWidgets.QAbstractItemView.ScrollHint.PositionAtTop
+        )
+        table.busy = False
+        table.load_visible()
+        self.assertEqual(calls[-1][2]["offset"], 22500)
+        table._received(
+            table.tag,
+            {"rows": [{"id": str(i)} for i in range(22500, 22600)], "total": 45000},
+        )
+        table.view.setCurrentIndex(table.model.index(22505, 0))
+        table.sync_timer.timeout.emit()
+        self.assertEqual(calls[-1][2]["offset"], 22500)
+        table._received(
+            table.tag,
+            {
+                "rows": [{"id": str(i), "outcome": "completed"} for i in range(22500, 22600)],
+                "total": 45000,
+            },
+        )
+        self.assertEqual(table.model.record(22505)["outcome"], "completed")
+        self.assertEqual(table.view.currentIndex().row(), 22505)
+        self.assertFalse(
+            any(
+                control.text()
+                in {"Previous", "Next", "Refresh", "Previous artifacts", "Next artifacts"}
+                for control in self.window.findChildren(QtWidgets.QPushButton)
+            )
+        )
 
     def test_world_pose_round_trip_uses_radians(self):
         self.window.spawn_editor.map_pose(1.2345, -2.3456, 0.7)
@@ -243,13 +298,49 @@ class GuiTests(unittest.TestCase):
         self.assertAlmostEqual(self.window.spawn_editor.spawn_map.pose[1], -2.3456)
         self.assertAlmostEqual(self.window.spawn_editor.spawn_map.pose[2], 0.7, places=5)
 
+    def test_report_artifacts_update_without_losing_selected_preview(self):
+        self.window.transport.submit = lambda *args: None
+        browser = self.window.report_browser
+        browser.set_campaign("campaign")
+        browser.select_report({"id": "report", "campaign_id": "campaign"})
+        table = browser.artifact_table
+        result = {
+            "report": {"id": "report", "state": "FINISHED"},
+            "manifest": {},
+            "artifacts": [{"path": "/tmp/report.pdf", "kind": "pdf", "bytes": 1024}],
+            "total": 1,
+        }
+        table._received(table.tag, result)
+        table.view.setCurrentIndex(table.model.index(0, 0))
+        browser.preview.setText("Selected preview")
+        table.refresh()
+        table._received(table.tag, result)
+        self.assertEqual(browser.artifact["path"], "/tmp/report.pdf")
+        self.assertEqual(browser.preview.text(), "Selected preview")
+        self.assertEqual(table.view.currentIndex().row(), 0)
+
+    def test_result_and_profile_filters_apply_automatically(self):
+        calls = []
+        self.window.transport.submit = lambda *args: calls.append(args)
+        self.window.result_outcome.setCurrentIndex(1)
+        self.app.processEvents()
+        self.assertEqual(self.window.results.filters["outcome"], "completed")
+        self.window.profiles.busy = False
+        self.window.profile_search.setText("Research")
+        self.window.profile_filter_timer.timeout.emit()
+        self.assertEqual(self.window.profiles.filters["search"], "Research")
+        self.assertTrue(any(call[1] == "profiles.list" for call in calls))
+        self.assertFalse(any(call[1] in {"campaign.start", "campaign.submit"} for call in calls))
+
     def test_reconnection_reloads_catalog_and_preserves_browsed_page(self):
         calls = []
         self.window.transport.submit = lambda *args: calls.append(args)
         self.window.catalog = {}
         self.window.catalog_pending = False
         self.window.campaigns.offset = 100
-        self.window.campaigns.model.replace([{"id": "later-page"}])
+        self.window.campaigns.model.replace(
+            [{"id": "later-page", "name": "Saved study", "state": "FINISHED"}]
+        )
         self.window.received(
             "status",
             {
@@ -288,7 +379,7 @@ class GuiTests(unittest.TestCase):
         builder.next_step()
         self.assertEqual(builder.step, 1)
         self.assertIn("Select at least one world", builder.error.text())
-        builder.world_tree.topLevelItem(2).setCheckState(0, QtCore.Qt.CheckState.Checked)
+        builder.world_selector.select_world("warehouse", True)
         builder.show_step(3)
         builder.submit_design(False)
         old = builder.validation_tag
@@ -339,8 +430,8 @@ class GuiTests(unittest.TestCase):
     def test_readable_exclusions_follow_selected_combinations(self):
         builder = self.window.builder
         builder.robot_selector.add_profile("tb3_burger", "Default", "Default")
-        builder.world_tree.topLevelItem(0).setCheckState(0, QtCore.Qt.CheckState.Checked)
-        builder.world_tree.topLevelItem(2).setCheckState(0, QtCore.Qt.CheckState.Checked)
+        builder.world_selector.select_world("bookstore", True)
+        builder.world_selector.select_world("warehouse", True)
         builder.show_step(3)
         self.assertEqual(builder.compatibility.rowCount(), 4)
         item = builder.compatibility.item(0, 0)
@@ -348,7 +439,7 @@ class GuiTests(unittest.TestCase):
         item.setCheckState(QtCore.Qt.CheckState.Unchecked)
         accepted = self.library.resolve_campaign(builder.design())
         self.assertEqual(accepted.count, 3)
-        builder.world_tree.topLevelItem(0).setCheckState(0, QtCore.Qt.CheckState.Unchecked)
+        builder.world_selector.select_world("bookstore", False)
         self.assertNotIn(list(identity), builder.design()["exclusions"])
 
     def test_page_navigation_never_submits_or_starts_simulations(self):
@@ -409,7 +500,7 @@ class GuiTests(unittest.TestCase):
         self.assertIs(self.window.workers.cards["a-2"], card)
         self.assertEqual(self.window.workers.selected, "a-2")
         self.window.received("status", {**status, "active": []})
-        self.assertFalse(self.window.stop_run_button.isEnabled())
+        self.assertFalse(hasattr(self.window, "stop_run_button"))
         self.assertEqual(self.window.run_metrics.values["coverage"].text(), "50.0%")
         self.assertFalse(self.window.workers.cards)
 

@@ -40,9 +40,20 @@ def export_robot(root: Path, output: Path, robot_id: str) -> None:
     with TemporaryDirectory(prefix=robot_id + "-", dir=output) as staging:
         generated, _ = prepare(profile, scenario(root, "warehouse"), Path(staging), lookup)
     robot = ET.fromstring(generated["robot_description"])
+    appearance = json.loads(
+        Path(__file__).with_name("robot_preview_appearance.json").read_text()
+    ).get(robot_id, {})
+    additional = [
+        *appearance.get("mesh_overrides", {}).values(),
+        *appearance.get("extra_visuals", []),
+    ]
     packages = {}
     meshes = []
-    for mesh in robot.iter("mesh"):
+    native_meshes = list(robot.iter("mesh"))
+    for mesh in [
+        *native_meshes,
+        *(ET.Element("mesh", filename=entry["uri"]) for entry in additional),
+    ]:
         uri = mesh.get("filename", "")
         if uri.startswith("package://"):
             package, _, relative = uri.removeprefix("package://").partition("/")
@@ -100,7 +111,13 @@ def export_robot(root: Path, output: Path, robot_id: str) -> None:
                 "notices": sorted(set(notices)),
             }
         copied = destination / source.relative_to(package_root)
-        meshes.append({"uri": uri, "sha256": digest(source)})
+        meshes.append(
+            {
+                "uri": uri,
+                "sha256": digest(source),
+                "usage": "native_description" if mesh in native_meshes else "preview_visual",
+            }
+        )
         mesh.set("filename", str(copied.relative_to(output)))
     target = output / (robot_id + ".urdf")
     ET.indent(robot)
@@ -121,7 +138,7 @@ def export_robot(root: Path, output: Path, robot_id: str) -> None:
         )
         + "\n"
     )
-    print(robot_id, len(meshes), "visual meshes", flush=True)
+    print(robot_id, len(meshes), "mesh assets", flush=True)
 
 
 def main() -> None:

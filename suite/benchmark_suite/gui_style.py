@@ -38,8 +38,6 @@ COLORS = {
     "icon.decorative": "#8F8D81",
     "accent.default": "#B15739",
     "action.primary": "#9A4A2F",
-    "action.primary.hover": "#86402A",
-    "action.primary.pressed": "#743823",
     "action.secondary": "#000000",
     "focus.ring": "#000000",
     "status.success": "#000000",
@@ -65,14 +63,17 @@ def overlay(foreground: str, background: str, opacity: float) -> str:
     return QtGui.QColor(*channels).name()
 
 
+for prefix, background, foreground in (
+    ("interaction", "surface.raised", "text.strong"),
+    ("interaction.selected", "surface.selected", "text.strong"),
+    ("action.primary", "action.primary", "text.strong"),
+    ("action.secondary", "action.secondary", "surface.raised"),
+):
+    for state, opacity in (("hover", 0.10), ("pressed", 0.18)):
+        COLORS[f"{prefix}.{state}"] = overlay(COLORS[foreground], COLORS[background], opacity)
+
 COLORS.update(
     {
-        "interaction.hover": overlay(COLORS["text.strong"], COLORS["surface.raised"], 0.06),
-        "interaction.pressed": overlay(COLORS["text.strong"], COLORS["surface.raised"], 0.12),
-        "action.secondary.hover": overlay(COLORS["text.strong"], COLORS["action.secondary"], 0.06),
-        "action.secondary.pressed": overlay(
-            COLORS["text.strong"], COLORS["action.secondary"], 0.12
-        ),
         "text.disabled": overlay(COLORS["text.body"], COLORS["surface.base"], 0.4),
         "surface.disabled": overlay(COLORS["surface.sunken"], COLORS["surface.base"], 0.4),
         "border.disabled": overlay(COLORS["border.control"], COLORS["surface.base"], 0.4),
@@ -142,7 +143,11 @@ def cell_text(key: str, value: Any) -> str:
     if key == "path" and value:
         return Path(str(value)).name
     if key.endswith("_ns") and isinstance(value, int):
-        return datetime.fromtimestamp(value / 1e9, timezone.utc).strftime("%d %b %Y · %H:%M UTC")
+        return (
+            datetime.fromtimestamp(value / 1e9, timezone.utc)
+            .astimezone()
+            .strftime("%d %b %Y · %H:%M")
+        )
     if isinstance(value, bool):
         return "Yes" if value else "No"
     if key == "repetition" and isinstance(value, int):
@@ -175,7 +180,6 @@ class Badge(QtWidgets.QLabel):
 class DetailsPanel(QtWidgets.QWidget):
     def __init__(self, title: str = "Details"):
         super().__init__()
-        self.raw = ""
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(label(title, "section"))
@@ -187,47 +191,37 @@ class DetailsPanel(QtWidgets.QWidget):
         scroll.setWidgetResizable(True)
         scroll.setWidget(self.body)
         layout.addWidget(scroll, 1)
-        toggle = QtWidgets.QToolButton()
-        toggle.setText("Technical details")
-        toggle.setCheckable(True)
-        toggle.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
-        toggle.setArrowType(QtCore.Qt.ArrowType.RightArrow)
-        layout.addWidget(toggle)
-        self.technical = QtWidgets.QPlainTextEdit()
-        self.technical.setReadOnly(True)
-        self.technical.setMaximumHeight(160)
-        self.technical.hide()
-        toggle.toggled.connect(self.technical.setVisible)
-        toggle.toggled.connect(
-            lambda opened: toggle.setArrowType(
-                QtCore.Qt.ArrowType.DownArrow if opened else QtCore.Qt.ArrowType.RightArrow
-            )
-        )
-        layout.addWidget(self.technical)
 
     def setPlainText(self, text: str) -> None:
-        self.raw = text
-        self.technical.setPlainText(text)
-        try:
-            record = json.loads(text)
-        except (ValueError, TypeError):
-            self.body.setTextFormat(QtCore.Qt.TextFormat.PlainText)
-            self.body.setText(text)
-            return
-        self.set_record(record)
+        self.body.setTextFormat(QtCore.Qt.TextFormat.PlainText)
+        self.body.setText(text)
 
     def set_record(self, record: Any) -> None:
         from html import escape
 
-        self.raw = json.dumps(record, ensure_ascii=False, indent=2)
-        self.technical.setPlainText(self.raw)
         self.body.setTextFormat(QtCore.Qt.TextFormat.RichText)
         if not isinstance(record, dict):
             self.body.setText(escape(str(record)))
             return
         fields = []
         for key, value in record.items():
-            if isinstance(value, (dict, list)) or key in {"hash", "directory", "path"}:
+            if (
+                isinstance(value, (dict, list, tuple))
+                or key.endswith(("_id", "_hash", "_sha256"))
+                or key
+                in {
+                    "id",
+                    "hash",
+                    "directory",
+                    "path",
+                    "owner",
+                    "schema_version",
+                    "analysis_version",
+                    "configuration",
+                    "specification",
+                    "record",
+                }
+            ):
                 continue
             fields.append(
                 f"<tr><td style='padding:4px 16px 4px 0'>{escape(humanize(key))}</td>"
@@ -236,7 +230,11 @@ class DetailsPanel(QtWidgets.QWidget):
         self.body.setText("<table>" + "".join(fields[:24]) + "</table>")
 
     def toPlainText(self) -> str:
-        return self.raw
+        if self.body.textFormat() == QtCore.Qt.TextFormat.PlainText:
+            return self.body.text()
+        document = QtGui.QTextDocument()
+        document.setHtml(self.body.text())
+        return document.toPlainText()
 
     def set_difference(self, record: dict[str, Any]) -> None:
         from html import escape
@@ -255,9 +253,7 @@ class DetailsPanel(QtWidgets.QWidget):
         )
 
     def clear(self) -> None:
-        self.raw = ""
-        self.body.setText("Select an item to see its details")
-        self.technical.clear()
+        self.setPlainText("Select an item to see its details")
 
 
 def stylesheet() -> str:
@@ -273,6 +269,10 @@ def stylesheet() -> str:
     QLabel[kind="title"] {{ color:{c["text.heading"]}; font-size:25px; font-weight:600; }}
     QLabel[kind="section"] {{ color:{c["text.heading"]}; font-size:15px; font-weight:600; }}
     QLabel[kind="metric"] {{ color:{c["text.strong"]}; font-size:25px; font-weight:600; }}
+    QWidget#campaignCounters QLabel[kind="counter"] {{ color:{c["text.heading"]}; font-size:22px; font-weight:600; padding-right:2px; }}
+    QWidget#campaignCounters QLabel[kind="counter"][total="true"] {{ font-size:25px; }}
+    QWidget#campaignCounters QLabel[kind="muted"] {{ font-size:12px; }}
+    QFrame#campaignCounterDivider {{ background:{c["border.subtle"]}; border:0; }}
     QLabel[kind="muted"] {{ color:{c["text.muted"]}; font-size:12px; }}
     QLabel[kind="error"] {{ color:{c["status.error"]}; }}
     QLabel[kind="success"] {{ color:{c["status.success"]}; }}
@@ -282,40 +282,48 @@ def stylesheet() -> str:
     QLabel[tone="warning"] {{ background:{c["status.warning.soft"]}; color:{c["text.heading"]}; border:1px solid {c["status.warning"]}; }}
     QLabel[tone="danger"] {{ background:{c["status.error.soft"]}; color:{c["text.heading"]}; border:1px solid {c["status.error"]}; }}
     QListWidget#navigation {{ background:transparent; border:0; }}
-    QListWidget#navigation::item {{ padding:10px 14px; margin:2px 4px; border-radius:7px; color:{c["text.body"]}; }}
-    QListWidget#navigation::item:hover {{ background:{c["interaction.hover"]}; }}
-    QListWidget#navigation::item:selected {{ background:{c["surface.selected"]}; color:{c["text.heading"]}; font-weight:600; }}
+    QListWidget#navigation::item {{ padding:9px 13px; margin:2px 4px; border:1px solid {c["border.subtle"]}; border-radius:7px; background:{c["surface.raised"]}; color:{c["text.body"]}; }}
+    QListWidget#navigation::item:hover:enabled {{ background:{c["interaction.hover"]}; }}
+    QListWidget#navigation::item:selected {{ background:{c["surface.selected"]}; border-color:{c["text.heading"]}; color:{c["text.heading"]}; font-weight:600; }}
+    QListWidget#navigation::item:selected:hover:enabled {{ background:{c["interaction.selected.hover"]}; }}
+    QListWidget#navigation::item:focus {{ border:2px solid {c["focus.ring"]}; padding:8px 12px; }}
     QPushButton, QToolButton {{ color:{c["text.heading"]}; background:{c["surface.raised"]}; border:1px solid {c["border.control"]}; border-radius:7px; padding:7px 12px; min-height:18px; }}
-    QPushButton:hover, QToolButton:hover {{ background:{c["interaction.hover"]}; }}
-    QPushButton:pressed, QToolButton:pressed {{ background:{c["interaction.pressed"]}; }}
-    QPushButton[role="secondary"] {{ background:{c["action.secondary"]}; border-color:{c["action.secondary"]}; color:{c["surface.base"]}; }}
-    QPushButton[role="secondary"]:hover {{ background:{c["action.secondary.hover"]}; }}
-    QPushButton[role="secondary"]:pressed {{ background:{c["action.secondary.pressed"]}; }}
-    QPushButton[role="primary"] {{ background:{c["action.primary"]}; border-color:{c["action.primary"]}; color:{c["text.on-accent"]}; font-weight:600; }}
-    QPushButton[role="primary"]:hover {{ background:{c["action.primary.hover"]}; }}
-    QPushButton[role="primary"]:pressed {{ background:{c["action.primary.pressed"]}; }}
-    QPushButton[role="selected"] {{ background:{c["surface.selected"]}; color:{c["text.heading"]}; border-color:{c["border.subtle"]}; font-weight:600; }}
-    QPushButton[role="danger"] {{ color:{c["status.error"]}; border-color:{c["status.error"]}; }}
-    QPushButton[role="quiet"], QToolButton {{ background:transparent; border-color:transparent; }}
-    QPushButton[role="quiet"]:hover, QToolButton:hover {{ background:{c["interaction.hover"]}; }}
-    QPushButton[role="quiet"]:pressed, QToolButton:pressed {{ background:{c["interaction.pressed"]}; }}
+    QPushButton:hover:enabled, QToolButton:hover:enabled {{ background:{c["interaction.hover"]}; }}
+    QPushButton:pressed:enabled, QToolButton:pressed:enabled {{ background:{c["interaction.pressed"]}; }}
+    QPushButton[role="secondary"], QToolButton[role="secondary"] {{ background:{c["action.secondary"]}; border-color:{c["action.secondary"]}; color:{c["surface.base"]}; }}
+    QPushButton[role="secondary"]:hover:enabled, QToolButton[role="secondary"]:hover:enabled {{ background:{c["action.secondary.hover"]}; }}
+    QPushButton[role="secondary"]:pressed:enabled, QToolButton[role="secondary"]:pressed:enabled {{ background:{c["action.secondary.pressed"]}; }}
+    QPushButton[role="primary"], QToolButton[role="primary"] {{ background:{c["action.primary"]}; border-color:{c["action.primary"]}; color:{c["text.on-accent"]}; font-weight:600; }}
+    QPushButton[role="primary"]:hover:enabled, QToolButton[role="primary"]:hover:enabled {{ background:{c["action.primary.hover"]}; }}
+    QPushButton[role="primary"]:pressed:enabled, QToolButton[role="primary"]:pressed:enabled {{ background:{c["action.primary.pressed"]}; }}
+    QPushButton[role="selected"], QToolButton[role="selected"], QPushButton:checked, QToolButton:checked {{ background:{c["surface.selected"]}; color:{c["text.heading"]}; border-color:{c["text.heading"]}; font-weight:600; }}
+    QPushButton[role="selected"]:hover:enabled, QToolButton[role="selected"]:hover:enabled, QPushButton:checked:hover:enabled, QToolButton:checked:hover:enabled {{ background:{c["interaction.selected.hover"]}; }}
+    QPushButton[role="selected"]:pressed:enabled, QToolButton[role="selected"]:pressed:enabled, QPushButton:checked:pressed:enabled, QToolButton:checked:pressed:enabled {{ background:{c["interaction.selected.pressed"]}; }}
+    QPushButton[role="danger"], QToolButton[role="danger"] {{ color:{c["status.error"]}; border-color:{c["status.error"]}; }}
     QPushButton:focus, QToolButton:focus {{ border:2px solid {c["focus.ring"]}; padding:6px 11px; }}
-    QPushButton:disabled, QPushButton[role]:disabled, QToolButton:disabled {{ color:{c["text.disabled"]}; background:{c["surface.disabled"]}; border-color:{c["border.disabled"]}; }}
+    QPushButton[role="secondary"]:focus, QToolButton[role="secondary"]:focus {{ border-color:{c["accent.default"]}; }}
+    QPushButton:disabled, QPushButton[role]:disabled, QPushButton:checked:disabled, QToolButton:disabled, QToolButton[role]:disabled, QToolButton:checked:disabled {{ color:{c["text.disabled"]}; background:{c["surface.disabled"]}; border-color:{c["border.disabled"]}; }}
     QToolButton[tableAction="true"], QToolButton[tableAction="true"]:focus {{ padding:0; min-height:0; }}
-    QToolButton[tableAction="true"]:disabled {{ background:transparent; border-color:transparent; }}
+    QToolButton[tableAction="true"]::menu-indicator {{ image:none; }}
     QLineEdit, QPlainTextEdit, QTextEdit, QComboBox, QAbstractSpinBox {{ background:{c["surface.raised"]}; color:{c["text.body"]}; border:1px solid {c["border.control"]}; border-radius:7px; padding:7px 9px; selection-background-color:{c["surface.selected"]}; selection-color:{c["text.heading"]}; }}
     QLineEdit:focus, QPlainTextEdit:focus, QTextEdit:focus, QComboBox:focus, QAbstractSpinBox:focus {{ border:2px solid {c["focus.ring"]}; padding:6px 8px; }}
     QLineEdit:disabled, QPlainTextEdit:disabled, QTextEdit:disabled, QComboBox:disabled, QAbstractSpinBox:disabled {{ color:{c["text.disabled"]}; background:{c["surface.disabled"]}; border-color:{c["border.disabled"]}; }}
     QComboBox::drop-down {{ border:0; width:24px; }}
     QComboBox::down-arrow {{ image:url({assets / "chevron-down.svg"}); width:12px; height:12px; }}
     QAbstractSpinBox::up-button, QAbstractSpinBox::down-button {{ border:0; width:22px; background:transparent; }}
+    QAbstractSpinBox::up-button:hover:enabled, QAbstractSpinBox::down-button:hover:enabled {{ background:{c["interaction.hover"]}; }}
+    QAbstractSpinBox::up-button:pressed:enabled, QAbstractSpinBox::down-button:pressed:enabled {{ background:{c["interaction.pressed"]}; }}
     QAbstractSpinBox::up-arrow {{ image:url({assets / "chevron-up.svg"}); width:10px; height:10px; }}
     QAbstractSpinBox::down-arrow {{ image:url({assets / "chevron-down.svg"}); width:10px; height:10px; }}
     QComboBox QAbstractItemView {{ background:{c["surface.raised"]}; selection-background-color:{c["surface.selected"]}; selection-color:{c["text.heading"]}; }}
     QCheckBox, QRadioButton {{ spacing:8px; }}
     QCheckBox::indicator, QRadioButton::indicator {{ width:16px; height:16px; border:1px solid {c["border.control"]}; border-radius:4px; background:{c["surface.raised"]}; }}
     QRadioButton::indicator {{ border-radius:8px; }}
+    QCheckBox::indicator:hover:enabled, QRadioButton::indicator:hover:enabled {{ background:{c["interaction.hover"]}; }}
+    QCheckBox::indicator:pressed:enabled, QRadioButton::indicator:pressed:enabled {{ background:{c["interaction.pressed"]}; }}
     QCheckBox::indicator:checked, QRadioButton::indicator:checked {{ background:{c["action.primary"]}; border-color:{c["action.primary"]}; image:url({assets / "check.svg"}); }}
+    QCheckBox::indicator:checked:hover:enabled, QRadioButton::indicator:checked:hover:enabled {{ background:{c["action.primary.hover"]}; }}
+    QCheckBox::indicator:checked:pressed:enabled, QRadioButton::indicator:checked:pressed:enabled {{ background:{c["action.primary.pressed"]}; }}
     QCheckBox::indicator:focus, QRadioButton::indicator:focus {{ border:2px solid {c["focus.ring"]}; width:14px; height:14px; }}
     QCheckBox:disabled, QRadioButton:disabled {{ color:{c["text.disabled"]}; }}
     QCheckBox::indicator:disabled, QRadioButton::indicator:disabled {{ background:{c["surface.disabled"]}; border-color:{c["border.disabled"]}; }}
@@ -335,10 +343,12 @@ def stylesheet() -> str:
     QScrollBar::add-line, QScrollBar::sub-line {{ height:0; width:0; }}
     QScrollBar::add-page, QScrollBar::sub-page {{ background:transparent; }}
     QTabWidget::pane {{ border:0; background:transparent; }}
-    QTabBar::tab {{ color:{c["text.body"]}; background:transparent; padding:10px 16px; border-bottom:2px solid transparent; }}
-    QTabBar::tab:selected {{ color:{c["text.heading"]}; border-bottom-color:{c["accent.default"]}; font-weight:600; }}
-    QTabBar::tab:hover {{ background:{c["interaction.hover"]}; }}
+    QTabBar::tab {{ color:{c["text.body"]}; background:{c["surface.raised"]}; padding:9px 15px; margin:0 6px 4px 0; border:1px solid {c["border.control"]}; border-radius:7px; }}
+    QTabBar::tab:selected {{ color:{c["text.heading"]}; background:{c["surface.selected"]}; border-color:{c["text.heading"]}; font-weight:600; }}
+    QTabBar::tab:hover:enabled {{ background:{c["interaction.hover"]}; }}
+    QTabBar::tab:selected:hover:enabled {{ background:{c["interaction.selected.hover"]}; }}
     QTabBar::tab:focus {{ border:2px solid {c["focus.ring"]}; padding:8px 14px; }}
+    QTabBar::tab:disabled {{ color:{c["text.disabled"]}; background:{c["surface.disabled"]}; border-color:{c["border.disabled"]}; }}
     QProgressBar {{ border:0; border-radius:4px; background:{c["surface.sunken"]}; min-height:6px; max-height:6px; }}
     QProgressBar::chunk {{ background:{c["accent.default"]}; border-radius:4px; }}
     QSplitter::handle {{ background:transparent; width:8px; height:8px; }}
@@ -352,13 +362,13 @@ def stylesheet() -> str:
     QFrame[worker="true"] QLabel[kind="section"] {{ font-size:13px; }}
     QFrame[worker="true"][selected="true"] {{ border:1px solid {c["accent.default"]}; background:{c["surface.selected"]}; }}
     QFrame[worker="true"]:focus {{ border:2px solid {c["focus.ring"]}; }}
-    QFrame[robotCard="true"] {{ background:{c["surface.raised"]}; border:1px solid {c["border.subtle"]}; border-radius:12px; }}
-    QFrame[robotCard="true"]:hover {{ border-color:{c["border.control"]}; }}
-    QFrame[robotCard="true"][selected="true"] {{ background:{c["surface.selected"]}; border-color:{c["text.heading"]}; }}
-    QFrame[robotCard="true"][focused="true"] {{ border:2px solid {c["focus.ring"]}; }}
+    QFrame[robotCard="true"], QFrame[worldCard="true"] {{ background:{c["surface.raised"]}; border:1px solid {c["border.subtle"]}; border-radius:12px; }}
+    QFrame[robotCard="true"]:hover, QFrame[worldCard="true"]:hover {{ border-color:{c["border.control"]}; }}
+    QFrame[robotCard="true"][selected="true"], QFrame[worldCard="true"][selected="true"] {{ background:{c["surface.selected"]}; border-color:{c["text.heading"]}; }}
+    QFrame[robotCard="true"][focused="true"], QFrame[worldCard="true"][focused="true"] {{ border:2px solid {c["focus.ring"]}; }}
     QFrame[robotCard="true"] QLabel[kind="section"] {{ font-size:14px; }}
     QFrame[robotCard="true"] QCheckBox::indicator:focus {{ border:1px solid {c["border.control"]}; width:16px; height:16px; }}
-    QFrame#robotProfilesPopup {{ background:{c["surface.raised"]}; border:1px solid {c["border.control"]}; border-radius:10px; }}
+    QFrame#robotProfilesPopup, QFrame#worldSpawnsPopup {{ background:{c["surface.raised"]}; border:1px solid {c["border.control"]}; border-radius:10px; }}
     QFrame[robotProfileRow="true"] {{ border:0; border-radius:6px; background:transparent; }}
     QFrame[robotProfileRow="true"][selected="true"] {{ background:{c["surface.selected"]}; }}
     """

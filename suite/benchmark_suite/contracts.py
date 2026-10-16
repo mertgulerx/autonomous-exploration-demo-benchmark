@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from dataclasses import dataclass
+from collections.abc import Iterable
 from enum import StrEnum
 import hashlib
 import json
@@ -96,6 +97,29 @@ def integer(value: Any, field: str, minimum: int, maximum: int) -> int:
     return value
 
 
+def resolve_world_time_limits(
+    value: Mapping[str, Any], worlds: Iterable[str]
+) -> tuple[tuple[str, float], ...]:
+    identities = set(worlds)
+    if "world_time_limits" not in value:
+        limit = number(value.get("time_limit", DEFAULT_LIMIT), "time_limit", minimum=0)
+        return tuple((world, limit) for world in sorted(identities))
+    if "time_limit" in value:
+        raise ContractError("world_time_limits", "Use per-world limits without a global time_limit")
+    limits = mapping(value["world_time_limits"], "world_time_limits")
+    unknown, missing = set(limits) - identities, identities - set(limits)
+    if unknown:
+        raise ContractError(
+            "world_time_limits", "Worlds are not selected: " + ", ".join(sorted(unknown))
+        )
+    if missing:
+        raise ContractError("world_time_limits", "Set a limit for: " + ", ".join(sorted(missing)))
+    return tuple(
+        (world, number(limits[world], "world_time_limits." + world, minimum=0))
+        for world in sorted(identities)
+    )
+
+
 @dataclass(frozen=True, slots=True)
 class Profile:
     id: str
@@ -149,7 +173,7 @@ class CampaignSpec:
     worlds: tuple[tuple[str, tuple[Spawn, ...]], ...]
     repetitions: int
     concurrency: int
-    limit: float
+    world_time_limits: tuple[tuple[str, float], ...]
     exclusions: tuple[tuple[str, str, str], ...]
     source_campaign_id: str | None = None
 
@@ -165,6 +189,7 @@ class CampaignSpec:
                 "repetitions",
                 "concurrency",
                 "time_limit",
+                "world_time_limits",
                 "exclusions",
                 "source_campaign_id",
             },
@@ -215,7 +240,7 @@ class CampaignSpec:
             tuple(sorted(worlds)),
             integer(value.get("repetitions", 1), "repetitions", 1, 2**31 - 1),
             integer(value.get("concurrency", 1), "concurrency", 1, 4),
-            number(value.get("time_limit", DEFAULT_LIMIT), "time_limit", minimum=0),
+            resolve_world_time_limits(value, (world for world, _ in worlds)),
             tuple(sorted(excluded)),
             text(value["source_campaign_id"], "source_campaign_id")
             if value.get("source_campaign_id") is not None
@@ -244,7 +269,7 @@ class CampaignSpec:
             "worlds": {w: [s.dictionary() for s in ss] for w, ss in self.worlds},
             "repetitions": self.repetitions,
             "concurrency": self.concurrency,
-            "time_limit": self.limit,
+            "world_time_limits": dict(self.world_time_limits),
             "exclusions": [list(e) for e in self.exclusions],
             **({"source_campaign_id": self.source_campaign_id} if self.source_campaign_id else {}),
         }

@@ -12,15 +12,14 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import json
 from pathlib import Path
 from typing import Any
 import uuid
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from .gui_support import PagedTable, TableModel, Transport, button
-from .gui_style import DetailsPanel, label
+from .gui_support import PagedTable, Transport, button
+from .gui_style import DetailsPanel, duration, label
 
 
 class ReportBrowser(QtWidgets.QWidget):
@@ -30,8 +29,6 @@ class ReportBrowser(QtWidgets.QWidget):
         self.campaign_id: str | None = None
         self.report_id: str | None = None
         self.artifact: dict[str, Any] | None = None
-        self.offset, self.total = 0, 0
-        self.request_tag = ""
         self.preview_tag = ""
         self.generation_tag = ""
         layout = QtWidgets.QVBoxLayout(self)
@@ -62,26 +59,23 @@ class ReportBrowser(QtWidgets.QWidget):
         layout.addWidget(self.reports, 1)
         split = QtWidgets.QSplitter()
         split.setObjectName("reports-split")
-        self.artifacts = QtWidgets.QTableView()
-        self.model = TableModel(
-            [("kind", "Artifact"), ("attempt_id", "Attempt"), ("bytes", "Bytes"), ("path", "File")]
+        self.artifact_table = PagedTable(
+            transport,
+            "report-artifacts",
+            "artifacts",
+            [("kind", "Artifact"), ("bytes", "Size"), ("path", "File")],
+            method="reports.get",
+            result_key="artifacts",
         )
-        self.artifacts.setModel(self.model)
-        self.artifacts.verticalHeader().hide()
-        self.artifacts.setShowGrid(False)
-        self.artifacts.verticalHeader().setDefaultSectionSize(40)
-        self.artifacts.setSelectionBehavior(
-            QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows
-        )
-        self.artifacts.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
-        self.artifacts.horizontalHeader().setStretchLastSection(True)
-        for column, width in enumerate((150, 85, 85)):
+        self.artifact_table.setEnabled(False)
+        self.artifact_table.sync_timer.stop()
+        self.artifacts, self.model = self.artifact_table.view, self.artifact_table.model
+        for column, width in enumerate((150, 85)):
             self.artifacts.setColumnWidth(column, width)
-        self.artifacts.selectionModel().currentRowChanged.connect(
-            lambda current, previous: self.select_artifact(current)
-        )
+        self.artifact_table.selected.connect(self.select_artifact)
+        self.artifact_table.loaded.connect(self.show_report)
         self.artifacts.doubleClicked.connect(lambda _: self.open_artifact())
-        split.addWidget(self.artifacts)
+        split.addWidget(self.artifact_table)
         panel = QtWidgets.QWidget()
         pane = QtWidgets.QVBoxLayout(panel)
         self.preview = QtWidgets.QLabel("Select a PNG preview or open a PDF")
@@ -96,12 +90,9 @@ class ReportBrowser(QtWidgets.QWidget):
         split.addWidget(panel)
         layout.addWidget(split, 2)
         controls = QtWidgets.QHBoxLayout()
-        button("Previous artifacts", lambda: self.page(-100), controls)
-        button("Next artifacts", lambda: self.page(100), controls)
         button("Open selected file", self.open_artifact, controls)
         button("Generate reports", self.generate, controls, role="primary")
-        self.count = QtWidgets.QLabel()
-        controls.addWidget(self.count, 1)
+        controls.addStretch()
         layout.addLayout(controls)
         transport.received.connect(self.received)
         transport.failed.connect(self.failed)
@@ -111,13 +102,14 @@ class ReportBrowser(QtWidgets.QWidget):
             return
         self.campaign_id = identity
         self.report_id = self.artifact = None
-        self.request_tag = self.preview_tag = self.generation_tag = ""
-        self.offset = self.total = 0
+        self.preview_tag = self.generation_tag = ""
+        self.artifact_table.setEnabled(False)
+        self.artifact_table.sync_timer.stop()
+        self.artifact_table.filters = {}
         self.model.replace([])
         self.artifacts.clearSelection()
         self.preview.clear()
         self.detail.clear()
-        self.count.clear()
         self.reports.filters = {"campaign_id": identity}
         self.reports.model.replace([])
         self.reports.view.clearSelection()
@@ -127,33 +119,20 @@ class ReportBrowser(QtWidgets.QWidget):
         expected = self.reports.filters.get("campaign_id")
         if expected and row["campaign_id"] != expected:
             return
-        self.report_id, self.offset, self.total = row["id"], 0, 0
+        if self.report_id == row["id"]:
+            return
+        self.report_id = row["id"]
         self.campaign_id = row["campaign_id"]
         self.artifact = None
         self.preview_tag = ""
         self.preview.clear()
-        self.model.replace([])
-        self.load()
+        self.artifact_table.setEnabled(True)
+        self.artifact_table.filters = {"report_id": self.report_id}
+        self.artifact_table.reset_page()
+        self.artifact_table.sync_timer.start()
 
-    def page(self, delta: int) -> None:
-        candidate = max(0, self.offset + delta)
-        if candidate < self.total or candidate == 0:
-            self.offset = candidate
-            self.load()
-
-    def load(self) -> None:
-        if self.report_id:
-            self.request_tag = "report-detail-" + uuid.uuid4().hex
-            self.transport.submit(
-                self.request_tag,
-                "reports.get",
-                {"report_id": self.report_id, "offset": self.offset, "limit": 100},
-            )
-
-    def select_artifact(self, index: QtCore.QModelIndex) -> None:
-        if not index.isValid() or index.row() >= len(self.model.rows):
-            return
-        self.artifact = self.model.rows[index.row()]
+    def select_artifact(self, row: dict[str, Any]) -> None:
+        self.artifact = row
         self.preview_tag = ""
         self.preview.clear()
         if Path(self.artifact["path"]).suffix == ".png":
@@ -173,19 +152,22 @@ class ReportBrowser(QtWidgets.QWidget):
                 self.generation_tag, "reports.generate", {"campaign_id": self.campaign_id}
             )
 
+    def show_report(self, result: dict[str, Any]) -> None:
+        report, manifest = result["report"], result.get("manifest") or {}
+        self.detail.set_record(
+            {
+                "state": report.get("state"),
+                "created_ns": report.get("created_ns"),
+                "finished_ns": report.get("finished_ns"),
+                "recorded_runs": manifest.get("selection", {}).get("retained_attempts"),
+                "files": result["total"],
+                "generation_time": duration(manifest.get("elapsed_wall_seconds")),
+                **({"message": report["detail"]} if report.get("detail") else {}),
+            }
+        )
+
     def received(self, tag: str, result: Any) -> None:
-        if tag == self.request_tag:
-            self.total = result["total"]
-            self.artifact = None
-            self.preview_tag = ""
-            self.model.replace(result["artifacts"])
-            self.count.setText(
-                f"{self.offset + 1 if self.total else 0}–{min(self.offset + 100, self.total)} of {self.total} artifacts"
-            )
-            self.detail.setPlainText(
-                json.dumps(result["manifest"] or result["report"], ensure_ascii=False, indent=2)
-            )
-        elif tag == self.preview_tag:
+        if tag == self.preview_tag:
             image = QtGui.QPixmap.fromImage(QtGui.QImage.fromData(result["image"]))
             if image.isNull():
                 self.preview.setText("Preview could not be decoded")
@@ -198,9 +180,9 @@ class ReportBrowser(QtWidgets.QWidget):
                     )
                 )
         elif tag == self.generation_tag:
-            self.detail.setPlainText("Report queued: " + result["report_id"])
+            self.detail.setPlainText("Report queued")
             self.reports.refresh()
 
     def failed(self, tag: str, message: str) -> None:
-        if tag in (self.request_tag, self.preview_tag, self.generation_tag):
+        if tag in (self.preview_tag, self.generation_tag):
             self.detail.setPlainText(message)

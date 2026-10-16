@@ -18,10 +18,11 @@ import json
 import threading
 import time
 import unittest
+from unittest.mock import patch
 import uuid
 
 from benchmark_suite.backends import SyntheticBackend
-from benchmark_suite.contracts import CampaignSpec
+from benchmark_suite.contracts import CampaignSpec, ContractError
 from benchmark_suite.engine import Engine
 from benchmark_suite.protocol import Client, MAX_MESSAGE, encode_response
 from benchmark_suite.timing import TimingPolicy
@@ -56,6 +57,43 @@ def call(engine, method, params=None, request_id=None):
 
 
 class EngineTests(unittest.TestCase):
+    def test_gpu_failure_preserves_queued_experiments_without_failed_attempts(self):
+        cid = call(self.engine, "campaign.submit", {"specification": campaign(8)})["campaign_id"]
+        error = ContractError("runtime", "GPU unavailable", "graphics_unavailable")
+        with patch.object(self.engine.backend, "preflight", side_effect=error):
+            with self.assertRaises(AssertionError):
+                call(self.engine, "campaign.start", {"campaign_id": cid})
+        self.assertEqual(self.engine.store.campaign(cid)["state"], "QUEUED")
+        self.assertIsNone(self.engine.current)
+        call(self.engine, "campaign.start", {"campaign_id": cid})
+        with patch.object(self.engine.backend, "preflight", side_effect=error):
+            self.engine.tick()
+            self.engine.tick()
+        self.assertEqual(self.engine.store.campaign(cid)["state"], "BLOCKED")
+        self.assertEqual(self.engine.store.rows("SELECT * FROM attempts"), [])
+        self.assertFalse(self.engine.queue_enabled)
+        pending = self.engine.store.rows("SELECT * FROM experiments WHERE state='PENDING'")
+        self.assertEqual(len(pending), 8)
+        call(self.engine, "campaign.resume", {"campaign_id": cid})
+        self.engine.tick()
+        self.assertEqual(len(self.engine.active), 2)
+
+    def test_dispatch_gpu_failure_leaves_existing_worker_running(self):
+        cid = call(self.engine, "campaign.submit", {"specification": campaign(8)})["campaign_id"]
+        call(self.engine, "campaign.start", {"campaign_id": cid})
+        error = ContractError("runtime", "GPU unavailable", "graphics_unavailable")
+        with patch.object(self.engine.backend, "preflight", side_effect=[None, error]):
+            self.engine.tick()
+        self.assertEqual(self.engine.store.campaign(cid)["state"], "BLOCKED")
+        self.assertEqual(len(self.engine.active), 1)
+        worker = next(iter(self.engine.active.values()))
+        self.assertIsNone(worker.stop_reason)
+        for _ in range(10):
+            self.engine.tick()
+        self.assertFalse(self.engine.active)
+        attempts = self.engine.store.rows("SELECT outcome FROM attempts")
+        self.assertEqual(attempts, [{"outcome": "completed"}])
+
     def test_attempt_cursor_does_not_repeat_rows_when_new_attempts_arrive(self):
         cid = call(self.engine, "campaign.submit", {"specification": campaign(8)})["campaign_id"]
         call(self.engine, "campaign.start", {"campaign_id": cid})
@@ -277,6 +315,58 @@ class EngineTests(unittest.TestCase):
         self.assertEqual(second["number"], 2)
         self.drain()
         self.assertEqual(self.engine.store.counters(identity)["attempts"]["discards"], 1)
+
+    def test_campaign_stop_discards_all_active_attempts_and_preserves_completed_results(self):
+        identity = self.start(count=6, concurrency=2)
+        while self.engine.store.counters(identity)["states"].get("DONE", 0) < 2:
+            self.engine.tick()
+        completed = self.engine.store.rows("SELECT id FROM attempts WHERE outcome='completed'")
+        self.assertEqual(len(self.engine.active), 2)
+        call(self.engine, "campaign.stop", {"campaign_id": identity})
+        for _ in range(10):
+            self.engine.tick()
+        self.assertFalse(self.engine.active)
+        self.assertIsNone(self.engine.current)
+        self.assertEqual(self.engine.store.campaign(identity)["state"], "STOPPED")
+        self.assertEqual(self.engine.store.counters(identity)["states"], {"DONE": 2, "NOT_DONE": 4})
+        for row in completed:
+            self.assertEqual(self.engine.store.attempt(row["id"])["outcome"], "completed")
+
+    def test_campaign_restart_is_fresh_immutable_and_idempotent(self):
+        identity = self.start(count=4, concurrency=2)
+        while self.engine.store.counters(identity)["states"].get("DONE", 0) < 2:
+            self.engine.tick()
+        original = self.engine.store.campaign(identity)["specification"]
+        request = str(uuid.uuid4())
+        response = call(self.engine, "campaign.restart", {"campaign_id": identity}, request)
+        self.assertEqual(call(self.engine, "campaign.restart", {"campaign_id": identity}, request), response)
+        replacement = response["campaign_id"]
+        self.assertNotEqual(replacement, identity)
+        self.assertEqual(self.engine.store.query("campaigns", {})["total"], 2)
+        self.assertEqual(self.engine.current, identity)
+        for _ in range(50):
+            self.engine.tick()
+            self.assertLessEqual(len(self.engine.active), 2)
+        self.assertEqual(self.engine.store.campaign(identity)["specification"], original)
+        self.assertEqual(self.engine.store.counters(identity)["states"], {"DONE": 2, "NOT_DONE": 2})
+        self.assertEqual(self.engine.store.counters(replacement)["states"], {"DONE": 4})
+        accepted = json.loads(self.engine.store.campaign(replacement)["specification"])
+        self.assertEqual(accepted.pop("source_campaign_id"), identity)
+        self.assertEqual(accepted, json.loads(original))
+
+    def test_campaign_restart_recovery_finishes_stop_and_waits_for_resume(self):
+        identity = self.start(count=4, concurrency=2)
+        response = call(self.engine, "campaign.restart", {"campaign_id": identity})
+        replacement = response["campaign_id"]
+        self.engine.store.close()
+        self.engine = Engine(Path(self.directory.name), SyntheticBackend())
+        self.assertEqual(self.engine.store.campaign(identity)["state"], "STOPPED")
+        self.assertEqual(self.engine.store.campaign(replacement)["state"], "RECOVERY_REQUIRED")
+        self.engine.tick()
+        self.assertFalse(self.engine.active)
+        call(self.engine, "campaign.resume", {"campaign_id": replacement})
+        self.drain()
+        self.assertEqual(self.engine.store.counters(replacement)["states"], {"DONE": 4})
 
     def test_discard_intent_survives_interrupted_cleanup(self):
         identity = self.start(count=1, concurrency=1)

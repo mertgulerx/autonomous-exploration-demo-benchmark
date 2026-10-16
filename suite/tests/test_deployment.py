@@ -19,10 +19,30 @@ import unittest
 from unittest.mock import patch
 
 from benchmark_suite.contracts import ContractError
-from benchmark_suite.deployment import docker
+from benchmark_suite.deployment import docker, gpu_arguments
 
 
 class DeploymentTests(unittest.TestCase):
+    def test_nvidia_cdi_devices_are_requested_without_legacy_hook(self):
+        info = {"Runtimes": {"nvidia": {}}, "CDISpecDirs": ["/var/run/cdi"]}
+        discovery = subprocess.CompletedProcess([], 0, "nvidia.com/gpu=all\n", "")
+        with (
+            patch("benchmark_suite.deployment.shutil.which", return_value="/usr/bin/tool"),
+            patch("benchmark_suite.deployment.subprocess.run", return_value=discovery),
+        ):
+            mode, args = gpu_arguments(info)
+        self.assertEqual(mode, "cdi")
+        self.assertIn("nvidia.com/gpu=all", args)
+        self.assertNotIn("--gpus", args)
+
+    def test_legacy_nvidia_access_explicitly_requests_device_nodes(self):
+        with patch("benchmark_suite.deployment.shutil.which", return_value="/usr/bin/tool"):
+            mode, args = gpu_arguments({"Runtimes": {"nvidia": {}}})
+        self.assertEqual(mode, "explicit")
+        self.assertIn("--runtime", args)
+        self.assertIn("--gpus", args)
+        self.assertEqual(gpu_arguments({"Runtimes": {}}), ("none", []))
+
     def stalled_command(self, **options):
         launch = subprocess.Popen
         processes = []

@@ -207,6 +207,30 @@ def build_image(root: Path, image: str, *, cancelled: Callable[[], bool] | None 
     )
 
 
+def gpu_arguments(info: dict[str, Any]) -> tuple[str, list[str]]:
+    if "nvidia" not in info.get("Runtimes", {}) or not shutil.which("nvidia-smi"):
+        return "none", []
+    if info.get("CDISpecDirs") and shutil.which("nvidia-ctk"):
+        try:
+            devices = subprocess.run(
+                ["nvidia-ctk", "cdi", "list"], capture_output=True, text=True, timeout=10
+            )
+        except subprocess.TimeoutExpired as exc:
+            raise ContractError("runtime", "NVIDIA device discovery timed out") from exc
+        if devices.returncode == 0 and "nvidia.com/gpu=all" in devices.stdout.splitlines():
+            return "cdi", [
+                "--device",
+                "nvidia.com/gpu=all",
+                "--env",
+                "NVIDIA_DRIVER_CAPABILITIES=all",
+            ]
+    args = ["--runtime", "nvidia", "--gpus", "all", "--env", "NVIDIA_DRIVER_CAPABILITIES=all"]
+    for path in sorted(Path("/dev").glob("nvidia*")):
+        if path.is_char_device() or path.name == "nvidia-caps" and path.is_dir():
+            args.extend(("--device", str(path)))
+    return "explicit", args
+
+
 def ensure_engine(
     root: Path,
     workspace: Path,
@@ -239,6 +263,7 @@ def ensure_engine(
     os.chmod(socket.parent, 0o700)
     name = f"benchmark-suite-{os.getuid()}-{workspace_key(workspace)}"
     network_name = name + "-network"
+    gpu_mode, gpu_args = gpu_arguments(json.loads(command("info", "--format", "{{json .}}")))
     running = lookup("container", name)
     if running:
         labels = running["Config"].get("Labels") or {}
@@ -271,11 +296,12 @@ def ensure_engine(
         running["Image"] != installed["Id"]
         or running["HostConfig"]["NetworkMode"] != network_name
         or accepted_diagnostics != current_diagnostics
+        or (running["Config"].get("Labels") or {}).get("org.benchmark.suite.gpu-mode") != gpu_mode
     ):
         if running["State"]["Running"]:
             raise ContractError(
                 "runtime",
-                "Stop this workspace's engine explicitly before replacing its image, network or diagnostic settings",
+                "Stop this workspace's engine explicitly before replacing its image, network, GPU access or diagnostic settings",
             )
         command("rm", name)
         running = None
@@ -328,6 +354,8 @@ def ensure_engine(
             "org.benchmark.suite.root=" + str(root),
             "--label",
             "org.benchmark.suite.diagnostics=" + ("1" if accepted_diagnostics else "0"),
+            "--label",
+            "org.benchmark.suite.gpu-mode=" + gpu_mode,
             "--mount",
             bind_mount(root, readonly=True),
             "--mount",
@@ -344,9 +372,7 @@ def ensure_engine(
             args.extend(("--device", str(devices)))
             for group in sorted({path.stat().st_gid for path in devices.iterdir()}):
                 args.extend(("--group-add", str(group)))
-        info = json.loads(command("info", "--format", "{{json .Runtimes}}"))
-        if "nvidia" in info and shutil.which("nvidia-smi"):
-            args.extend(("--gpus", "all", "--env", "NVIDIA_DRIVER_CAPABILITIES=all"))
+        args.extend(gpu_args)
         args.extend(
             (
                 image,

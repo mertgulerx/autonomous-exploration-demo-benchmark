@@ -14,26 +14,18 @@
 
 from copy import deepcopy
 from functools import lru_cache
-import hashlib
-import json
 from pathlib import Path
 from typing import Any
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from .gui_profile_preview import ProfilePreview, profile_key as _key
+from .gui_support import Transport
+
 
 @lru_cache(maxsize=32)
 def _thumbnail(path: str) -> QtGui.QPixmap:
     return QtGui.QPixmap(path)
-
-
-def _key(robot_id: str, reference: Any) -> str:
-    if isinstance(reference, dict):
-        serialized = json.dumps(reference, sort_keys=True, ensure_ascii=False, default=str)
-        return "snapshot:" + hashlib.sha256(serialized.encode()).hexdigest()
-    if reference in ("Default", "default", "default-" + robot_id):
-        return "default"
-    return "profile:" + str(reference)
 
 
 def _label(robot_id: str, reference: Any) -> str:
@@ -92,6 +84,7 @@ class _SelectableToggleLabel(QtWidgets.QLabel):
 class _ProfileRow(QtWidgets.QFrame):
     toggled = QtCore.Signal(object, bool)
     edit = QtCore.Signal(object)
+    inspect_requested = QtCore.Signal(object, str)
 
     def __init__(
         self,
@@ -103,6 +96,7 @@ class _ProfileRow(QtWidgets.QFrame):
     ):
         super().__init__()
         self.reference = deepcopy(reference)
+        self.name = name
         self.setProperty("robotProfileRow", True)
         self.setProperty("searchText", (name + " " + detail).casefold())
         self.setProperty("selected", checked)
@@ -128,13 +122,23 @@ class _ProfileRow(QtWidgets.QFrame):
             _selectable_label(subtitle)
         _selectable_label(title)
         layout.addLayout(text, 1)
-        self.edit_button = QtWidgets.QToolButton()
-        self.edit_button.setText("Edit")
-        self.edit_button.setProperty("role", "quiet")
+        self.edit_button = QtWidgets.QPushButton("Edit")
+        self.edit_button.setProperty("role", "outlined")
         self.edit_button.setAccessibleName("Edit profile " + name)
         layout.addWidget(self.edit_button)
         self.check.toggled.connect(lambda checked: self.toggled.emit(self.reference, checked))
         self.edit_button.clicked.connect(lambda: self.edit.emit(self.reference))
+        self.check.installEventFilter(self)
+        self.edit_button.installEventFilter(self)
+
+    def enterEvent(self, event: QtGui.QEnterEvent) -> None:
+        self.inspect_requested.emit(self.reference, self.name)
+        super().enterEvent(event)
+
+    def eventFilter(self, watched: QtCore.QObject, event: QtCore.QEvent) -> bool:
+        if event.type() == QtCore.QEvent.Type.FocusIn:
+            self.inspect_requested.emit(self.reference, self.name)
+        return bool(super().eventFilter(watched, event))
 
 
 class _ProfilePopup(QtWidgets.QFrame):
@@ -149,17 +153,20 @@ class _ProfilePopup(QtWidgets.QFrame):
         options: list[tuple[Any, str, str]],
         selected: list[Any],
         has_more: bool,
+        *,
+        robot: dict[str, Any] | None = None,
+        metadata: dict[str, Any] | None = None,
+        transport: Transport | None = None,
     ):
         super().__init__(parent, QtCore.Qt.WindowType.Popup)
         self.robot_id = robot_id
         self._options = options
-        self._selected = deepcopy(selected)
+        self._selected = deepcopy(selected) or ["Default"]
         self._rows: list[_ProfileRow] = []
         self.setObjectName("robotProfilesPopup")
         self.setProperty("robotProfilesPopup", True)
-        self.setMinimumWidth(350)
-        self.setMaximumWidth(420)
-        self.setMaximumHeight(460)
+        self.setMinimumSize(760, 440)
+        self.setMaximumSize(900, 560)
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(12, 12, 12, 12)
         layout.setSpacing(8)
@@ -177,7 +184,18 @@ class _ProfilePopup(QtWidgets.QFrame):
         self.list_layout.setContentsMargins(0, 0, 0, 0)
         self.list_layout.setSpacing(2)
         self._scroll_area.setWidget(self.list_content)
-        layout.addWidget(self._scroll_area, 1)
+        self._scroll_area.setMinimumWidth(280)
+        self._scroll_area.setMaximumWidth(330)
+        body = QtWidgets.QHBoxLayout()
+        body.setSpacing(16)
+        body.addWidget(self._scroll_area, 2)
+        self.preview = ProfilePreview(
+            robot or {"id": robot_id, "label": robot_label, "defaults": {}},
+            metadata or {},
+            transport,
+        )
+        body.addWidget(self.preview, 3)
+        layout.addLayout(body, 1)
         self.more = QtWidgets.QLabel(
             "First 250 revisions shown. Use Profiles to find older revisions."
         )
@@ -201,7 +219,7 @@ class _ProfilePopup(QtWidgets.QFrame):
 
     def refresh(self, options: list[tuple[Any, str, str]], selected: list[Any]) -> None:
         self._options = deepcopy(options)
-        self._selected = deepcopy(selected)
+        self._selected = deepcopy(selected) or ["Default"]
         self._populate()
 
     def _populate(self) -> None:
@@ -222,35 +240,60 @@ class _ProfilePopup(QtWidgets.QFrame):
             )
             row.toggled.connect(self._toggle)
             row.edit.connect(self._edit)
+            row.inspect_requested.connect(self.preview.inspect)
             self.list_layout.addWidget(row)
             self._rows.append(row)
         self.empty = QtWidgets.QLabel("No matching profiles")
         self.empty.setProperty("kind", "muted")
         self.list_layout.addWidget(self.empty)
         self.list_layout.addStretch()
-        self._refresh_count()
+        self._sync_selection()
+        if not any(self.preview.matches(ref) for ref, _, _ in self._options):
+            for row in self._rows:
+                if _key(self.robot_id, row.reference) in selected_keys:
+                    self.preview.inspect(row.reference, row.name)
+                    break
         self.filter_rows(self.search.text())
 
     def _toggle(self, reference: Any, checked: bool) -> None:
+        for row in self._rows:
+            if _key(self.robot_id, row.reference) == _key(self.robot_id, reference):
+                self.preview.inspect(row.reference, row.name)
+                break
         identity = _key(self.robot_id, reference)
         matches = [ref for ref in self._selected if _key(self.robot_id, ref) == identity]
         if checked and not matches:
             self._selected.append(deepcopy(reference))
         elif not checked and matches:
-            self._selected = [ref for ref in self._selected if _key(self.robot_id, ref) != identity]
-        selected_keys = {_key(self.robot_id, ref) for ref in self._selected}
-        for row in self._rows:
-            row.setProperty("selected", _key(self.robot_id, row.reference) in selected_keys)
-            row.style().unpolish(row)
-            row.style().polish(row)
-        self._refresh_count()
+            remaining = [ref for ref in self._selected if _key(self.robot_id, ref) != identity]
+            if not remaining:
+                self._sync_selection()
+                return
+            self._selected = remaining
+        self._sync_selection()
         self.changed.emit(deepcopy(self._selected))
 
     def _edit(self, reference: Any) -> None:
         self.hide()
         self.edit_profile.emit(deepcopy(reference))
 
-    def _refresh_count(self) -> None:
+    def _sync_selection(self) -> None:
+        selected_keys = {_key(self.robot_id, ref) for ref in self._selected}
+        for row in self._rows:
+            checked = _key(self.robot_id, row.reference) in selected_keys
+            last_selected = checked and len(selected_keys) == 1
+            blocker = QtCore.QSignalBlocker(row.check)
+            row.check.setChecked(checked)
+            del blocker
+            row.check.setEnabled(not last_selected)
+            row.check.setToolTip(
+                "At least one profile is required. Select another profile first."
+                if last_selected
+                else row.check.accessibleName().removeprefix("Select profile ")
+            )
+            row.setProperty("selected", checked)
+            row.style().unpolish(row)
+            row.style().polish(row)
         self.done.setText(f"Done · {len(self._selected)} selected")
 
     def filter_rows(self, query: str) -> None:
@@ -261,6 +304,9 @@ class _ProfilePopup(QtWidgets.QFrame):
             row.setVisible(match)
             visible += int(match)
         self.empty.setVisible(visible == 0)
+        matching = [row for row in self._rows if not row.isHidden()]
+        if matching and not any(self.preview.matches(row.reference) for row in matching):
+            self.preview.inspect(matching[0].reference, matching[0].name)
 
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
         if event.key() == QtCore.Qt.Key.Key_Escape:
@@ -338,9 +384,7 @@ class _RobotCard(QtWidgets.QFrame):
         info.addStretch(1)
         upper.addLayout(info, 1)
         layout.addLayout(upper, 1)
-        self.profile_button = QtWidgets.QToolButton()
-        self.profile_button.setProperty("role", "quiet")
-        self.profile_button.setToolButtonStyle(QtCore.Qt.ToolButtonStyle.ToolButtonTextBesideIcon)
+        self.profile_button = QtWidgets.QPushButton()
         self.profile_button.setText("Profiles · 1")
         self.profile_button.setAccessibleName("Select explorer profiles for " + self.robot_label)
         layout.addWidget(self.profile_button, 0, QtCore.Qt.AlignmentFlag.AlignLeft)
@@ -428,8 +472,12 @@ class RobotSelector(QtWidgets.QWidget):
     changed = QtCore.Signal()
     edit_profile = QtCore.Signal(str, object)
 
-    def __init__(self, parent: QtWidgets.QWidget | None = None):
+    def __init__(
+        self, parent: QtWidgets.QWidget | None = None, *, transport: Transport | None = None
+    ):
         super().__init__(parent)
+        self.transport = transport
+        self._metadata: dict[str, Any] = {}
         self._catalog: list[dict[str, Any]] = []
         self._cards: dict[str, _RobotCard] = {}
         self._selected: dict[str, bool] = {}
@@ -452,8 +500,16 @@ class RobotSelector(QtWidgets.QWidget):
         self._scroll_area.setWidget(self.content)
         outer.addWidget(self._scroll_area)
 
-    def set_catalog(self, robots: list[dict[str, Any]]) -> None:
+    def set_catalog(
+        self, robots: list[dict[str, Any]], metadata: dict[str, Any] | None = None
+    ) -> None:
         initial = not self._initialized
+        if metadata is not None and metadata != self._metadata:
+            self._metadata = deepcopy(metadata)
+            for obsolete_popup in self._open_popups.values():
+                obsolete_popup.hide()
+                obsolete_popup.deleteLater()
+            self._open_popups.clear()
         self._catalog = deepcopy(robots)
         identities = {str(robot["id"]) for robot in robots}
         for robot in robots:
@@ -515,12 +571,14 @@ class RobotSelector(QtWidgets.QWidget):
     def set_selections(self, mapping: dict[str, list[Any]]) -> None:
         values = deepcopy(mapping)
         visible = {str(robot["id"]) for robot in self._catalog}
+        if not visible.intersection(values) and self.selections():
+            return
         for identity in visible:
             references = values.get(identity)
             if references is None:
                 self._selected[identity] = False
             else:
-                self._references[identity] = deepcopy(references)
+                self._references[identity] = deepcopy(references) or ["Default"]
                 self._selected[identity] = True
         for identity, card in self._cards.items():
             blocker = QtCore.QSignalBlocker(card.select)
@@ -628,6 +686,11 @@ class RobotSelector(QtWidgets.QWidget):
 
     def _set_robot(self, robot_id: str, checked: bool) -> None:
         robot = next((entry for entry in self._catalog if entry["id"] == robot_id), None)
+        if robot is None:
+            return
+        if not checked and self._last_selected(robot_id):
+            self._sync_card(robot_id)
+            return
         if checked and robot is not None and not robot.get("available", True):
             card = self._cards.get(robot_id)
             if card:
@@ -644,6 +707,14 @@ class RobotSelector(QtWidgets.QWidget):
             self._references[robot_id] = ["Default"]
         self._sync_card(robot_id)
         self.changed.emit()
+
+    def _last_selected(self, robot_id: str) -> bool:
+        selected = {
+            str(robot["id"])
+            for robot in self._catalog
+            if self._selected.get(str(robot["id"]), False) and robot.get("available", True)
+        }
+        return selected == {robot_id}
 
     def _sync_card(self, robot_id: str, refresh_popup: bool = True) -> None:
         card = self._cards.get(robot_id)
@@ -663,6 +734,12 @@ class RobotSelector(QtWidgets.QWidget):
             popup.hide()
         if refresh_popup and popup and popup.isVisible():
             popup.refresh(self._profile_entries(robot_id), self._references.get(robot_id, []))
+        for identity, other_card in self._cards.items():
+            last = self._last_selected(identity)
+            other_card.select.setEnabled(bool(other_card.robot.get("available", True)) and not last)
+            other_card.select.setToolTip(
+                "Select another robot before deselecting this one." if last else ""
+            )
 
     def _append_reference(self, robot_id: str, reference: Any) -> None:
         references = self._references.setdefault(robot_id, ["Default"])
@@ -721,6 +798,9 @@ class RobotSelector(QtWidgets.QWidget):
                 self._profile_entries(robot_id),
                 self._references.get(robot_id, ["Default"]),
                 self._has_more.get(robot_id, False),
+                robot=robot,
+                metadata=self._metadata,
+                transport=self.transport,
             )
             popup.changed.connect(lambda refs, rid=robot_id: self._set_profiles(rid, refs))
             popup.edit_profile.connect(
@@ -737,13 +817,18 @@ class RobotSelector(QtWidgets.QWidget):
             bounds = screen.availableGeometry()
             if anchor.y() + popup.height() > bounds.bottom():
                 anchor.setY(
-                    card.profile_button.mapToGlobal(QtCore.QPoint(0, 0)).y() - popup.height()
+                    max(
+                        bounds.top(),
+                        card.profile_button.mapToGlobal(QtCore.QPoint(0, 0)).y() - popup.height(),
+                    )
                 )
             anchor.setX(max(bounds.left(), min(anchor.x(), bounds.right() - popup.width())))
         popup.move(anchor)
         popup.show()
 
     def _set_profiles(self, robot_id: str, references: list[Any]) -> None:
+        if not references:
+            return
         self._references[robot_id] = deepcopy(references)
         self._sync_card(robot_id, refresh_popup=False)
         self.changed.emit()

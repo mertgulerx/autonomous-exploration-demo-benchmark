@@ -51,7 +51,7 @@ def parser() -> argparse.ArgumentParser:
     for name in ("start", "pause", "resume", "end"):
         operations.add_parser(name).add_argument("campaign_id")
     for name in ("stop", "restart"):
-        operations.add_parser(name).add_argument("experiment_id")
+        operations.add_parser(name).add_argument("campaign_id")
     query = operations.add_parser("query")
     query.add_argument(
         "table", choices=("campaigns", "experiments", "attempts", "library", "reports", "exports")
@@ -122,8 +122,8 @@ def main(argv: list[str] | None = None) -> int:
             )
         elif arguments.operation in ("stop", "restart"):
             method, params = (
-                "experiment." + arguments.operation,
-                {"experiment_id": arguments.experiment_id},
+                "campaign." + arguments.operation,
+                {"campaign_id": arguments.campaign_id},
             )
         elif arguments.operation == "query":
             method, params = (

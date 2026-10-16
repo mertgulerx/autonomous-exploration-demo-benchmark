@@ -40,3 +40,6 @@ AGENTS.md
 .pytest_cache/
 .mypy_cache/
 .ruff_cache/
+CLAUDE.md
+CLAUDE.local.md
+.claude/

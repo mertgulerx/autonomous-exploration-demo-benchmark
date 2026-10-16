@@ -15,6 +15,7 @@
 import argparse
 import hashlib
 import json
+import math
 from pathlib import Path
 import shutil
 import sys
@@ -34,17 +35,26 @@ def origin(element: Any) -> Any:
     return Matrix.Translation(translation) @ rotation.to_matrix().to_4x4()
 
 
+def linear_rgba(rgba: list[float]) -> tuple[float, ...]:
+    return tuple(
+        value / 12.92 if value <= 0.04045 else ((value + 0.055) / 1.055) ** 2.4
+        for value in rgba[:3]
+    ) + (rgba[3],)
+
+
 def material(name: str, rgba: list[float]) -> Any:
     result = bpy.data.materials.new(name)
     result.use_nodes = True
     shader = result.node_tree.nodes.get("Principled BSDF")
-    shader.inputs["Base Color"].default_value = rgba
+    result.diffuse_color = linear_rgba(rgba)
+    shader.inputs["Base Color"].default_value = linear_rgba(rgba)
     shader.inputs["Roughness"].default_value = 0.48
     return result
 
 
 def import_mesh(path: Path) -> list[Any]:
     before = set(bpy.data.objects)
+    native_axes = Matrix.Identity(4)
     if path.suffix.lower() == ".dae":
         bpy.ops.wm.collada_import(filepath=str(path))
     elif path.suffix.lower() == ".stl":
@@ -53,6 +63,8 @@ def import_mesh(path: Path) -> list[Any]:
         bpy.ops.wm.obj_import(filepath=str(path))
     elif path.suffix.lower() in {".glb", ".gltf"}:
         bpy.ops.import_scene.gltf(filepath=str(path))
+        # URDF already supplies the glTF Y-up to robot-frame rotation.
+        native_axes = Matrix.Rotation(-math.pi / 2, 4, "X")
     else:
         raise ValueError(f"Unsupported preview mesh: {path}")
     bpy.context.view_layer.update()
@@ -61,13 +73,34 @@ def import_mesh(path: Path) -> list[Any]:
     transforms = {obj: obj.matrix_world.copy() for obj in meshes}
     for obj in meshes:
         obj.parent = None
-        obj.matrix_world = transforms[obj]
+        obj.matrix_world = native_axes @ transforms[obj]
+    if path.suffix.lower() in {".dae", ".glb", ".gltf"}:
+        for entry in {entry for obj in meshes for entry in obj.data.materials if entry}:
+            if not entry.use_nodes:
+                continue
+            for node in entry.node_tree.nodes:
+                if node.type == "BSDF_PRINCIPLED":
+                    color = node.inputs["Base Color"]
+                    # Vendor palette constants are display RGB; texture nodes
+                    # already perform their own colour-space conversion.
+                    if not color.is_linked:
+                        color.default_value = linear_rgba(list(color.default_value))
+                    node.inputs["Roughness"].default_value = 0.48
+                    node.inputs["Specular IOR Level"].default_value = 0.35
     for obj in imported - set(meshes):
         bpy.data.objects.remove(obj, do_unlink=True)
     return meshes
 
 
-def load_robot(description: Path, sources: Path) -> list[Any]:
+def package_mesh(sources: Path, uri: str) -> Path:
+    package, _, relative = uri.removeprefix("package://").partition("/")
+    matches = sorted((sources / "packages").glob(package + "-*/" + relative))
+    if len(matches) != 1:
+        raise ValueError(f"Expected one exported preview asset for {uri}, found {len(matches)}")
+    return matches[0]
+
+
+def load_robot(description: Path, sources: Path, appearance: dict[str, Any]) -> list[Any]:
     root = ET.parse(description).getroot()
     children = {joint.find("child").get("link") for joint in root.findall("joint")}
     transforms = {
@@ -101,7 +134,11 @@ def load_robot(description: Path, sources: Path) -> list[Any]:
             geometry = visual.find("geometry")
             mesh = geometry.find("mesh")
             matrix = transforms[link.get("name")] @ origin(visual.find("origin"))
-            if mesh is not None:
+            replacement = appearance.get("mesh_overrides", {}).get(link.get("name"))
+            if replacement:
+                imported = import_mesh(package_mesh(sources, replacement["uri"]))
+                matrix = transforms[replacement["frame"]]
+            elif mesh is not None:
                 imported = import_mesh(sources / mesh.get("filename"))
                 scale = tuple(map(float, mesh.get("scale", "1 1 1").split()))
                 matrix = matrix @ Matrix.Diagonal((*scale, 1.0))
@@ -130,12 +167,15 @@ def load_robot(description: Path, sources: Path) -> list[Any]:
                 bpy.context.view_layer.update()
             entry = visual.find("material")
             selected = None
-            if entry is not None:
+            if entry is not None and not replacement:
                 selected = materials.get(entry.get("name"))
                 if entry.find("color") is not None:
                     selected = material(
                         link.get("name"), list(map(float, entry.find("color").get("rgba").split()))
                     )
+            palette = appearance.get("materials", {}).get(link.get("name"))
+            if palette:
+                selected = material(link.get("name"), palette)
             for obj in imported:
                 obj.matrix_world = matrix @ obj.matrix_world
                 if selected is not None:
@@ -144,6 +184,14 @@ def load_robot(description: Path, sources: Path) -> list[Any]:
                 if not obj.data.materials:
                     obj.data.materials.append(material("Neutral", [0.35, 0.37, 0.38, 1.0]))
                 objects.append(obj)
+    for extra in appearance.get("extra_visuals", []):
+        matrix = transforms[extra["frame"]] @ Euler(extra["rpy"], "XYZ").to_matrix().to_4x4()
+        selected = material("Factory attachment", extra["rgba"])
+        for obj in import_mesh(package_mesh(sources, extra["uri"])):
+            obj.matrix_world = matrix @ obj.matrix_world
+            obj.data.materials.clear()
+            obj.data.materials.append(selected)
+            objects.append(obj)
     bpy.context.view_layer.update()
     return objects
 
@@ -152,7 +200,7 @@ def aim(obj: Any, target: Any) -> None:
     obj.rotation_euler = (Vector(target) - obj.location).to_track_quat("-Z", "Y").to_euler()
 
 
-def render(description: Path, sources: Path, target: Path) -> None:
+def render(description: Path, sources: Path, target: Path, appearance: dict[str, Any]) -> None:
     bpy.ops.wm.read_factory_settings(use_empty=True)
     scene = bpy.context.scene
     scene.render.engine = "CYCLES"
@@ -169,7 +217,7 @@ def render(description: Path, sources: Path, target: Path) -> None:
     scene.render.image_settings.color_depth = "8"
     scene.render.image_settings.compression = 100
     scene.view_settings.view_transform = "AgX"
-    objects = load_robot(description, sources)
+    objects = load_robot(description, sources, appearance)
     corners = [obj.matrix_world @ Vector(corner) for obj in objects for corner in obj.bound_box]
     minimum = Vector(tuple(min(point[axis] for point in corners) for axis in range(3)))
     maximum = Vector(tuple(max(point[axis] for point in corners) for axis in range(3)))
@@ -193,9 +241,9 @@ def render(description: Path, sources: Path, target: Path) -> None:
     scene.world.node_tree.nodes["Background"].inputs["Color"].default_value = (0.72, 0.76, 0.82, 1)
     scene.world.node_tree.nodes["Background"].inputs["Strength"].default_value = 0.45
     for location, energy, size in [
-        ((3, -4, 6), 700, 4),
-        ((-3, -2, 4), 400, 4),
-        ((1, 4, 5), 600, 3),
+        ((3, -4, 6), 400, 4),
+        ((-3, -2, 4), 200, 4),
+        ((1, 4, 5), 350, 3),
     ]:
         bpy.ops.object.light_add(type="AREA", location=location)
         light = bpy.context.object
@@ -232,12 +280,19 @@ def main() -> None:
     parser.add_argument("--robot")
     args = parser.parse_args(sys.argv[sys.argv.index("--") + 1 :])
     args.output.mkdir(parents=True, exist_ok=True)
-    records = []
+    appearances = json.loads(Path(__file__).with_name("robot_preview_appearance.json").read_text())
+    manifest = args.output / "sources.json"
+    records = (
+        {record["robot_id"]: record for record in json.loads(manifest.read_text())}
+        if manifest.exists() and args.robot
+        else {}
+    )
     for source in sorted(args.source.glob("*.urdf")):
         if args.robot and source.stem != args.robot:
             continue
         target = args.output / (source.stem + ".png")
-        render(source, args.source, target)
+        appearance = appearances.get(source.stem, {})
+        render(source, args.source, target, appearance)
         metadata = json.loads(source.with_suffix(".json").read_text())
         metadata.update(
             preview_sha256=hashlib.sha256(target.read_bytes()).hexdigest(),
@@ -245,11 +300,14 @@ def main() -> None:
             camera="Orthographic, front three-quarter",
             resolution=[640, 480],
             samples=32,
+            material_policy="Display-RGB palette constants to linear; preserve texture colour spaces",
+            gltf_axes="Restore Y-up before applying URDF visual transforms",
+            appearance=appearance,
         )
-        records.append(metadata)
+        records[source.stem] = metadata
     if (args.source / "notices").exists():
         shutil.copytree(args.source / "notices", args.output / "notices", dirs_exist_ok=True)
-    (args.output / "sources.json").write_text(json.dumps(records, indent=2) + "\n")
+    manifest.write_text(json.dumps(list(records.values()), indent=2) + "\n")
 
 
 if __name__ == "__main__":
