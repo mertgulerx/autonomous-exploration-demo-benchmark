@@ -12,23 +12,36 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from collections import deque
+from collections.abc import Callable
+from functools import partial
 from io import BytesIO
 import base64
+import json
 import math
 import os
 from pathlib import Path
 import queue
 import time
 from typing import Any
+import uuid
+import zlib
 
 import numpy as np
 import psutil
 from PIL import Image
 
 from .contracts import ContractError
+from .monitoring import MONITOR_LAYERS, PhysicalPath, ReferenceCells, base_pose, explored_pixels
 from .protocol import PendingRequest, Server
 from .recording import Recorder, safe
+
+STALE_POSE_WALL_SECONDS = 1.0
+
+
+def png(pixels: np.ndarray[Any, Any]) -> str:
+    buffer = BytesIO()
+    Image.fromarray(pixels).save(buffer, format="PNG")
+    return base64.b64encode(buffer.getvalue()).decode()
 
 
 class WorkerRuntime:
@@ -43,8 +56,13 @@ class WorkerRuntime:
         }
         self.metrics: dict[str, Any] = {}
         self.sequence = 0
-        self.path: deque[tuple[int, float, float]] = deque(maxlen=10000)
-        self.path_sequence = 0
+        self.history = uuid.uuid4().hex
+        self.physical = PhysicalPath(
+            worker.config["robot"]["max_linear_speed"],
+            reference=ReferenceCells.of(worker.coverage_reference),
+        )
+        self.physical_pose: tuple[float, float, float, int, float] | None = None
+        self.layer_cache: dict[str, tuple[int, dict[str, Any]]] = {}
         self.last_trajectory_ns: int | None = None
         self.last_commands: dict[str, tuple[float, float, float]] = {}
         self.world_from_odom: tuple[float, float, float] | None = None
@@ -59,11 +77,6 @@ class WorkerRuntime:
         self.navigation_event_sequence = 0
         self.navigation_lost = 0
         self.resource_previous: dict[str, tuple[float, float]] = {}
-        self.inspection_rows: deque[tuple[int, dict[str, Any]]] = deque(maxlen=1000)
-        self.inspection_sequence = 0
-        self.inspection_after = 0
-        self.inspection_detector: Any = None
-        self.inspection_incidents: deque[dict[str, Any]] = deque(maxlen=64)
 
     def publish_state(self) -> None:
         worker = self.worker
@@ -116,9 +129,11 @@ class WorkerRuntime:
                         raise ContractError("reason", "Unsupported worker stop reason")
                     worker.terminal.put((reason, str(params.get("detail", "Suite control")), -1))
                     result = {"accepted": True}
-                elif method == "worker.inspect":
-                    result = self.inspection(
-                        params.get("after_sequence", 0), params.get("map_revision", -1)
+                elif method == "worker.monitor":
+                    result = self.monitor(
+                        params.get("after_sequence", 0),
+                        params.get("layers", []),
+                        params.get("revisions", {}),
                     )
                 else:
                     raise ContractError("method", "Unsupported worker operation")
@@ -183,13 +198,7 @@ class WorkerRuntime:
                 world_x=x + c * p.x - s * p.y, world_y=y + s * p.x + c * p.y, world_yaw=yaw + angle
             )
             self.pose = [row["world_x"], row["world_y"], row["world_yaw"]]
-            self.path_sequence += 1
-            self.path.append((self.path_sequence, row["world_x"], row["world_y"]))
         recorder.observation("trajectory", row)
-        self.inspection_sequence += 1
-        self.inspection_rows.append(
-            (self.inspection_sequence, dict(row, active_goal_sequence=self.goal_sequence))
-        )
 
     def command(self, topic: str, message: Any) -> None:
         recorder = self.worker.recorder
@@ -247,15 +256,19 @@ class WorkerRuntime:
             if worker.phase in ("STOPPING", "FINISHED"):
                 return
             self.ground_truth = message
-            if worker.phase != "RUNNING" or not isinstance(recorder, Recorder):
-                return
             p, q, v = message.pose.pose.position, message.pose.pose.orientation, message.twist.twist
             yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
-            row = recorder.row(
-                "gazebo_model_world_pose",
-                message.header.stamp.sec * 10**9 + message.header.stamp.nanosec,
-                clock_ns=message.header.stamp.sec * 10**9 + message.header.stamp.nanosec,
+            stamp = message.header.stamp.sec * 10**9 + message.header.stamp.nanosec
+            valid = all(math.isfinite(value) for value in (p.x, p.y, p.z, yaw))
+            base = (
+                base_pose((p.x, p.y, yaw), self.model_to_base)
+                if valid and self.model_to_base
+                else None
             )
+            self.physical_pose = (*base, stamp, time.monotonic()) if base else None
+            if worker.phase != "RUNNING" or not isinstance(recorder, Recorder):
+                return
+            row = recorder.row("gazebo_model_world_pose", stamp, clock_ns=stamp)
             row.update(
                 x=p.x,
                 y=p.y,
@@ -267,7 +280,7 @@ class WorkerRuntime:
                 speed=math.hypot(v.linear.x, v.linear.y),
                 frame=message.header.frame_id,
             )
-            row["valid"] = all(math.isfinite(value) for value in (p.x, p.y, p.z, yaw))
+            row["valid"] = valid
             if not all(math.isfinite(value) for value in (v.linear.x, v.linear.y, v.angular.z)):
                 row["quality_flags"] = ["diagnostic_velocity_unavailable"]
             if self.model_to_base:
@@ -283,6 +296,10 @@ class WorkerRuntime:
                         p.x + math.cos(yaw) * dx - math.sin(yaw) * dy - self.pose[0],
                         p.y + math.sin(yaw) * dx + math.cos(yaw) * dy - self.pose[1],
                     )
+                if not recorder.frozen:
+                    # The live path takes the samples the ground_truth stream records (a full
+                    # recording queue can still drop a row; such drops count in recording_dropped).
+                    self.physical.add(stamp, *(base[:2] if base else (math.nan, math.nan)))
             recorder.observation("ground_truth", row)
 
     def receive_ground_truth_pose(self, message: Any) -> None:
@@ -438,90 +455,143 @@ class WorkerRuntime:
                 ),
             )
 
-    def inspection(self, after: int, map_revision: int) -> dict[str, Any]:
+    def monitor(self, after: Any, layers: Any, revisions: Any) -> dict[str, Any]:
+        if type(after) is not int or after < 0:
+            raise ContractError("after_sequence", "Use a non-negative integer")
+        if not isinstance(layers, list) or not all(layer in MONITOR_LAYERS for layer in layers):
+            raise ContractError("layers", "Unknown monitor layer")
+        if not isinstance(revisions, dict) or not all(
+            type(value) is int for value in revisions.values()
+        ):
+            raise ContractError("revisions", "Use integer layer revisions")
         worker = self.worker
         with worker.lock:
-            grid = worker.cache.get("map")
-            points = list(self.path)
-            pose = self.pose
-            navigation_plan = worker.cache.get("plan")
-            motion_rows = list(self.inspection_rows)
-        if self.inspection_detector is None:
-            from .analysis import DetectorSettings, MotionDetector
-
-            robot = worker.config["robot"]
-            self.inspection_detector = MotionDetector(
-                robot["max_linear_speed"], robot["footprint"], DetectorSettings()
+            page = self.physical.page(after)
+            pose, offset, received = self.physical_pose, self.model_to_base, self.ground_truth
+            grid, plan, goal = worker.cache.get("map"), worker.cache.get("plan"), self.goal
+            goal_sequence = self.goal_sequence
+        now = time.monotonic()
+        if not worker.config.get("suite_diagnostics", True):
+            status, reason = (
+                "unavailable",
+                "Ground truth is off: the engine runs without diagnostics",
             )
-        for sequence, row in motion_rows:
-            if sequence <= self.inspection_after:
-                continue
-            for incident in self.inspection_detector.feed(row):
-                if incident.get("world_x") is not None:
-                    self.inspection_incidents.append(
-                        {
-                            key: incident[key]
-                            for key in ("type", "start_ns", "end_ns", "duration_ns", "bbox")
-                        }
-                    )
-            self.inspection_after = sequence
-        image = None
-        revision = -1
+        elif received is None:
+            status, reason = "unavailable", "No Gazebo ground-truth pose received yet"
+        elif offset is None:
+            status, reason = (
+                "unavailable",
+                (
+                    "Waiting for the stationary alignment at readiness"
+                    if self.world_from_odom is None
+                    else "No ground-truth pose at readiness: the base offset is unknown"
+                ),
+            )
+        elif pose is None:
+            status, reason = "unavailable", "The latest ground-truth pose is invalid"
+        elif now - pose[4] > STALE_POSE_WALL_SECONDS:
+            status, reason = "stale", f"No ground-truth pose for {now - pose[4]:.1f} wall s"
+        else:
+            status, reason = "available", ""
         alignment = worker.recorder.manifest["coverage"]["alignment"] if worker.recorder else None
-        if grid is not None and worker.coverage and alignment is not None:
-            revision = grid.header.stamp.sec * 10**9 + grid.header.stamp.nanosec
-            if revision != map_revision:
-                values = np.asarray(grid.data, dtype=np.int16).reshape(
-                    grid.info.height, grid.info.width
+        world_from_map = alignment["world_from_map"] if alignment else None
+        map_stamp = (
+            grid.header.stamp.sec * 10**9 + grid.header.stamp.nanosec if grid is not None else -1
+        )
+        coverage = worker.coverage
+        result: dict[str, Any] = {}
+        for name in dict.fromkeys(layers):
+            requested = revisions.get(name)
+            if name == "explored":
+                result[name] = self.layer(
+                    name,
+                    map_stamp,
+                    requested,
+                    None
+                    if coverage is None or grid is None
+                    else partial(self.explored, coverage, grid),
                 )
-                pixels = np.where(values < 0, 170, np.rint(245 * (100 - values) / 100)).astype(
-                    np.uint8
+            else:
+                plan_stamp = (
+                    plan.header.stamp.sec * 10**9 + plan.header.stamp.nanosec
+                    if plan is not None
+                    else -1
                 )
-                buffer = BytesIO()
-                Image.fromarray(pixels).save(buffer, format="PNG")
-                origin = grid.info.origin
-                q = origin.orientation
-                angle = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
-                x, y, yaw = alignment["world_from_map"]
-                c, s = math.cos(yaw), math.sin(yaw)
-                image = dict(
-                    image_png=base64.b64encode(buffer.getvalue()).decode(),
-                    resolution=grid.info.resolution,
-                    origin=[
-                        x + c * origin.position.x - s * origin.position.y,
-                        y + s * origin.position.x + c * origin.position.y,
-                        yaw + angle,
-                    ],
+                identity = [goal_sequence, goal, plan_stamp, len(plan.poses) if plan else 0]
+                result[name] = self.layer(
+                    name,
+                    zlib.crc32(json.dumps(identity).encode()),
+                    requested,
+                    None
+                    if world_from_map is None
+                    else partial(self.navigation_layer, goal, plan, world_from_map),
                 )
-        reset = bool(points and after < points[0][0] - 1)
-        plan = []
-        if (
-            navigation_plan is not None
-            and alignment is not None
-            and navigation_plan.header.frame_id == "map"
-        ):
-            x, y, yaw = alignment["world_from_map"]
+        reference = worker.coverage_reference
+        return dict(
+            page,
+            history=self.history,
+            status=status,
+            reason=reason,
+            pose=None
+            if pose is None
+            else dict(
+                x=pose[0],
+                y=pose[1],
+                yaw=pose[2],
+                simulation_ns=pose[3],
+                age_wall_seconds=now - pose[4],
+            ),
+            reference=dict(id=reference.identity, metadata_sha256=reference.metadata_hash),
+            layers=result,
+        )
+
+    def layer(
+        self,
+        name: str,
+        revision: int,
+        requested: int | None,
+        encode: Callable[[], dict[str, Any]] | None,
+    ) -> dict[str, Any]:
+        """Encode a layer once per revision and send it only to requesters without it."""
+        if encode is None:
+            self.layer_cache.pop(name, None)
+            return dict(revision=-1, data=None)
+        if revision == requested:
+            return dict(revision=revision, data=None)
+        cached = self.layer_cache.get(name)
+        if cached is None or cached[0] != revision:
+            try:
+                cached = revision, encode()
+            except ValueError as exc:
+                return dict(revision=-1, data=None, reason=str(exc))
+            self.layer_cache[name] = cached
+        return dict(revision=revision, data=cached[1])
+
+    def explored(self, coverage: Any, grid: Any) -> dict[str, Any]:
+        reference = self.worker.coverage_reference
+        return dict(
+            image_png=png(explored_pixels(reference.target, coverage.calculator.free_cells(grid))),
+            origin=list(reference.origin),
+            resolution=reference.resolution,
+        )
+
+    @staticmethod
+    def navigation_layer(
+        goal: list[float] | None, plan: Any, world_from_map: list[float]
+    ) -> dict[str, Any]:
+        points: list[list[float]] = []
+        if plan is not None and plan.header.frame_id == "map":
+            x, y, yaw = world_from_map
             c, s = math.cos(yaw), math.sin(yaw)
-            stride = max(1, len(navigation_plan.poses) // 2000)
-            plan = [
+            stride = max(1, len(plan.poses) // 2000)
+            points = [
                 [
                     x + c * p.pose.position.x - s * p.pose.position.y,
                     y + s * p.pose.position.x + c * p.pose.position.y,
                 ]
-                for p in navigation_plan.poses[::stride]
+                for p in plan.poses[::stride]
             ]
-        return dict(
-            sequence=self.path_sequence,
-            map_revision=revision,
-            map=image,
-            pose=pose,
-            goal=self.goal,
-            plan=plan,
-            incidents=list(self.inspection_incidents),
-            incident_scope="Bounded live preview; saved reports analyze the complete recorded trajectory",
-            reset=reset,
-            path=[[x, y] for seq, x, y in points if reset or seq > after],
-        )
+        return dict(goal=goal, plan=points)
 
     def close(self) -> None:
         self.server.close()

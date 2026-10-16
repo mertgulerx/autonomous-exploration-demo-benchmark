@@ -16,6 +16,8 @@ from collections.abc import Callable
 import time
 from typing import Any, Protocol
 
+from .monitoring import PathSettings, PhysicalPath
+
 
 class WorkerHandle(Protocol):
     pid: int | None
@@ -24,7 +26,9 @@ class WorkerHandle(Protocol):
 
     def poll(self) -> list[dict[str, Any]]: ...
     def stop(self, reason: str, detail: str) -> None: ...
-    def inspection(self, after: int, map_revision: int) -> dict[str, Any]: ...
+    def monitor(
+        self, after: int, layers: list[str], revisions: dict[str, int]
+    ) -> dict[str, Any]: ...
 
 
 class Backend(Protocol):
@@ -75,8 +79,16 @@ class SyntheticWorker:
     def stop(self, reason: str, detail: str) -> None:
         self.stop_reason = reason
 
-    def inspection(self, after: int, map_revision: int) -> dict[str, Any]:
-        return {"source": "synthetic", "sequence": self.step, "path": [], "map": None}
+    def monitor(self, after: int, layers: list[str], revisions: dict[str, int]) -> dict[str, Any]:
+        return dict(
+            PhysicalPath(1.0, PathSettings(capacity=1)).page(after),
+            history="synthetic",
+            status="unavailable",
+            reason="Synthetic worker has no ground truth",
+            pose=None,
+            reference=None,
+            layers={name: {"revision": -1, "data": None} for name in layers},
+        )
 
 
 class SyntheticBackend:

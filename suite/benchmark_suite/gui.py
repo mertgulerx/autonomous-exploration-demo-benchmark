@@ -19,7 +19,7 @@ import uuid
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from .gui_support import MapView, PagedTable, TextSelection, Transport, button
+from .gui_support import PagedTable, TextSelection, Transport, button
 from .gui_pages import SpawnEditor
 from .gui_builder import CampaignBuilder
 from .gui_campaigns import CampaignOverview, CampaignTable
@@ -35,10 +35,13 @@ from .gui_style import (
     stylesheet,
     surface,
 )
-from .gui_monitor import WorkerCards, RunMetrics
+from .gui_monitor import LiveMap, WorkerCards, RunMetrics
+from .monitoring import MONITOR_LAYERS, PathCursor, accept_page
 from .gui_reports import ReportBrowser
 from .gui_logs import LogViewer
 from .gui_exports import ExportBrowser
+
+LAYER_TITLES = {"explored": "Explored cells", "navigation": "Nav2 goal and plan"}
 
 
 def metric_number(value: Any, decimals: int = 2) -> str:
@@ -64,12 +67,16 @@ class Window(QtWidgets.QMainWindow):
         self.profile_row: dict[str, Any] | None = None
         self.profile_reference: dict[str, Any] | None = None
         self.result_selection: str | None = None
-        self.inspection_id: str | None = None
-        self.inspection_requested: str | None = None
+        self.monitor_id: str | None = None
+        self.monitor_requested: str | None = None
         self.selected_attempt: str | None = None
         self.profile_detail_tag = ""
-        self.inspection_sequence, self.map_revision, self.event_sequence = 0, 0, 0
-        self.status_pending, self.inspection_pending, self.events_pending = False, False, False
+        self.monitor_cursor = PathCursor()
+        self.layer_revisions: dict[str, int] = {}
+        self.reference_maps: dict[str, dict[str, Any]] = {}
+        self.reference_mismatch = False
+        self.event_sequence = 0
+        self.status_pending, self.monitor_pending, self.events_pending = False, False, False
         self.campaign_status_pending = False
         self._campaign_page = "campaigns"
         self.page_widgets: dict[str, QtWidgets.QWidget] = {}
@@ -162,7 +169,7 @@ class Window(QtWidgets.QMainWindow):
             if table.isVisible():
                 table.refresh()
         if key != "monitor":
-            self.close_inspection()
+            self.close_monitor()
         else:
             self.follow_single_worker()
             self.inspect_selected()
@@ -302,8 +309,25 @@ class Window(QtWidgets.QMainWindow):
         self.focus_tabs = QtWidgets.QTabWidget()
         inspection = QtWidgets.QSplitter()
         inspection.setObjectName("monitor-inspection-split")
-        self.live_map = MapView()
-        inspection.addWidget(self.live_map)
+        map_panel = QtWidgets.QWidget()
+        map_layout = QtWidgets.QVBoxLayout(map_panel)
+        map_layout.setContentsMargins(0, 0, 0, 0)
+        self.monitor_legend = label(
+            "Line: Gazebo ground-truth path · Shaded cells: explored (coverage metric) · "
+            "× and dashed line: Nav2 goal and plan (SLAM-frame estimate)",
+            "muted",
+        )
+        self.monitor_legend.setWordWrap(True)
+        map_layout.addWidget(self.monitor_legend)
+        self.live_map = LiveMap()
+        map_layout.addWidget(self.live_map, 1)
+        self.monitor_status = label("", "muted")
+        self.monitor_status.setWordWrap(True)
+        map_layout.addWidget(self.monitor_status)
+        inspection.addWidget(map_panel)
+        self.monitor_timer = QtCore.QTimer(self)
+        self.monitor_timer.setInterval(100)
+        self.monitor_timer.timeout.connect(self.poll_monitor)
         panel = surface()
         pane = QtWidgets.QVBoxLayout(panel)
         pane.setContentsMargins(16, 16, 16, 16)
@@ -446,18 +470,6 @@ class Window(QtWidgets.QMainWindow):
             self.transport.submit(
                 "events", "events.read", {"after_sequence": self.event_sequence, "limit": 100}
             )
-        if self.inspection_id and not self.inspection_pending:
-            self.inspection_pending = True
-            self.inspection_requested = self.inspection_id
-            self.transport.submit(
-                "inspection",
-                "inspection.get",
-                {
-                    "attempt_id": self.inspection_id,
-                    "after_sequence": self.inspection_sequence,
-                    "map_revision": self.map_revision,
-                },
-            )
         if self.campaign_id and not self.campaign_status_pending:
             self.campaign_status_pending = True
             self.transport.submit(
@@ -487,9 +499,12 @@ class Window(QtWidgets.QMainWindow):
                 self.run_metrics.update_metrics(selected["metrics"])
                 if self.current_page() == "monitor":
                     self.inspect_selected()
-            elif self.inspection_id:
-                self.close_inspection()
+            elif self.monitor_id:
+                self.close_monitor()
                 self.focus_title.setText("Run ended · retained live snapshot")
+                self.monitor_status.setText(
+                    "Run ended: the last received path and pose stay on the map"
+                )
         elif tag == "submit":
             self.select_campaign({"id": result["campaign_id"], "name": self.builder.name.text()})
             self.builder.show_step(0)
@@ -570,26 +585,26 @@ class Window(QtWidgets.QMainWindow):
                 line = " · ".join(parts)
                 if self.log_filter.text().lower() in line.lower():
                     self.logs.appendPlainText(line)
-        elif tag == "inspection":
-            self.inspection_pending = False
-            if self.inspection_id and result.get("attempt_id") == self.inspection_id:
-                self.inspection_sequence = result.get("sequence", self.inspection_sequence)
-                self.map_revision = result.get("map_revision", self.map_revision)
-                if result.get("map"):
-                    self.live_map.set_map(result["map"])
-                self.live_map.append_path(result.get("path", []), result.get("reset", False))
-                if result.get("pose"):
-                    self.live_map.set_pose(*result["pose"])
-                goal, plan = result.get("goal"), result.get("plan", [])
-                self.live_map.goal.setData([goal[0]] if goal else [], [goal[1]] if goal else [])
-                self.live_map.plan.setData([p[0] for p in plan], [p[1] for p in plan])
-                x_points, y_points = [], []
-                for incident in result.get("incidents", []):
-                    x1, y1, x2, y2 = incident["bbox"]
-                    x_points.extend([x1, x2, x2, x1, x1, float("nan")])
-                    y_points.extend([y1, y1, y2, y2, y1, float("nan")])
-                self.live_map.incidents.setData(x_points, y_points)
-                self.live_map.setToolTip(result.get("incident_scope", ""))
+        elif tag.startswith("monitor-map:"):
+            self.reference_maps[result["world_id"]] = result
+            selected = next(
+                (
+                    row
+                    for row in self.status.get("active", [])
+                    if row["attempt"]["id"] == self.selected_attempt
+                ),
+                None,
+            )
+            if (
+                selected is not None
+                and selected["experiment"]["world_id"] == result["world_id"]
+                and self.live_map.reference_world is None
+            ):
+                self.live_map.set_reference(result)
+        elif tag == "monitor":
+            self.monitor_pending = False
+            if self.monitor_id and result.get("attempt_id") == self.monitor_id:
+                self.apply_monitor(result)
         elif tag == "sweep":
             self.statusBar().showMessage(f"{result['count']} sweep profiles", 8000)
             self.refresh_libraries()
@@ -639,10 +654,19 @@ class Window(QtWidgets.QMainWindow):
             self.summary.show()
             self.active_worker_count.setText("—")
             self.campaign_total.setText("—")
-        elif tag == "inspection":
-            self.inspection_pending = False
-            if self.inspection_requested == self.inspection_id:
-                self.close_inspection()
+        elif tag == "monitor":
+            # The Monitor reports its own errors; polling at 10 Hz must not flood the status bar.
+            self.monitor_pending = False
+            if "Unsupported operation: monitor.get" in error:
+                self.monitor_status.setText(
+                    "The engine image predates the ground-truth Monitor; rebuild the suite image"
+                )
+                self.monitor_timer.stop()
+            elif self.monitor_id and self.monitor_requested == self.monitor_id:
+                self.monitor_status.setText(f"Monitor unavailable: {error}")
+            return
+        elif tag.startswith("monitor-map:"):
+            self.monitor_status.setText(f"World map unavailable: {error}")
         elif tag == "events":
             self.events_pending = False
         elif tag == "campaign-status":
@@ -934,7 +958,7 @@ class Window(QtWidgets.QMainWindow):
         )
 
     def inspect_selected(self) -> None:
-        if self.selected_attempt and self.inspection_id != self.selected_attempt:
+        if self.selected_attempt and self.monitor_id != self.selected_attempt:
             active = next(
                 (
                     row
@@ -955,13 +979,133 @@ class Window(QtWidgets.QMainWindow):
             )
             if robot is None:
                 return
-            self.inspection_id = self.selected_attempt
-            self.inspection_sequence, self.map_revision = 0, 0
+            # A request still in flight for the previous attempt clears monitor_pending on arrival
+            # and its reply is ignored, so at most one request is outstanding.
+            self.monitor_id = self.selected_attempt
+            self.monitor_cursor = PathCursor()
+            self.layer_revisions = {}
+            self.reference_mismatch = False
             self.live_map.clear_view()
-            self.live_map.set_pose(0, 0, 0, robot["footprint"])
+            self.live_map.set_footprint(robot["footprint"])
+            world = active["experiment"]["world_id"]
+            if world in self.reference_maps:
+                self.live_map.set_reference(self.reference_maps[world])
+            else:
+                self.transport.submit("monitor-map:" + world, "spawns.map", {"world_id": world})
+            self.monitor_status.setText("Waiting for the worker")
+            self.monitor_timer.start()
 
-    def close_inspection(self) -> None:
-        self.inspection_id = None
+    def close_monitor(self) -> None:
+        self.monitor_id = None
+        self.monitor_timer.stop()
+
+    def poll_monitor(self) -> None:
+        if not self.monitor_id or self.monitor_pending or self.current_page() != "monitor":
+            return
+        layers = [
+            name for name in MONITOR_LAYERS if not (name == "explored" and self.reference_mismatch)
+        ]
+        self.monitor_pending = True
+        self.monitor_requested = self.monitor_id
+        self.transport.submit(
+            "monitor",
+            "monitor.get",
+            {
+                "attempt_id": self.monitor_id,
+                "after_sequence": self.monitor_cursor.applied,
+                "layers": layers,
+                "revisions": {
+                    name: self.layer_revisions[name]
+                    for name in layers
+                    if name in self.layer_revisions
+                },
+            },
+        )
+
+    def draw_layer(self, name: str, data: dict[str, Any] | None) -> None:
+        if name == "explored":
+            self.live_map.set_explored(data)
+        elif name == "navigation":
+            self.live_map.set_navigation(data)
+
+    def apply_monitor(self, result: dict[str, Any]) -> None:
+        if "history" not in result:
+            self.monitor_status.setText(result.get("reason") or "Waiting for the worker")
+            return
+        try:
+            status, reason, pose = result["status"], result["reason"], result["pose"]
+            reference, layers, breaks = result["reference"], result["layers"], result["breaks"]
+            tail, last = result["tail"], result["last_sequence"]
+            collisions, outside = result["collision_samples"], result["outside_samples"]
+            values = (
+                None
+                if pose is None
+                else (
+                    float(pose["x"]),
+                    float(pose["y"]),
+                    float(pose["yaw"]),
+                    float(pose["age_wall_seconds"]),
+                )
+            )
+            reset, vertices = accept_page(self.monitor_cursor, result)
+        except (KeyError, TypeError, ValueError) as exc:
+            self.monitor_status.setText(f"Monitor reply rejected: {exc}")
+            return
+        if reset:
+            self.live_map.clear_path()
+        self.live_map.append_vertices(vertices)
+        self.live_map.set_tail(tail if last == self.monitor_cursor.applied else None)
+        if status == "available" and values is not None:
+            self.live_map.set_pose(values[0], values[1], values[2])
+        else:
+            self.live_map.hide_pose()
+        self.reference_mismatch = bool(
+            self.live_map.reference_hash
+            and isinstance(reference, dict)
+            and reference.get("metadata_sha256") != self.live_map.reference_hash
+        )
+        if self.reference_mismatch:
+            self.draw_layer("explored", None)
+            self.layer_revisions.pop("explored", None)
+        notes = []
+        for name, layer in layers.items():
+            title = LAYER_TITLES.get(name)
+            if title is None or (name == "explored" and self.reference_mismatch):
+                continue
+            try:
+                if layer["revision"] == -1:
+                    self.draw_layer(name, None)
+                    self.layer_revisions.pop(name, None)
+                    if layer.get("reason"):
+                        notes.append(f"{title} unavailable: {layer['reason']}")
+                elif layer["data"] is not None:
+                    self.draw_layer(name, layer["data"])
+                    self.layer_revisions[name] = layer["revision"]
+            except (KeyError, TypeError, ValueError) as exc:
+                notes.append(f"{title} rejected: {exc}")
+        if status == "available" and values is not None:
+            text = (
+                f"Gazebo ground truth · {self.monitor_cursor.applied:,} path vertices · "
+                f"pose {values[3]:.1f} s old"
+            )
+        elif status == "stale":
+            text = f"Ground-truth pose stale: {reason}"
+        else:
+            text = f"Ground-truth pose unavailable: {reason}"
+        counted = {key: count for key, count in breaks.items() if count > 0}
+        if counted:
+            listed = ", ".join(f"{key} {count}" for key, count in counted.items())
+            text += f" · {sum(counted.values())} breaks ({listed})"
+        dropped = self.monitor_cursor.dropped + self.live_map.view_dropped
+        if dropped > 0:
+            text += f" · {dropped:,} older vertices dropped"
+        if collisions > 0:
+            text += f" · {collisions} samples in obstacle cells"
+        if outside > 0:
+            text += f" · {outside} samples outside the reference region"
+        if self.reference_mismatch:
+            text += " · World map differs from this attempt's reference; explored cells hidden"
+        self.monitor_status.setText(" · ".join([text, *notes]))
 
     def select_result(self, row: dict[str, Any]) -> None:
         self.result_selection = row["id"]
@@ -1074,6 +1218,7 @@ class Window(QtWidgets.QMainWindow):
                 self.settings.setValue("split/" + split.objectName(), split.saveState())
         self.settings.sync()
         self.poll.stop()
+        self.monitor_timer.stop()
         copy_closed = self.export_browser.close_copy()
         if self.transport.close() and copy_closed:
             event.accept()

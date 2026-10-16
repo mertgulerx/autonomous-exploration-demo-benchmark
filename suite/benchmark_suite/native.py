@@ -34,6 +34,7 @@ from exploration_benchmark_runner.processes import DomainLease, ProcessScope
 
 from .contracts import ContractError, resolve_world_time_limits
 from .datasets import finalize_attempt, finalize_partial
+from .monitoring import trim_reply
 from .protocol import Client
 from .storage import atomic_json, file_hash, put_object, load_object
 
@@ -47,8 +48,9 @@ class NativeWorker:
         self.closed = False
         self.events: queue.Queue[dict[str, Any]] = queue.Queue(128)
         self.lock = threading.Lock()
-        self.inspection_request: tuple[int, int] | None = None
-        self.latest_inspection: dict[str, Any] = {"sequence": 0, "path": [], "map": None}
+        self.monitor_request: tuple[int, list[str], dict[str, int]] | None = None
+        self.latest_monitor: dict[str, Any] = {}
+        self.wake = threading.Event()
         self.stop_requested: tuple[str, str] | None = None
         self.stop_wall: float | None = None
         self.client = Client(Path(configuration["suite_socket"]), timeout=2.0)
@@ -106,6 +108,7 @@ class NativeWorker:
         manifest: dict[str, Any] = {}
         try:
             while self.process.poll() is None:
+                self.wake.clear()
                 if (
                     not self.stop_requested
                     and self.last_state in ("", "STARTING")
@@ -144,18 +147,19 @@ class NativeWorker:
                             )
                             self._emit(self.trigger)
                     with self.lock:
-                        inspection = self.inspection_request
-                        self.inspection_request = None
-                    if inspection:
+                        request = self.monitor_request
+                        self.monitor_request = None
+                    if request:
+                        after, layers, revisions = request
                         result = self.client.call(
-                            "worker.inspect",
-                            {"after_sequence": inspection[0], "map_revision": inspection[1]},
+                            "worker.monitor",
+                            {"after_sequence": after, "layers": layers, "revisions": revisions},
                         )
                         with self.lock:
-                            self.latest_inspection = result
+                            self.latest_monitor = result
                 except (OSError, ContractError, EOFError):
                     pass
-                time.sleep(0.2)
+                self.wake.wait(0.2)
             self.process.wait(timeout=2)
             self.scope.stop()
             path = self.directory / "manifest.json"
@@ -235,15 +239,15 @@ class NativeWorker:
             self.stop_wall = time.monotonic()
             self.stop_requested = reason, detail
 
-    def inspection(self, after: int, map_revision: int) -> dict[str, Any]:
+    def monitor(self, after: int, layers: list[str], revisions: dict[str, int]) -> dict[str, Any]:
+        """Queue a fresh worker request and answer from the latest reply, trimmed for the caller."""
         with self.lock:
-            self.inspection_request = after, map_revision
-            result = dict(self.latest_inspection)
-            first = result.get("sequence", 0) - len(result.get("path", [])) + 1
-            result["path"] = result.get("path", [])[max(0, after - first + 1) :]
-            if result.get("map_revision") == map_revision:
-                result["map"] = None
-            return result
+            self.monitor_request = after, layers, revisions
+            latest = self.latest_monitor
+        self.wake.set()
+        if not latest:
+            return {"status": "pending", "reason": "Waiting for the worker's first monitor reply"}
+        return trim_reply(latest, after, revisions)
 
 
 class NativeBackend:

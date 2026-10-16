@@ -31,9 +31,11 @@ from .contracts import (
     canonical,
     content_hash,
     integer,
+    known_keys,
     mapping,
     text,
 )
+from .monitoring import MONITOR_LAYERS
 from .protocol import PendingRequest, Server
 from .storage import atomic_json, file_hash, sync_directory
 from .store import Store
@@ -49,7 +51,7 @@ READ_METHODS = frozenset(
         "results.query",
         "events.read",
         "logs.read",
-        "inspection.get",
+        "monitor.get",
         "profiles.list",
         "spawns.list",
         "command.status",
@@ -593,14 +595,29 @@ class Engine:
                 "last_sequence": rows[-1]["sequence"] if rows else after,
                 "snapshot_required": False,
             }
-        if method == "inspection.get":
+        if method == "monitor.get":
             identity = text(params.get("attempt_id"), "attempt_id")
             if identity not in self.active:
                 raise ContractError("attempt_id", "Worker is no longer active", "not_found")
+            layers = params.get("layers", [])
+            if (
+                not isinstance(layers, list)
+                or not all(layer in MONITOR_LAYERS for layer in layers)
+                or len(set(layers)) != len(layers)
+            ):
+                raise ContractError(
+                    "layers", "Choose distinct layers from: " + ", ".join(MONITOR_LAYERS)
+                )
+            revisions = mapping(params.get("revisions", {}), "revisions")
+            known_keys(revisions, set(MONITOR_LAYERS), "revisions")
             return dict(
-                self.active[identity].inspection(
+                self.active[identity].monitor(
                     integer(params.get("after_sequence", 0), "after_sequence", 0, 2**63 - 1),
-                    integer(params.get("map_revision", -1), "map_revision", -1, 2**63 - 1),
+                    list(layers),
+                    {
+                        name: integer(value, "revisions." + name, -1, 2**63 - 1)
+                        for name, value in revisions.items()
+                    },
                 ),
                 attempt_id=identity,
             )

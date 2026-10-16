@@ -718,4 +718,6 @@ class Library:
             "resolution": ref.resolution,
             "width": ref.metadata["width"],
             "height": ref.metadata["height"],
+            "reference_id": ref.identity,
+            "metadata_sha256": ref.metadata_hash,
         }

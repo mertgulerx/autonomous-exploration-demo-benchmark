@@ -12,10 +12,178 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import base64
+from collections import deque
+import math
 from typing import Any
+
+import numpy as np
+import pyqtgraph as pg
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from .gui_style import Badge, duration, humanize, label
+from .gui_style import COLORS, Badge, duration, humanize, label
+from .gui_support import MapView
+from .monitoring import IN_COLLISION, SEGMENT_START
+
+
+class LiveMap(MapView):
+    CHUNK = 4096
+    MAXIMUM_VERTICES = 200_000
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.image.setZValue(-30)
+        self.explored = pg.ImageItem(axisOrder="row-major")
+        self.addItem(self.explored)
+        self.explored.setZValue(-20)
+        self.path_pen = pg.mkPen(COLORS["accent.default"], width=2)
+        self.tail = self.plot(pen=self.path_pen, connect="finite")
+        self.disagreements = self.plot(
+            pen=None, symbol="x", symbolPen=COLORS["status.error"], symbolSize=9
+        )
+        self.goal = self.plot(pen=None, symbol="x", symbolPen=COLORS["status.info"], symbolSize=12)
+        self.plan = self.plot(
+            pen=pg.mkPen(COLORS["text.body"], width=1, style=QtCore.Qt.PenStyle.DashLine)
+        )
+        for item in (self.tail, self.disagreements):
+            item.setZValue(1)
+        for item in (self.goal, self.plan):
+            item.setZValue(2)
+        self.footprint.setZValue(3)
+        self.arrow.setZValue(3)
+        self.reference_hash: str | None = None
+        self.reference_world: str | None = None
+        # Frozen items retain only their real vertex count; only the current arrays are mutable.
+        self.chunks: deque[tuple[Any, int]] = deque()
+        self.current: Any = None
+        self.current_x: list[float] = []
+        self.current_y: list[float] = []
+        self.current_real = 0
+        self.real_vertices = 0
+        self.view_dropped = 0
+        self.markers: deque[tuple[float, float]] = deque(maxlen=2000)
+        self.hide_pose()
+
+    def set_reference(self, result: dict[str, Any]) -> None:
+        self.set_map(result)
+        self.reference_hash = result.get("metadata_sha256")
+        self.reference_world = result["world_id"]
+
+    @staticmethod
+    def place(item: Any, origin: list[float], resolution: float) -> None:
+        x, y, yaw = origin
+        c, s = math.cos(yaw) * resolution, math.sin(yaw) * resolution
+        item.setTransform(QtGui.QTransform(c, s, -s, c, x, y))
+
+    @staticmethod
+    def pixels(data: dict[str, Any]) -> np.ndarray[Any, Any]:
+        image = QtGui.QImage.fromData(base64.b64decode(data["image_png"]))
+        if image.isNull():
+            raise ValueError("Unreadable monitor layer image")
+        image = image.convertToFormat(QtGui.QImage.Format.Format_RGBA8888)
+        array = np.frombuffer(image.constBits(), dtype=np.uint8).reshape(
+            image.height(), image.bytesPerLine()
+        )
+        return (
+            array[:, : image.width() * 4].reshape(image.height(), image.width(), 4)[:, :, 0].copy()
+        )
+
+    def set_explored(self, data: dict[str, Any] | None) -> None:
+        if data is None:
+            self.explored.clear()
+            return
+        pixels = self.pixels(data)
+        rgba = np.zeros((*pixels.shape, 4), dtype=np.uint8)
+        color = QtGui.QColor(COLORS["status.info"])
+        rgba[:, :, :3] = (color.red(), color.green(), color.blue())
+        rgba[:, :, 3] = np.where(pixels == 255, 70, 0)
+        self.explored.setImage(rgba, autoLevels=False)
+        self.place(self.explored, data["origin"], data["resolution"])
+
+    def set_navigation(self, data: dict[str, Any] | None) -> None:
+        goal = data.get("goal") if data is not None else None
+        plan = data.get("plan", []) if data is not None else []
+        self.goal.setData([goal[0]] if goal else [], [goal[1]] if goal else [])
+        self.plan.setData([point[0] for point in plan], [point[1] for point in plan])
+
+    def _new_chunk(self, seed: tuple[float, float] | None) -> None:
+        if self.current is not None:
+            self.current.setData(self.current_x, self.current_y, connect="finite")
+            self.chunks.append((self.current, self.current_real))
+        self.current = self.plot(pen=self.path_pen, connect="finite")
+        self.current.setZValue(0)
+        self.current_x, self.current_y = [], []
+        self.current_real = 0
+        if seed is not None:
+            # Repeats the previous chunk's last vertex to keep the line continuous; not counted.
+            self.current_x.append(seed[0])
+            self.current_y.append(seed[1])
+
+    def append_vertices(self, vertices: list[tuple[float, float, int]]) -> None:
+        if not vertices:
+            return
+        marked = False
+        for x, y, flags in vertices:
+            start = bool(flags & SEGMENT_START)
+            if self.current is None or len(self.current_x) == self.CHUNK:
+                seed = (
+                    (self.current_x[-1], self.current_y[-1])
+                    if self.current_x and not start
+                    else None
+                )
+                self._new_chunk(seed)
+            if start and self.current_x:
+                self.current_x.append(math.nan)
+                self.current_y.append(math.nan)
+                if len(self.current_x) == self.CHUNK:
+                    self._new_chunk(None)
+            self.current_x.append(x)
+            self.current_y.append(y)
+            self.current_real += 1
+            self.real_vertices += 1
+            if flags & IN_COLLISION:
+                self.markers.append((x, y))
+                marked = True
+            while self.real_vertices > self.MAXIMUM_VERTICES and self.chunks:
+                item, count = self.chunks.popleft()
+                self.removeItem(item)
+                self.real_vertices -= count
+                self.view_dropped += count
+        self.current.setData(self.current_x, self.current_y, connect="finite")
+        if marked:
+            self.disagreements.setData(
+                [point[0] for point in self.markers], [point[1] for point in self.markers]
+            )
+
+    def set_tail(self, point: list[float] | None) -> None:
+        if point is None or not self.current_x or not math.isfinite(self.current_x[-1]):
+            self.tail.setData([], [])
+        else:
+            self.tail.setData([self.current_x[-1], point[0]], [self.current_y[-1], point[1]])
+
+    def clear_path(self) -> None:
+        for item, _ in self.chunks:
+            self.removeItem(item)
+        self.chunks.clear()
+        if self.current is not None:
+            self.removeItem(self.current)
+        self.current = None
+        self.current_x, self.current_y = [], []
+        self.current_real = self.real_vertices = self.view_dropped = 0
+        self.markers.clear()
+        self.tail.setData([], [])
+        self.disagreements.setData([], [])
+
+    def clear_view(self) -> None:
+        super().clear_view()
+        self.clear_path()
+        self.set_explored(None)
+        self.set_navigation(None)
+        self.reference_hash = self.reference_world = None
+
+    def set_footprint(self, vertices: list[list[float]]) -> None:
+        self.vertices = vertices
+        self.hide_pose()
 
 
 def number(value: Any, unit: str = "", digits: int = 1) -> str:

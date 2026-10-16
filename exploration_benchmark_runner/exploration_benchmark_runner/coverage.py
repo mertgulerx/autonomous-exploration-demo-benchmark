@@ -227,12 +227,20 @@ class Calculator:
             columns = np.floor((c * dx + s * dy) / resolution).astype(np.int64)
             rows = np.floor((-s * dx + c * dy) / resolution).astype(np.int64)
             inside = (columns >= 0) & (columns < width) & (rows >= 0) & (rows < height)
+            self.inside = inside
             self.indices = rows[inside] * width + columns[inside]
             self.geometry_key = key
         values = np.asarray(grid.data)
         if np.any((values < -1) | (values > 100)):
             raise ValueError("invalid occupancy values")
         return int(np.count_nonzero(values[self.indices] == 0))
+
+    def free_cells(self, grid):
+        """Per reference target cell (reference order): whether count() counts it free."""
+        self.count(grid)
+        free = np.zeros(self.reference.count, dtype=bool)
+        free[self.inside] = np.asarray(grid.data)[self.indices] == 0
+        return free
 
 
 class Coverage:

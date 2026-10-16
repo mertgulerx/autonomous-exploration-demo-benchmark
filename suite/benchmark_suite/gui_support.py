@@ -611,18 +611,9 @@ class MapView(pg.PlotWidget):  # type: ignore[misc]
         self.showGrid(x=True, y=True, alpha=0.12)
         self.image = pg.ImageItem(axisOrder="row-major")
         self.addItem(self.image)
-        self.path = self.plot(pen=pg.mkPen(COLORS["accent.default"], width=2))
         self.footprint = self.plot(pen=pg.mkPen(COLORS["text.heading"], width=2))
         self.arrow = HeadingArrow(self)
         self.addItem(self.arrow)
-        self.goal = self.plot(symbol="x", symbolPen=COLORS["status.info"], pen=None)
-        self.plan = self.plot(
-            pen=pg.mkPen(COLORS["text.body"], width=1, style=QtCore.Qt.PenStyle.DashLine)
-        )
-        self.incidents = self.plot(
-            pen=pg.mkPen(COLORS["status.error"], width=2, style=QtCore.Qt.PenStyle.DotLine)
-        )
-        self.points: list[list[float]] = []
         self.pose = [0.0, 0.0, 0.0]
         self.vertices: list[list[float]] = []
         self.editable = False
@@ -640,9 +631,11 @@ class MapView(pg.PlotWidget):  # type: ignore[misc]
     def clear_view(self) -> None:
         self.map_initialized = False
         self.image.clear()
-        self.points.clear()
-        for item in (self.path, self.footprint, self.goal, self.plan, self.incidents):
-            item.setData([], [])
+        self.footprint.setData([], [])
+
+    def hide_pose(self) -> None:
+        self.footprint.setData([], [])
+        self.arrow.hide()
 
     def set_map(self, result: dict[str, Any]) -> None:
         image = QtGui.QImage.fromData(base64.b64decode(result["image_png"]))
@@ -675,6 +668,7 @@ class MapView(pg.PlotWidget):  # type: ignore[misc]
         self.pose = [x, y, yaw]
         if vertices is not None:
             self.vertices = vertices
+        self.arrow.show()
         self.arrow.setPos(x, y)
         self.arrow.setStyle(angle=180 - math.degrees(yaw))
         if self.vertices:
@@ -682,16 +676,6 @@ class MapView(pg.PlotWidget):  # type: ignore[misc]
             c, s = math.cos(yaw), math.sin(yaw)
             a = a @ np.array([[c, s], [-s, c]]) + [x, y]
             self.footprint.setData(a[:, 0], a[:, 1])
-
-    def append_path(self, points: list[list[float]], reset: bool = False) -> None:
-        if reset:
-            self.points.clear()
-            self.path.setData([], [])
-        self.points.extend(points)
-        self.points = self.points[-10000:]
-        if self.points:
-            a = np.asarray(self.points)
-            self.path.setData(a[:, 0], a[:, 1])
 
     def _click(self, event: Any) -> None:
         if not self.editable or event.button() != QtCore.Qt.MouseButton.LeftButton:

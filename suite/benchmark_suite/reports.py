@@ -13,7 +13,9 @@
 # limitations under the License.
 
 from collections import Counter
-from dataclasses import asdict
+from collections.abc import Iterable, Mapping
+from dataclasses import asdict, dataclass
+from functools import lru_cache
 import json
 import math
 import os
@@ -21,6 +23,7 @@ from pathlib import Path
 import sqlite3
 import shutil
 import time
+from types import SimpleNamespace
 from typing import Any
 
 import duckdb
@@ -30,19 +33,35 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_pdf import PdfPages
 from matplotlib.collections import LineCollection
+from matplotlib.colors import to_rgb
+from matplotlib.patches import Patch
 from matplotlib.transforms import Affine2D
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
+from exploration_benchmark_runner.coverage import Calculator, Reference
+
 from .analysis import ANALYSIS_VERSION, DetectorSettings
 from .contracts import DATASET_VERSION, content_hash, mapping
 from .datasets import files, materialize_manifest, preview
+from .datasets import observations as recorded
+from .monitoring import (
+    IN_COLLISION,
+    SEGMENT_START,
+    PathSettings,
+    PhysicalPath,
+    ReferenceCells,
+    base_pose,
+    explored_pixels,
+)
 from .report_data import OUTCOME_SCHEMA, SUMMARY_SCHEMA, parquet_rows, summarize
 from .storage import atomic_json, file_hash, sync_directory
 from .factor_reports import generate_sweeps, profile_distributions
 
 COLOURS = ("#0072B2", "#D55E00", "#009E73", "#CC79A7", "#E69F00", "#56B4E9")
+GROUND_TRUTH_OFFSET = ("model_to_base_x", "model_to_base_y", "model_to_base_yaw")
+GROUND_TRUTH_COLUMNS = ["clock_ns", "valid", "x", "y", "yaw", "speed", *GROUND_TRUTH_OFFSET]
 
 
 def display(value: float | None, units: str = "s") -> str:
@@ -72,6 +91,50 @@ def series(
         )
         y[np.r_[False, breaks | (np.diff(x) <= 0)]] = np.nan
     return x, y
+
+
+def explored_cells(
+    reference: Any, directory: Path, manifest: Mapping[str, Any]
+) -> tuple[np.ndarray[Any, Any] | None, str | None]:
+    """Reference target cells the coverage metric counts as free in the final map."""
+    alignment = ((manifest.get("coverage") or {}).get("alignment") or {}).get("world_from_map")
+    if not alignment:
+        return None, "Explored cells unavailable: no coverage alignment recorded"
+    path = directory / "final_map.npz"
+    if not path.exists():
+        return None, "Explored cells unavailable: final map not recorded"
+    try:
+        with np.load(path, allow_pickle=False) as archive:
+            occupancy = archive["occupancy"]
+            metadata = json.loads(str(archive["metadata"]))
+        x, y, z = metadata["origin"]
+        qx, qy, qz, qw = metadata["orientation"]
+        grid = SimpleNamespace(
+            header=SimpleNamespace(frame_id=str(metadata["frame"])),
+            info=SimpleNamespace(
+                width=occupancy.shape[1],
+                height=occupancy.shape[0],
+                resolution=metadata["resolution"],
+                origin=SimpleNamespace(
+                    position=SimpleNamespace(x=x, y=y, z=z),
+                    orientation=SimpleNamespace(x=qx, y=qy, z=qz, w=qw),
+                ),
+            ),
+            data=occupancy.ravel(),
+        )
+        free: np.ndarray[Any, Any] = Calculator(reference, alignment).free_cells(grid)
+    except KeyError as exc:
+        return None, f"Explored cells unavailable: final map has no {exc}"
+    except (TypeError, ValueError) as exc:
+        return None, f"Explored cells unavailable: {exc}"
+    return free, None
+
+
+def corners(transform: Affine2D, extent: list[float]) -> np.ndarray[Any, Any]:
+    width, height = extent[1], extent[3]
+    return np.asarray(
+        transform.transform(np.array([[0.0, 0.0], [width, 0.0], [0.0, height], [width, height]]))
+    )
 
 
 def final_map(axis: Any, directory: Path, manifest: dict[str, Any]) -> None:
@@ -108,35 +171,228 @@ def final_map(axis: Any, directory: Path, manifest: dict[str, Any]) -> None:
         interpolation="nearest",
         rasterized=True,
     )
-    corners = transform.transform([[0, 0], [extent[1], 0], [0, extent[3]], [extent[1], extent[3]]])
-    axis.update_datalim(corners)
+    # imshow adds its untransformed extent to the data limits; keep only the placed map.
+    axis.ignore_existing_data_limits = True
+    axis.update_datalim(corners(transform, extent))
     axis.autoscale_view()
     axis.set_aspect("equal", adjustable="datalim")
 
 
-def path_layer(axis: Any, trajectory: pa.Table) -> None:
-    if len(trajectory) < 2:
-        return
-    x, y = (
-        np.asarray(trajectory["world_x"].to_pylist(), dtype=float),
-        np.asarray(trajectory["world_y"].to_pylist(), dtype=float),
+@dataclass(frozen=True, slots=True)
+class GroundTruthPath:
+    reference: Any | None
+    path: PhysicalPath | None
+    speeds: tuple[float, ...]
+    notes: tuple[str, ...]
+
+
+@lru_cache(maxsize=4)
+def cached_reference(metadata_file: str, metadata_sha256: str) -> Any:
+    return Reference(metadata_file)
+
+
+def load_reference(descriptor: Mapping[str, Any] | None) -> tuple[Any | None, str | None]:
+    """The attempt's coverage reference when its files still match the recorded hashes."""
+    if not descriptor:
+        return None, "World reference not recorded"
+    try:
+        reference = cached_reference(
+            str(descriptor["metadata_file"]), str(descriptor["metadata_sha256"])
+        )
+        matches = (
+            reference.metadata_hash == descriptor["metadata_sha256"]
+            and reference.metadata["grid_sha256"] == descriptor["grid_sha256"]
+        )
+    except (ValueError, OSError, KeyError, TypeError) as exc:
+        return None, f"World reference unavailable: {exc}"
+    if not matches:
+        return None, "World reference changed since the attempt; not drawn"
+    return reference, None
+
+
+def finite(value: Any) -> float | None:
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value):
+        return float(value)
+    return None
+
+
+def triple(values: Any) -> tuple[float, float, float] | None:
+    if not isinstance(values, (list, tuple)) or len(values) != 3:
+        return None
+    x, y, z = (finite(value) for value in values)
+    return None if x is None or y is None or z is None else (x, y, z)
+
+
+def ground_truth_path(
+    rows: Iterable[Mapping[str, Any]], manifest: Mapping[str, Any]
+) -> GroundTruthPath:
+    """Report path built exactly like the live Monitor's: recorded rows in arrival order."""
+    reference, note = load_reference((manifest.get("coverage") or {}).get("reference"))
+    notes = [note] if note else []
+    maximum = finite((manifest.get("robot") or {}).get("max_linear_speed"))
+    if maximum is None or maximum <= 0:
+        notes.append("Robot speed limit unavailable; ground-truth path not drawn")
+        return GroundTruthPath(reference, None, (), tuple(notes))
+    path = PhysicalPath(
+        maximum, reference=ReferenceCells.of(reference) if reference is not None else None
     )
-    points = np.column_stack((x, y))
-    speed = np.asarray(trajectory["speed"].to_pylist(), dtype=float)
-    valid = np.all(np.isfinite(points), axis=1) & np.asarray(trajectory["valid"].to_pylist())
-    segments = np.stack((points[:-1], points[1:]), axis=1)
-    keep = valid[:-1] & valid[1:] & np.isfinite(speed[:-1])
-    if "presentation_segment" in trajectory.column_names:
-        keep &= np.diff(trajectory["presentation_segment"].to_numpy()) == 0
-    if not keep.any():
-        return
-    layer = LineCollection(
-        segments[keep], array=speed[:-1][keep], cmap="viridis", linewidth=1.4, rasterized=True
+    fallback = triple((manifest.get("ground_truth_alignment") or {}).get("model_to_base"))
+    speeds: list[float] = []
+    for row in rows:
+        offset = triple([row.get(key) for key in GROUND_TRUTH_OFFSET]) or fallback
+        if offset is None:
+            continue
+        model = triple([row.get(key) for key in ("x", "y", "yaw")]) if row.get("valid") else None
+        x, y = base_pose(model, offset)[:2] if model is not None else (math.nan, math.nan)
+        if path.add(row["clock_ns"], x, y) is not None:
+            speed = finite(row.get("speed"))
+            speeds.append(math.nan if speed is None else speed)
+    if not path.samples:
+        notes.append(
+            "No ground-truth samples with a model-to-base offset "
+            "(diagnostics disabled or alignment missing)"
+        )
+        return GroundTruthPath(reference, None, (), tuple(notes))
+    dropped = max(0, path.count - path.settings.capacity)
+    if dropped:
+        notes.append(f"Oldest {dropped:,} vertices not drawn (history bound)")
+    return GroundTruthPath(reference, path, tuple(speeds[dropped:]), tuple(notes))
+
+
+def ground_truth_layer(
+    axis: Any, physical: GroundTruthPath, directory: Path, manifest: dict[str, Any]
+) -> None:
+    """World reference, explored cells (coverage metric, final map) and the ground-truth path."""
+    drawn: list[np.ndarray[Any, Any]] = []
+    handles: list[Any] = []
+    lines = list(physical.notes)
+    reference = physical.reference
+    if reference is not None:
+        image = np.full(reference.collision.shape, 0.67)
+        image[reference.target] = 0.96
+        image[reference.collision] = 0.12
+        height, width = reference.collision.shape
+        extent = [0, width * reference.resolution, 0, height * reference.resolution]
+        x, y, yaw = reference.origin
+        transform = Affine2D().rotate(yaw).translate(x, y)
+        axis.imshow(
+            image,
+            origin="lower",
+            extent=extent,
+            cmap="gray",
+            vmin=0,
+            vmax=1,
+            transform=transform + axis.transData,
+            interpolation="nearest",
+            rasterized=True,
+        )
+        drawn.append(corners(transform, extent))
+        free, note = explored_cells(reference, directory, manifest)
+        if free is None:
+            lines.append(note or "Explored cells unavailable")
+        else:
+            overlay = np.zeros((*reference.collision.shape, 4))
+            overlay[..., :3] = to_rgb(COLOURS[5])
+            overlay[..., 3] = np.where(explored_pixels(reference.target, free) == 255, 0.35, 0.0)
+            axis.imshow(
+                overlay,
+                origin="lower",
+                extent=extent,
+                transform=transform + axis.transData,
+                interpolation="nearest",
+                rasterized=True,
+            )
+            share = 100 * int(free.sum()) / reference.count
+            handles.append(
+                Patch(
+                    color=COLOURS[5],
+                    alpha=0.5,
+                    label=f"Explored cells, final map ({share:.2f} % of reference cells)",
+                )
+            )
+    path = physical.path
+    if path is None:
+        axis.text(0.5, 0.5, "Ground-truth path unavailable", ha="center", transform=axis.transAxes)
+    else:
+        page = path.page(0, path.settings.capacity)
+        points = np.asarray([point[:2] for point in page["points"]], dtype=float).reshape(-1, 2)
+        flags = np.asarray([point[2] for point in page["points"]], dtype=int)
+        speeds = np.asarray(physical.speeds, dtype=float)
+        unknown: list[Any] = []
+        if len(points) > 1:
+            keep = (flags[1:] & SEGMENT_START) == 0
+            segments = np.stack((points[:-1], points[1:]), axis=1)[keep]
+            values = speeds[1:][keep]
+            finite = np.isfinite(values)
+            if finite.any():
+                layer = LineCollection(
+                    segments[finite],
+                    array=values[finite],
+                    cmap="viridis",
+                    linewidth=1.4,
+                    rasterized=True,
+                )
+                axis.add_collection(layer)
+                axis.figure.colorbar(
+                    layer, ax=axis, label="Gazebo ground-truth speed (m/s)", fraction=0.046
+                )
+            unknown.extend(segments[~finite])
+        if page["tail"] is not None and len(points):
+            unknown.append(np.asarray([points[-1], page["tail"]]))
+        if unknown:
+            axis.add_collection(
+                LineCollection(unknown, colors="#8F8D81", linewidth=1.4, rasterized=True)
+            )
+        if len(points):
+            drawn.append(points)
+        flagged = points[(flags & IN_COLLISION) != 0]
+        if len(flagged):
+            handles.append(
+                axis.scatter(
+                    flagged[:, 0],
+                    flagged[:, 1],
+                    marker="x",
+                    color="#A63A2E",
+                    s=18,
+                    zorder=3,
+                    label="Sample in an obstacle cell",
+                )
+            )
+        counted = [f"{reason} {count}" for reason, count in page["breaks"].items() if count]
+        if counted:
+            lines.append("Breaks: " + ", ".join(counted))
+        if page["collision_samples"]:
+            lines.append(f"Samples in obstacle cells: {page['collision_samples']}")
+        if page["outside_samples"]:
+            lines.append(f"Samples outside the reference region: {page['outside_samples']}")
+    if lines:
+        axis.text(0.01, 0.99, "\n".join(lines), transform=axis.transAxes, fontsize=7, va="top")
+    if handles:
+        axis.legend(handles=handles, fontsize=7, loc="lower right")
+    if drawn:
+        # imshow adds its untransformed extent to the data limits; keep only what is drawn.
+        axis.ignore_existing_data_limits = True
+        axis.update_datalim(np.vstack(drawn))
+        axis.autoscale_view()
+    axis.set_aspect("equal", adjustable="datalim")
+
+
+def path_plotting() -> dict[str, Any]:
+    settings = PathSettings()
+    return dict(
+        source=(
+            "Gazebo PosePublisher model pose composed with the recorded model_to_base offset; "
+            "ground_truth stream in arrival order"
+        ),
+        vertex_gate_m=settings.gate_m,
+        gap_seconds=settings.gap_seconds,
+        jump_floor_m=settings.jump_floor_m,
+        jump_speed_factor=settings.jump_speed_factor,
+        background=(
+            "coverage reference verified by hash; explored cells counted by the coverage metric "
+            "(Calculator.free_cells) in the final map"
+        ),
     )
-    axis.add_collection(layer)
-    axis.update_datalim(points[valid])
-    axis.autoscale_view()
-    axis.figure.colorbar(layer, ax=axis, label="Raw-odometry speed (m/s)", fraction=0.046)
 
 
 def attempt_figures(directory: Path, destination: Path, summary: dict[str, Any]) -> list[Path]:
@@ -221,9 +477,17 @@ def attempt_figures(directory: Path, destination: Path, summary: dict[str, Any])
         axis_style(
             axes[0, 1], "Measured turning speed", "Simulation seconds", "Angular speed (rad/s)"
         )
-        final_map(axes[1, 0], directory, manifest)
-        path_layer(axes[1, 0], motion)
-        axis_style(axes[1, 0], "Final map and traveled path", "World X (m)", "World Y (m)")
+        try:
+            rows = recorded(directory, "ground_truth", GROUND_TRUTH_COLUMNS).to_pylist()
+            physical = ground_truth_path(rows, manifest)
+        except duckdb.Error as exc:
+            reference, note = load_reference((manifest.get("coverage") or {}).get("reference"))
+            unreadable = f"Ground-truth stream unreadable: {exc}"
+            physical = GroundTruthPath(reference, None, (), (*filter(None, [note]), unreadable))
+        ground_truth_layer(axes[1, 0], physical, directory, manifest)
+        axis_style(
+            axes[1, 0], "World reference and ground-truth path", "World X (m)", "World Y (m)"
+        )
         x, rtf = series(resources, "rtf", maximum_gap=5)
         axes[1, 1].plot(x, rtf, color=COLOURS[4])
         axes[1, 1].axhline(0.9, linestyle="--", color="gray", label="Campaign acceptance")
@@ -710,6 +974,7 @@ def _generate(payload: dict[str, Any]) -> dict[str, Any]:
             "coverage_bins": "floor of actual simulation seconds; latest valid observation per attempt/bin",
             "curves": "observed only; absent bins not filled",
             "support": "per bin; no extrapolation",
+            "path": path_plotting(),
         },
     )
     atomic_json(destination / "manifest.json", manifest)
