@@ -13,10 +13,7 @@
 # limitations under the License.
 
 from copy import deepcopy
-from decimal import Decimal, InvalidOperation
-from itertools import product
 import json
-import math
 from pathlib import Path
 import time
 from typing import Any
@@ -34,7 +31,7 @@ from .contracts import (
     CampaignSpec,
     ContractError,
     DEFAULT_LIMIT,
-    HIDDEN_GROUPS,
+    PROFILE_DELETION_LIMIT,
     canonical,
     content_hash,
     integer,
@@ -43,6 +40,7 @@ from .contracts import (
     number,
     text,
 )
+from .monitoring import png, reference_pixels
 from .storage import file_hash
 from .store import Store
 
@@ -55,7 +53,6 @@ PROFILE_FIELDS = {
     "robot_overrides",
     "yaml_text",
     "description",
-    "tags",
     "effective",
     "robot",
     "baseline_hash",
@@ -63,10 +60,10 @@ PROFILE_FIELDS = {
     "hash",
     "family_id",
     "revision",
-    "parent_id",
-    "sweep",
     "created_ns",
 }
+# Retired keys accepted from recorded snapshots and earlier YAML, then ignored (tags, 16 October 2026).
+LEGACY_PROFILE_FIELDS = frozenset({"tags"})
 
 
 def load_yaml(source: str) -> dict[str, Any]:
@@ -74,44 +71,6 @@ def load_yaml(source: str) -> dict[str, Any]:
         return mapping(yaml.load(source, Loader=UniqueKeyLoader), "yaml")
     except yaml.YAMLError as exc:
         raise ContractError("yaml", str(exc)) from exc
-
-
-def sweep_values(axis: dict[str, Any], default: Any) -> list[Any]:
-    known_keys(axis, {"values", "start", "stop", "step"}, "axis")
-    if "values" in axis:
-        if set(axis) != {"values"} or not isinstance(axis["values"], list) or not axis["values"]:
-            raise ContractError("axis.values", "Provide one nonempty explicit list")
-        values = axis["values"]
-    else:
-        if set(axis) != {"start", "stop", "step"} or type(default) not in (int, float):
-            raise ContractError("axis", "Numeric ranges require start, stop and step")
-        try:
-            start, stop, step = (Decimal(str(axis[k])) for k in ("start", "stop", "step"))
-            if (
-                not all(v.is_finite() for v in (start, stop, step))
-                or not step
-                or (stop - start) * step < 0
-            ):
-                raise ContractError("axis", "Use a finite step pointing toward the stop value")
-            count = int((stop - start) / step) + 1
-            if count > 100000:
-                raise ContractError(
-                    "axis", "Split ranges exceeding 100000 values into separate sweeps"
-                )
-            decimals = [start + step * i for i in range(count)]
-            if type(default) is int:
-                if any(v != v.to_integral_value() for v in decimals):
-                    raise ContractError("axis", "Integer parameters require integer range values")
-                values = [int(v) for v in decimals]
-            else:
-                values = [float(v) for v in decimals]
-        except (InvalidOperation, ValueError, OverflowError) as exc:
-            raise ContractError("axis", "Invalid decimal range") from exc
-    if any(type(v) is not type(default) for v in values):
-        raise ContractError("axis", f"Values must have type {type(default).__name__}")
-    if len({canonical(v) for v in values}) != len(values):
-        raise ContractError("axis", "Duplicate values")
-    return values
 
 
 class Library:
@@ -136,6 +95,8 @@ class Library:
             for world in ("bookstore", "corridor", "warehouse")
         }
         self.scenarios = {world: scenario(self.root, world) for world in self.references}
+        # spawns.map replies per world; the references above never change after loading.
+        self.maps: dict[str, dict[str, Any]] = {}
 
     def bind(self, store: Store) -> None:
         self.store = store
@@ -158,6 +119,7 @@ class Library:
             raise ContractError("robot_id", str(exc), "dependency_or_configuration") from exc
 
     def resolve_profile(self, robot_id: str, value: dict[str, Any]) -> dict[str, Any]:
+        value = {k: v for k, v in value.items() if k not in LEGACY_PROFILE_FIELDS}
         known_keys(value, PROFILE_FIELDS, "profile")
         if value.get("robot_id", robot_id) != robot_id:
             raise ContractError("robot_id", "Profile belongs to another robot")
@@ -195,61 +157,16 @@ class Library:
             "metadata_hash": self.metadata_hash,
             "yaml_text": imported,
             "description": value.get("description", ""),
-            "tags": value.get("tags", []),
         }
-        if not isinstance(result["description"], str) or not isinstance(result["tags"], list):
-            raise ContractError("profile", "Description must be text and tags a string list")
-        if any(not isinstance(tag, str) for tag in result["tags"]):
-            raise ContractError("tags", "Every tag must be text")
-        if (
-            len(result["description"]) > 4096
-            or len(result["tags"]) > 32
-            or any(len(tag) > 80 for tag in result["tags"])
-        ):
-            raise ContractError(
-                "profile",
-                "Use a description up to 4096 characters and at most 32 tags of 80 characters",
-            )
-        for key in ("family_id", "parent_id"):
-            if key in value:
-                result[key] = text(value[key], key)
+        if not isinstance(result["description"], str):
+            raise ContractError("description", "Description must be text")
+        if len(result["description"]) > 4096:
+            raise ContractError("description", "Use a description up to 4096 characters")
+        if "family_id" in value:
+            result["family_id"] = text(value["family_id"], "family_id")
         for key in ("revision", "created_ns"):
             if key in value:
                 result[key] = integer(value[key], key, 1, 2**63 - 1)
-        if "sweep" in value:
-            sweep = mapping(value["sweep"], "sweep")
-            known_keys(sweep, {"axes", "values"}, "sweep")
-            axes, values = (
-                mapping(sweep.get("axes"), "sweep.axes"),
-                mapping(sweep.get("values"), "sweep.values"),
-            )
-            if not axes or set(axes) != set(values):
-                raise ContractError("sweep", "Every sweep axis requires an accepted value")
-            for key, axis in axes.items():
-                candidates = sweep_values(
-                    mapping(axis, "sweep.axes." + key), self.axis_default(robot_id, key)
-                )
-                chosen = values[key]
-                actual = (
-                    physical.get(
-                        key[6:],
-                        {"movement_speed": 0.8, "turning_speed": 1.0, "lidar_range": 10.0}.get(
-                            key[6:]
-                        ),
-                    )
-                    if key.startswith("robot.")
-                    else effective.get(key)
-                )
-                if (
-                    type(chosen) is not type(candidates[0])
-                    or chosen not in candidates
-                    or chosen != actual
-                ):
-                    raise ContractError(
-                        "sweep.values." + key,
-                        "Sweep provenance must match the accepted configuration",
-                    )
-            result["sweep"] = deepcopy(sweep)
         result["hash"] = content_hash(result)
         result["id"] = text(
             value.get(
@@ -320,7 +237,11 @@ class Library:
             raise RuntimeError("Library is not attached to the engine")
         row = self.store.one("SELECT * FROM library WHERE id=? AND kind=?", (identity, kind))
         if not row:
-            raise ContractError("revision_id", "Library revision does not exist", "not_found")
+            raise ContractError(
+                "revision_id",
+                f"Library revision {identity} does not exist; it may have been deleted",
+                "not_found",
+            )
         return mapping(json.loads(row["snapshot"]), "snapshot")
 
     def resolve_campaign(self, raw: dict[str, Any]) -> CampaignSpec:
@@ -420,7 +341,13 @@ class Library:
         previous = store.one(
             "SELECT * FROM library WHERE family_id=? ORDER BY revision DESC LIMIT 1", (family,)
         )
-        if family_id and (not previous or previous["owner"] != owner or previous["kind"] != kind):
+        if family_id and not previous:
+            raise ContractError(
+                "family_id",
+                "This profile was deleted; save it as a new profile with Clone",
+                "not_found",
+            )
+        if family_id and previous and (previous["owner"] != owner or previous["kind"] != kind):
             raise ContractError("family_id", "Revision family does not match this library")
         revision = previous["revision"] + 1 if previous else 1
         result = dict(
@@ -463,10 +390,17 @@ class Library:
             kind, field = (
                 ("profile", "robot_id") if method.startswith("profiles") else ("spawn", "world_id")
             )
-            filters: dict[str, Any] = {"kind": kind, "archived": int(params.get("archived", False))}
+            filters: dict[str, Any] = {"kind": kind}
+            if kind == "spawn" and "archived" in params:
+                # The archive controls were removed on 16 October 2026; the flag only filters on request.
+                if type(params["archived"]) is not bool:
+                    raise ContractError("archived", "Expected true or false")
+                filters["archived"] = int(params["archived"])
             if params.get(field):
                 filters["owner"] = params[field]
-            if not params.get("search") and not params.get("tag"):
+            if params.get("tag"):
+                raise ContractError("tag", "Tag filtering was removed; search by profile name")
+            if not params.get("search"):
                 return store.query(
                     "library",
                     filters,
@@ -476,18 +410,16 @@ class Library:
                 )
             offset = integer(params.get("offset", 0), "offset", 0, 2**63 - 1)
             limit = integer(params.get("limit", 100), "limit", 1, 250)
-            clauses, arguments = ["kind=?", "archived=?"], [kind, filters["archived"]]
+            clauses, arguments = ["kind=?"], [kind]
+            if "archived" in filters:
+                clauses.append("archived=?")
+                arguments.append(filters["archived"])
             if "owner" in filters:
                 clauses.append("owner=?")
                 arguments.append(text(filters["owner"], field))
             if params.get("search"):
                 clauses.append("instr(lower(name),lower(?))>0")
                 arguments.append(text(params["search"], "search"))
-            if params.get("tag"):
-                clauses.append(
-                    "EXISTS(SELECT 1 FROM json_each(library.snapshot,'$.tags') WHERE value=?)"
-                )
-                arguments.append(text(params["tag"], "tag"))
             where = " AND ".join(clauses)
             summary = params.get("summary", False)
             if type(summary) is not bool:
@@ -534,7 +466,6 @@ class Library:
                             for k in (
                                 "name",
                                 "description",
-                                "tags",
                                 "robot_id",
                                 "requested",
                                 "robot_overrides",
@@ -556,24 +487,6 @@ class Library:
             value = mapping(document.get("profile"), "profile")
             robot = text(value.get("robot_id"), "robot_id")
             return self._save(store, "profile", robot, self.resolve_profile(robot, value), None)
-        if method == "profiles.diff":
-            left = self._revision(text(params.get("left"), "left"), "profile")
-            right = self._revision(text(params.get("right"), "right"), "profile")
-            left_physical = left["robot"].get("benchmark_settings", {}).get("effective", {})
-            right_physical = right["robot"].get("benchmark_settings", {}).get("effective", {})
-            return {
-                "same_robot": left["robot_id"] == right["robot_id"],
-                "algorithm": {
-                    key: [left["effective"].get(key), right["effective"].get(key)]
-                    for key in left["effective"] | right["effective"]
-                    if left["effective"].get(key) != right["effective"].get(key)
-                },
-                "physical": {
-                    key: [left_physical.get(key), right_physical.get(key)]
-                    for key in left_physical | right_physical
-                    if left_physical.get(key) != right_physical.get(key)
-                },
-            }
         if method in ("spawns.export", "spawns.import"):
             if method.endswith("export"):
                 value = self._revision(text(params.get("revision_id"), "revision_id"), "spawn")
@@ -621,99 +534,74 @@ class Library:
                 except ValueError as exc:
                     raise ContractError("spawn", str(exc)) from exc
             return self._save(store, "spawn", world, pose, params.get("family_id"))
-        if method in ("profiles.archive", "spawns.archive"):
-            identity = text(params.get("revision_id"), "revision_id")
-            kind = "profile" if method.startswith("profiles") else "spawn"
-            self._revision(identity, kind)
-            if type(params.get("archived", True)) is not bool:
-                raise ContractError("archived", "Expected boolean")
-            store.db.execute(
-                "UPDATE library SET archived=? WHERE id=?",
-                (int(params.get("archived", True)), identity),
-            )
-            return {"id": identity, "archived": params.get("archived", True)}
         if method == "spawns.map":
             return self._map(text(params.get("world_id"), "world_id"))
-        if method in ("profiles.sweep", "profiles.sweep_preview"):
-            return self._sweep(params, store, save=method == "profiles.sweep")
+        if method == "profiles.delete":
+            return self._delete_profiles(params, store)
         raise ContractError("method", "Unsupported library operation")
 
-    def _sweep(self, params: dict[str, Any], store: Store, *, save: bool) -> Any:
-        robot_id = text(params.get("robot_id"), "robot_id")
-        parent = (
-            self._revision(text(params["parent_id"], "parent_id"), "profile")
-            if params.get("parent_id")
-            else self.resolve_profile(robot_id, {k: v for k, v in params.items() if k != "axes"})
+    def _delete_profiles(self, params: dict[str, Any], store: Store) -> dict[str, Any]:
+        """Delete whole profiles (every revision), all or nothing; campaigns keep their own copies."""
+        known_keys(params, {"family_ids"}, "params")
+        identities = params.get("family_ids")
+        if not isinstance(identities, list) or not 1 <= len(identities) <= PROFILE_DELETION_LIMIT:
+            raise ContractError("family_ids", f"Choose 1–{PROFILE_DELETION_LIMIT} profiles")
+        identities = [text(identity, "family_ids") for identity in identities]
+        if len(set(identities)) != len(identities):
+            raise ContractError("family_ids", "Each profile may appear once")
+        rows = store.rows(
+            "SELECT id,owner,name,family_id,revision,hash FROM library WHERE kind='profile' "
+            "AND family_id IN (SELECT value FROM json_each(?)) ORDER BY family_id,revision",
+            (canonical(identities),),
         )
-        if parent["robot_id"] != robot_id:
-            raise ContractError("parent_id", "Profile belongs to another robot")
-        axes = mapping(params.get("axes"), "axes")
-        if not axes:
-            raise ContractError("axes", "Select at least one sweep axis")
-        keys, values = [], []
-        for key, axis in axes.items():
-            keys.append(key)
-            values.append(sweep_values(mapping(axis, "axis"), self.axis_default(robot_id, key)))
-        count = math.prod(len(v) for v in values)
-        if count > 10000:
+        missing = sorted(set(identities) - {row["family_id"] for row in rows})
+        if missing:
             raise ContractError(
-                "axes", "Split sweeps exceeding 10000 profiles into separate sweeps"
+                "family_ids",
+                "Profile does not exist or was already deleted: " + ", ".join(missing),
+                "not_found",
             )
-        variants: list[dict[str, Any]] = []
-        revision_ids: list[str] = []
-        seen: set[str] = set()
-        for combination in product(*values):
-            value = deepcopy(parent)
-            value.pop("sweep", None)
-            axis_values = dict(zip(keys, combination))
-            for key, item in axis_values.items():
-                value.setdefault(
-                    "robot_overrides" if key.startswith("robot.") else "requested", {}
-                )[key[6:] if key.startswith("robot.") else key] = item
-            value.pop("id", None)
-            value["name"] = (
-                parent["name"] + " · " + ", ".join(f"{k}={v}" for k, v in axis_values.items())
-            )[:160]
-            resolved = self.resolve_profile(robot_id, value)
-            identity = content_hash([resolved["effective"], resolved["robot_overrides"]])
-            if identity in seen:
-                raise ContractError("axes", "Sweep produces duplicate effective variants")
-            seen.add(identity)
-            resolved.update(parent_id=parent["id"], sweep={"axes": axes, "values": axis_values})
-            if save:
-                revision_ids.append(self._save(store, "profile", robot_id, resolved, None)["id"])
-            elif len(variants) < 10:
-                variants.append(resolved)
-        return {"count": count, "profiles": variants, "revision_ids": revision_ids}
-
-    def axis_default(self, robot_id: str, key: str) -> Any:
-        physical_defaults = {"movement_speed": 0.8, "turning_speed": 1.0, "lidar_range": 10.0}
-        if key.startswith("robot."):
-            if robot_id != "mogi" or key[6:] not in physical_defaults:
-                raise ContractError("axes." + key, "Only MOGI physical settings may be swept")
-            return physical_defaults[key[6:]]
-        metadata = self.schema.metadata.get(key)
-        if not metadata or metadata["managed"] or metadata["group"] in HIDDEN_GROUPS:
-            raise ContractError("axes." + key, "Parameter is not an editable sweep axis")
-        return self.schema.defaults[key]
+        used = store.one(
+            "SELECT COUNT(DISTINCT campaign_id) n FROM experiments "
+            "WHERE profile_id IN (SELECT value FROM json_each(?))",
+            (canonical([row["id"] for row in rows]),),
+        )
+        referenced = used["n"] if used else 0
+        store.db.execute(
+            "DELETE FROM library WHERE kind='profile' AND family_id IN (SELECT value FROM json_each(?))",
+            (canonical(identities),),
+        )
+        store.event(
+            "library.deleted",
+            {
+                "kind": "profile",
+                "family_ids": identities,
+                "revisions": rows,
+                "referenced_campaigns": referenced,
+            },
+        )
+        return {
+            "family_ids": identities,
+            "revisions": [
+                {k: row[k] for k in ("id", "family_id", "owner", "name", "revision")}
+                for row in rows
+            ],
+            "deleted_revisions": len(rows),
+            "referenced_campaigns": referenced,
+        }
 
     def _map(self, world: str) -> dict[str, Any]:
-        import base64
-        from io import BytesIO
-        import numpy as np
-        from PIL import Image
-
         if world not in self.references:
             raise ContractError("world_id", "Unknown world")
+        if world not in self.maps:
+            self.maps[world] = self._render_map(world)
+        return dict(self.maps[world])
+
+    def _render_map(self, world: str) -> dict[str, Any]:
         ref = self.references[world]
-        pixels = np.full(ref.collision.shape, 170, dtype=np.uint8)
-        pixels[ref.target] = 245
-        pixels[ref.collision] = 30
-        buffer = BytesIO()
-        Image.fromarray(pixels).save(buffer, format="PNG", optimize=True)
         return {
             "world_id": world,
-            "image_png": base64.b64encode(buffer.getvalue()).decode(),
+            "image_png": png(reference_pixels(ref.collision, ref.target), optimize=True),
             "origin": ref.origin,
             "resolution": ref.resolution,
             "width": ref.metadata["width"],

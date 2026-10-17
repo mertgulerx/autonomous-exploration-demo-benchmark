@@ -20,8 +20,10 @@ polyline stays within ``gate_m`` of every received sample. Segments break at inv
 discontinuous samples. Coordinates are never smoothed, snapped or interpolated.
 """
 
+import base64
 from collections.abc import Mapping
 from dataclasses import dataclass
+from io import BytesIO
 import math
 from typing import Any
 
@@ -211,6 +213,25 @@ class PhysicalPath:
             outside_samples=self.outside_samples,
             tail=self.tail(),
         )
+
+
+def reference_pixels(
+    collision: np.ndarray[Any, Any], target: np.ndarray[Any, Any]
+) -> np.ndarray[Any, Any]:
+    """Grey world reference image: 245 on target cells, 30 on collision cells, 170 elsewhere."""
+    pixels = np.full(collision.shape, 170, dtype=np.uint8)
+    pixels[target] = 245
+    pixels[collision] = 30
+    return pixels
+
+
+def png(pixels: np.ndarray[Any, Any], *, optimize: bool = False) -> str:
+    """Base64 PNG of a uint8 image (Monitor layers, run maps and world maps)."""
+    from PIL import Image  # imported here: the host GUI uses this module without Pillow
+
+    buffer = BytesIO()
+    Image.fromarray(pixels).save(buffer, format="PNG", optimize=optimize)
+    return base64.b64encode(buffer.getvalue()).decode()
 
 
 def explored_pixels(

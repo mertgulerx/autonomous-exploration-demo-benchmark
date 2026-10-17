@@ -32,6 +32,14 @@ from .gui_style import COLORS, cell_text, icon
 from .gui_table import TableTextDelegate
 
 
+POLISH, KEY_PRESS = QtCore.QEvent.Type.Polish, QtCore.QEvent.Type.KeyPress
+DISPLAY = QtCore.Qt.ItemDataRole.DisplayRole
+TOOLTIP = QtCore.Qt.ItemDataRole.ToolTipRole
+ALIGNMENT = QtCore.Qt.ItemDataRole.TextAlignmentRole
+# The only roles TableModel answers; views ask for about ten roles per painted or measured cell.
+TABLE_ROLES = frozenset({DISPLAY, TOOLTIP, ALIGNMENT})
+
+
 class TextSelection(QtCore.QObject):
     @staticmethod
     def copy_table(view: QtWidgets.QTableView) -> None:
@@ -68,26 +76,28 @@ class TextSelection(QtCore.QObject):
         menu.deleteLater()
 
     def eventFilter(self, watched: QtCore.QObject, event: QtCore.QEvent) -> bool:
-        if event.type() == QtCore.QEvent.Type.Polish and isinstance(watched, QtWidgets.QLabel):
-            watched.setTextInteractionFlags(
-                watched.textInteractionFlags()
-                | QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
-                | QtCore.Qt.TextInteractionFlag.TextSelectableByKeyboard
-            )
-        elif event.type() == QtCore.QEvent.Type.Polish and isinstance(
-            watched, QtWidgets.QTableView
-        ):
-            if not isinstance(watched.itemDelegate(), TableTextDelegate):
-                watched.setItemDelegate(TableTextDelegate(watched))
-            if watched.contextMenuPolicy() != QtCore.Qt.ContextMenuPolicy.CustomContextMenu:
-                watched.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
-                watched.customContextMenuRequested.connect(
-                    lambda position, view=watched: self.table_menu(view, position)
+        # Installed on the application, so it sees every event: one type() call, then plain
+        # False (what QObject.eventFilter returns) for every event it does not handle.
+        kind = event.type()
+        if kind == POLISH:
+            if isinstance(watched, QtWidgets.QLabel):
+                watched.setTextInteractionFlags(
+                    watched.textInteractionFlags()
+                    | QtCore.Qt.TextInteractionFlag.TextSelectableByMouse
+                    | QtCore.Qt.TextInteractionFlag.TextSelectableByKeyboard
                 )
+            elif isinstance(watched, QtWidgets.QTableView):
+                if not isinstance(watched.itemDelegate(), TableTextDelegate):
+                    watched.setItemDelegate(TableTextDelegate(watched))
+                if watched.contextMenuPolicy() != QtCore.Qt.ContextMenuPolicy.CustomContextMenu:
+                    watched.setContextMenuPolicy(QtCore.Qt.ContextMenuPolicy.CustomContextMenu)
+                    watched.customContextMenuRequested.connect(
+                        lambda position, view=watched: self.table_menu(view, position)
+                    )
         elif (
-            isinstance(watched, QtWidgets.QTableView)
+            kind == KEY_PRESS
+            and isinstance(watched, QtWidgets.QTableView)
             and isinstance(event, QtGui.QKeyEvent)
-            and event.type() == QtCore.QEvent.Type.KeyPress
             and event.matches(QtGui.QKeySequence.StandardKey.Copy)
         ):
             delegate = watched.itemDelegate()
@@ -96,7 +106,7 @@ class TextSelection(QtCore.QObject):
             ):
                 self.copy_table(watched)
                 return True
-        return super().eventFilter(watched, event)
+        return False
 
 
 class FloatEdit(QtWidgets.QLineEdit):
@@ -149,6 +159,17 @@ def button(
     return widget
 
 
+def stale_engine_message(error: str, marker: str, feature: str) -> str | None:
+    """Upgrade advice when the engine image predates ``feature`` (its error contains ``marker``)."""
+    if marker not in error:
+        return None
+    return (
+        f"The engine image predates {feature}. When no campaign runs, stop the engine "
+        "(./suite_launch.sh --stop-engine), rebuild the image (./suite_launch.sh --rebuild) and start "
+        "it again."
+    )
+
+
 class Transport(QtCore.QThread):
     received = QtCore.Signal(str, object)
     failed = QtCore.Signal(str, str)
@@ -158,9 +179,16 @@ class Transport(QtCore.QThread):
         self.client = Client(socket, timeout=120)
         self.requests: queue.Queue[tuple[str, str, dict[str, Any], str]] = queue.Queue(128)
 
-    def submit(self, tag: str, method: str, params: dict[str, Any] | None = None) -> None:
+    def submit(
+        self,
+        tag: str,
+        method: str,
+        params: dict[str, Any] | None = None,
+        request_id: str | None = None,
+    ) -> None:
+        """Queue a call; a fixed request ID makes a repeated mutation return the stored answer."""
         try:
-            self.requests.put_nowait((tag, method, params or {}, str(uuid.uuid4())))
+            self.requests.put_nowait((tag, method, params or {}, request_id or str(uuid.uuid4())))
         except queue.Full:
             self.failed.emit(tag, "Too many pending operations; wait for the engine")
 
@@ -244,21 +272,29 @@ class TableModel(QtCore.QAbstractTableModel):
     ) -> int:
         return 0 if parent.isValid() else len(self.columns)
 
+    def set_names(self, names: dict[str, dict[str, str]]) -> None:
+        self.names = names
+        if self.rowCount() and self.columns:
+            self.dataChanged.emit(
+                self.index(0, 0), self.index(self.rowCount() - 1, len(self.columns) - 1)
+            )
+
     def data(
         self,
         index: QtCore.QModelIndex | QtCore.QPersistentModelIndex,
-        role: int = QtCore.Qt.ItemDataRole.DisplayRole,
+        role: int = DISPLAY,
     ) -> Any:
-        if not index.isValid():
+        if role not in TABLE_ROLES or not index.isValid():
             return None
         record = self.record(index.row())
-        if record is None:
-            return None
-        key = self.columns[index.column()][0]
+        return None if record is None else self.cell(record, index.column(), role)
+
+    def cell(self, record: dict[str, Any], column: int, role: int) -> Any:
+        key = self.columns[column][0]
         if key == "actions":
             return None
         value = record.get(key)
-        if role == QtCore.Qt.ItemDataRole.DisplayRole:
+        if role == DISPLAY:
             if key == "outcome" and value is None:
                 return cell_text(
                     "phase",
@@ -267,9 +303,9 @@ class TableModel(QtCore.QAbstractTableModel):
             if key in self.names and value in self.names[key]:
                 return self.names[key][value]
             return cell_text(key, value)
-        if role == QtCore.Qt.ItemDataRole.ToolTipRole:
+        if role == TOOLTIP:
             return str(value) if value is not None else "Unavailable"
-        if role == QtCore.Qt.ItemDataRole.TextAlignmentRole and isinstance(value, (int, float)):
+        if role == ALIGNMENT and isinstance(value, (int, float)):
             return QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter
         return None
 
@@ -334,21 +370,26 @@ class PagedTableModel(TableModel):
     def data(
         self,
         index: QtCore.QModelIndex | QtCore.QPersistentModelIndex,
-        role: int = QtCore.Qt.ItemDataRole.DisplayRole,
+        role: int = DISPLAY,
     ) -> Any:
-        if index.isValid() and self.record(index.row()) is None:
-            if role == QtCore.Qt.ItemDataRole.DisplayRole:
+        if role not in TABLE_ROLES or not index.isValid():
+            return None
+        record = self.record(index.row())
+        if record is None:
+            if role == DISPLAY:
                 self.page_needed.emit(index.row() // self.page_size * self.page_size)
                 return "…" if index.column() == 0 else None
             return None
-        return super().data(index, role)
+        return self.cell(record, index.column(), role)
 
     def set_page(
         self, offset: int, rows: list[dict[str, Any]], total: int, *, invalidate: bool = False
     ) -> None:
+        cached = dict(self.pages)
+        resized = total != self.total
         if invalidate:
             self.pages.clear()
-        if total != self.total:
+        if resized:
             self.pages.clear()
             if total > self.total:
                 self.beginInsertRows(QtCore.QModelIndex(), self.total, total - 1)
@@ -363,10 +404,19 @@ class PagedTableModel(TableModel):
         self.pages.move_to_end(offset)
         while len(self.pages) > self.cache_size:
             self.pages.popitem(last=False)
-        if self.total and self.columns:
-            self.dataChanged.emit(
-                self.index(0, 0), self.index(self.total - 1, len(self.columns) - 1)
+        # Only rows whose record changed (including pages dropped from the cache, which now show
+        # placeholders) are announced: a periodic refresh with unchanged rows repaints nothing.
+        changed = [
+            (start, start + max(len(cached.get(start, ())), len(self.pages.get(start, ()))))
+            for start in cached.keys() | self.pages.keys()
+            if cached.get(start) != self.pages.get(start)
+        ]
+        if self.total and self.columns and (resized or changed):
+            first = 0 if resized else min(start for start, _ in changed)
+            last = (
+                self.total - 1 if resized else min(self.total, max(end for _, end in changed)) - 1
             )
+            self.dataChanged.emit(self.index(first, 0), self.index(last, len(self.columns) - 1))
         self.pages_changed.emit()
 
 
@@ -383,6 +433,7 @@ class PagedTable(QtWidgets.QWidget):
         *,
         method: str = "results.query",
         result_key: str = "rows",
+        multiple: bool = False,
     ):
         super().__init__()
         self.transport, self.tag, self.table = transport, tag, table
@@ -402,7 +453,11 @@ class PagedTable(QtWidgets.QWidget):
         self.model = PagedTableModel(columns)
         self.view.setModel(self.model)
         self.view.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
-        self.view.setSelectionMode(QtWidgets.QAbstractItemView.SelectionMode.SingleSelection)
+        self.view.setSelectionMode(
+            QtWidgets.QAbstractItemView.SelectionMode.ExtendedSelection
+            if multiple
+            else QtWidgets.QAbstractItemView.SelectionMode.SingleSelection
+        )
         self.view.setSortingEnabled(False)
         self.view.horizontalHeader().setSectionResizeMode(
             QtWidgets.QHeaderView.ResizeMode.Interactive
@@ -514,6 +569,16 @@ class PagedTable(QtWidgets.QWidget):
                     summary=True,
                 ),
             )
+
+    def selected_records(self) -> list[dict[str, Any]] | None:
+        """Records of the selected rows in row order; None when a selected row is not loaded yet."""
+        records = []
+        for index in sorted(self.view.selectionModel().selectedRows(), key=lambda item: item.row()):
+            record = self.model.record(index.row())
+            if record is None:
+                return None
+            records.append(record)
+        return records
 
     def _received(self, tag: str, result: Any) -> None:
         if tag == self.tag:

@@ -42,7 +42,7 @@ def encode_response(result: dict[str, Any]) -> bytes:
                     "error": {
                         "code": "response_too_large",
                         "field": "page",
-                        "message": "Reduce page size or use dataset export; response exceeds 4 MiB",
+                        "message": "Reduce the page size; response exceeds 4 MiB",
                     },
                 }
             )

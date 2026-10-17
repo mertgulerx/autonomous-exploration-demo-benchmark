@@ -109,6 +109,7 @@ def checkpoint_index(directory: Path) -> Path:
 
 
 def compacted_root(directory: Path, reference: dict[str, Any]) -> Path:
+    # Bundles written by the removed dataset export are read in place, not through their source workspace.
     bundle = directory.parent.parent
     return bundle if (bundle / "export.json").is_file() else Path(reference["root"])
 

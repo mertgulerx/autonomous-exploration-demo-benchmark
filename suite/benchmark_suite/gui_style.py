@@ -116,8 +116,12 @@ def duration(seconds: Any) -> str:
     return f"{hours}:{minutes:02d}:{seconds:02d}" if hours else f"{minutes}:{seconds:02d}"
 
 
+# Display names that differ from the stored identifier's words.
+LABELS = {"manual_stop": "Stopped"}
+
+
 def humanize(value: str) -> str:
-    return value.replace("_", " ").strip().capitalize()
+    return LABELS.get(value) or value.replace("_", " ").strip().capitalize()
 
 
 def cell_text(key: str, value: Any) -> str:
@@ -178,11 +182,12 @@ class Badge(QtWidgets.QLabel):
 
 
 class DetailsPanel(QtWidgets.QWidget):
-    def __init__(self, title: str = "Details"):
+    def __init__(self, title: str | None = "Details"):
         super().__init__()
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(label(title, "section"))
+        if title:
+            layout.addWidget(label(title, "section"))
         self.body = QtWidgets.QLabel("Select an item to see its details")
         self.body.setWordWrap(True)
         self.body.setTextFormat(QtCore.Qt.TextFormat.RichText)
@@ -235,22 +240,6 @@ class DetailsPanel(QtWidgets.QWidget):
         document = QtGui.QTextDocument()
         document.setHtml(self.body.text())
         return document.toPlainText()
-
-    def set_difference(self, record: dict[str, Any]) -> None:
-        from html import escape
-
-        self.set_record(record)
-        rows = []
-        for section in ("algorithm", "physical"):
-            for key, values in record.get(section, {}).items():
-                rows.append(
-                    f"<tr><td style='padding:5px 12px 5px 0'>{escape(humanize(key))}<br/><small>{section}</small></td><td>{escape(str(values[0]))} → {escape(str(values[1]))}</td></tr>"
-                )
-        self.body.setText(
-            "<table>" + "".join(rows) + "</table>"
-            if rows
-            else "These revisions have the same effective parameters."
-        )
 
     def clear(self) -> None:
         self.setPlainText("Select an item to see its details")

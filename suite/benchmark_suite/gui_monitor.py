@@ -28,6 +28,7 @@ from .monitoring import IN_COLLISION, SEGMENT_START
 
 class LiveMap(MapView):
     CHUNK = 4096
+    LIVE = 64
     MAXIMUM_VERTICES = 200_000
 
     def __init__(self) -> None:
@@ -59,6 +60,12 @@ class LiveMap(MapView):
         self.current_x: list[float] = []
         self.current_y: list[float] = []
         self.current_real = 0
+        # The current chunk is drawn as a settled prefix (``current``, current_x[:settled]) and a
+        # short live suffix from current_x[settled - 1]: together they draw exactly the chunk's
+        # segments, while a 10 Hz update repaints only the live suffix's small bounding rectangle.
+        self.settled = 0
+        self.live = self.plot(pen=self.path_pen, connect="finite")
+        self.live.setZValue(0)
         self.real_vertices = 0
         self.view_dropped = 0
         self.markers: deque[tuple[float, float]] = deque(maxlen=2000)
@@ -113,7 +120,7 @@ class LiveMap(MapView):
         self.current = self.plot(pen=self.path_pen, connect="finite")
         self.current.setZValue(0)
         self.current_x, self.current_y = [], []
-        self.current_real = 0
+        self.current_real = self.settled = 0
         if seed is not None:
             # Repeats the previous chunk's last vertex to keep the line continuous; not counted.
             self.current_x.append(seed[0])
@@ -149,7 +156,11 @@ class LiveMap(MapView):
                 self.removeItem(item)
                 self.real_vertices -= count
                 self.view_dropped += count
-        self.current.setData(self.current_x, self.current_y, connect="finite")
+        if len(self.current_x) - self.settled > self.LIVE:
+            self.current.setData(self.current_x, self.current_y, connect="finite")
+            self.settled = len(self.current_x)
+        first = max(0, self.settled - 1)
+        self.live.setData(self.current_x[first:], self.current_y[first:], connect="finite")
         if marked:
             self.disagreements.setData(
                 [point[0] for point in self.markers], [point[1] for point in self.markers]
@@ -169,8 +180,9 @@ class LiveMap(MapView):
             self.removeItem(self.current)
         self.current = None
         self.current_x, self.current_y = [], []
-        self.current_real = self.real_vertices = self.view_dropped = 0
+        self.current_real = self.real_vertices = self.view_dropped = self.settled = 0
         self.markers.clear()
+        self.live.setData([], [])
         self.tail.setData([], [])
         self.disagreements.setData([], [])
 
@@ -250,8 +262,10 @@ class WorkerCard(QtWidgets.QFrame):
         self.context.setText(
             f"{humanize(experiment['world_id'])} · {experiment['profile_name']}\n{experiment['spawn_name']} · repetition {experiment['repetition'] + 1} · attempt {attempt['number']}"
         )
+        stopping = bool(active.get("stop_requested"))
         self.phase.set_state(
-            humanize(attempt["phase"]), "active" if attempt["phase"] == "RUNNING" else "neutral"
+            "Stopping" if stopping else humanize(attempt["phase"]),
+            "warning" if stopping else "active" if attempt["phase"] == "RUNNING" else "neutral",
         )
         coverage = number(metrics.get("coverage_percent", metrics.get("coverage")), "%")
         status = metrics.get("coverage_status", "valid")

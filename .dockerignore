@@ -4,6 +4,7 @@
 .idea
 
 build
+suite/build
 install
 log
 logs

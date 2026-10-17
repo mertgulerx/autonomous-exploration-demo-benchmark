@@ -197,7 +197,7 @@ class _ProfilePopup(QtWidgets.QFrame):
         body.addWidget(self.preview, 3)
         layout.addLayout(body, 1)
         self.more = QtWidgets.QLabel(
-            "First 250 revisions shown. Use Profiles to find older revisions."
+            "First 250 revisions shown. Reference older revision IDs in an imported campaign YAML."
         )
         self.more.setProperty("kind", "muted")
         self.more.setWordWrap(True)
@@ -640,6 +640,23 @@ class RobotSelector(QtWidgets.QWidget):
         self._selected[robot_id] = True
         self._append_reference(robot_id, profile_reference)
         self._sync_card(robot_id)
+        self.changed.emit()
+
+    def forget_profiles(self, robot_id: str, revision_ids: set[str]) -> None:
+        """Drop deleted library revisions from this robot's selection and saved rows."""
+        references = self._references.get(robot_id, [])
+        kept = [r for r in references if not (isinstance(r, str) and r in revision_ids)]
+        saved = self._saved.get(robot_id, {})
+        removed = len(kept) != len(references) or bool(revision_ids & set(saved))
+        for identity in revision_ids:
+            saved.pop(identity, None)
+        if not removed:
+            return
+        self._references[robot_id] = kept or ["Default"]
+        self._sync_card(robot_id)
+        popup = self._open_popups.get(robot_id)
+        if popup and popup.isVisible():
+            popup.refresh(self._profile_entries(robot_id), self._references.get(robot_id, []))
         self.changed.emit()
 
     def replace_profile(self, robot_id: str, old_reference: Any, profile: dict[str, Any]) -> None:

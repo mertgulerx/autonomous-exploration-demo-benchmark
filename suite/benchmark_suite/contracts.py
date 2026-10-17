@@ -18,6 +18,7 @@ from enum import StrEnum
 import hashlib
 import json
 import math
+import re
 from typing import Any, Mapping
 
 PROTOCOL_VERSION = 1
@@ -26,6 +27,24 @@ GAZEBO_SEED = 1234
 DEFAULT_LIMIT = 1800.0
 NO_MOVEMENT_LIMIT = 180.0
 HIDDEN_GROUPS = frozenset({"Suppression", "QoS", "Visualization", "Benchmark Integration"})
+# Most campaigns or profiles one deletion request may name; the GUI checks the same bounds.
+CAMPAIGN_DELETION_LIMIT = 100
+PROFILE_DELETION_LIMIT = 250
+# Campaign reports draw figures and statistics from these final outcomes only; every report states how many
+# runs it excluded and why (docs/MEASUREMENTS.md, "Reported population").
+REPORT_POLICY_VERSION = "reported-outcomes-v1"
+REPORTED_OUTCOMES = frozenset({"completed", "time_limit", "no_movement"})
+STOPPED_OUTCOMES = frozenset({"manual_stop"})
+
+
+def report_exclusion(outcome: str | None) -> str | None:
+    """None when campaign reports include the outcome, otherwise "stopped" or "failure".
+
+    reports.py applies the same rule in SQL (the ``reported`` view and the ``report_exclusions`` reasons).
+    """
+    if outcome in REPORTED_OUTCOMES:
+        return None
+    return "stopped" if outcome in STOPPED_OUTCOMES else "failure"
 
 
 class CampaignState(StrEnum):
@@ -89,6 +108,23 @@ def number(value: Any, field: str, *, minimum: float | None = None) -> float:
     if minimum is not None and result < minimum:
         raise ContractError(field, f"Minimum is {minimum:g}")
     return result
+
+
+_SPAWN_NUMBER = re.compile(r"spawn\s+([0-9]+)", re.IGNORECASE | re.ASCII)
+
+
+def next_spawn_name(names: Iterable[str]) -> str:
+    """Default name for a new spawn of one world: one more than its highest "Spawn N".
+
+    The world's built-in Default pose counts as Spawn 1, so the first new spawn is "Spawn 2". Every recorded
+    name of the world counts (old revisions and archived spawns too); other names are ignored.
+    """
+    numbers = [
+        int(match.group(1))
+        for name in names
+        if (match := _SPAWN_NUMBER.fullmatch(name.strip())) is not None
+    ]
+    return f"Spawn {max([1, *numbers]) + 1}"
 
 
 def integer(value: Any, field: str, minimum: int, maximum: int) -> int:

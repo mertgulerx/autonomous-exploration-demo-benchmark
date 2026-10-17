@@ -59,7 +59,7 @@ def require_local_storage(path: Path) -> None:
     if match is None or match[1] in remote:
         raise ContractError(
             "workspace",
-            "Choose local disk for active SQLite and measurement storage; export completed data to remote storage",
+            "Choose local disk for the workspace (active SQLite and measurement storage)",
         )
 
 

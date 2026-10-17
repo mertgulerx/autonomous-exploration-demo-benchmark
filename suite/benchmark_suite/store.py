@@ -84,9 +84,12 @@ CREATE TABLE IF NOT EXISTS artifacts(
 CREATE TABLE IF NOT EXISTS reports(
  id TEXT PRIMARY KEY, campaign_id TEXT NOT NULL, state TEXT NOT NULL, specification TEXT NOT NULL,
  path TEXT, detail TEXT NOT NULL DEFAULT '', created_ns INTEGER NOT NULL, finished_ns INTEGER);
-CREATE TABLE IF NOT EXISTS exports(
- id TEXT PRIMARY KEY, campaign_id TEXT NOT NULL, state TEXT NOT NULL, specification TEXT NOT NULL,
- path TEXT, receipt TEXT, detail TEXT NOT NULL DEFAULT '', created_ns INTEGER NOT NULL, finished_ns INTEGER);
+CREATE INDEX IF NOT EXISTS artifacts_campaign ON artifacts(campaign_id,attempt_id);
+CREATE TABLE IF NOT EXISTS deletions(
+ campaign_id TEXT PRIMARY KEY, name TEXT NOT NULL, request_id TEXT NOT NULL, requested_ns INTEGER NOT NULL,
+ finished_ns INTEGER, state TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '', freed_bytes INTEGER,
+ paths TEXT NOT NULL, summary TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS deletions_state ON deletions(state,requested_ns);
 """
 
 
@@ -305,8 +308,8 @@ class Store:
             },
             "campaigns": {"state", "id", "hide_finished"},
             "reports": {"campaign_id", "state"},
-            "exports": {"campaign_id", "state"},
             "library": {"kind", "owner", "archived", "family_id"},
+            "deletions": {"campaign_id", "state"},
         }
         if not isinstance(table, str) or table not in columns or set(filters) - columns[table]:
             raise ContractError("filters", "Unsupported table or filter")
@@ -317,8 +320,8 @@ class Store:
             "attempts": "a.reserved_ns DESC,a.id DESC",
             "campaigns": "(state='FINISHED') ASC,queue_position,id",
             "reports": "created_ns DESC",
-            "exports": "created_ns DESC",
             "library": "created_ns DESC",
+            "deletions": "requested_ns DESC",
         }[table]
         if type(summary) is not bool:
             raise ContractError("summary", "Expected boolean")
@@ -377,7 +380,7 @@ class Store:
             fields = [
                 row[1]
                 for row in self.db.execute(f"PRAGMA table_info({table})")
-                if row[1] not in {"specification", "configuration", "snapshot", "metrics"}
+                if row[1] not in {"specification", "configuration", "snapshot", "metrics", "paths"}
             ]
             selection = ",".join(("a." if table == "attempts" else "") + field for field in fields)
             if table == "attempts":
@@ -420,7 +423,14 @@ class Store:
             f"SELECT COUNT(*) FROM {count_source}{where}", arguments
         ).fetchone()[0]
         for row in rows:
-            for key in ("specification", "configuration", "snapshot", "metrics"):
+            for key in (
+                "specification",
+                "configuration",
+                "snapshot",
+                "metrics",
+                "paths",
+                "summary",
+            ):
                 if row.get(key):
                     row[key] = json.loads(row[key])
         return {

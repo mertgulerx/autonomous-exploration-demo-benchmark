@@ -125,7 +125,6 @@ class _MapPreview(QtWidgets.QWidget):
 
 class _SpawnPopup(QtWidgets.QFrame):
     changed = QtCore.Signal(object)
-    edit_requested = QtCore.Signal()
 
     def __init__(self, parent: QtWidgets.QWidget, world: dict[str, Any]) -> None:
         super().__init__(parent, QtCore.Qt.WindowType.Popup)
@@ -152,12 +151,11 @@ class _SpawnPopup(QtWidgets.QFrame):
         self.empty = label("No matching starting positions", "muted")
         layout.addWidget(self.empty)
         self.more = label(
-            "First 250 revisions shown. Open the spawn library for older poses.", "muted"
+            "First 250 revisions shown. The Worlds & Spawns page lists all saved spawns.", "muted"
         )
         self.more.setWordWrap(True)
         layout.addWidget(self.more)
         footer = QtWidgets.QHBoxLayout()
-        button("Edit spawn poses", self.edit, footer, role="outlined")
         footer.addStretch()
         self.done = button("Done", self.hide, footer, role="primary")
         layout.addLayout(footer)
@@ -231,10 +229,6 @@ class _SpawnPopup(QtWidgets.QFrame):
             visible += int(match)
         self.empty.setVisible(not visible)
 
-    def edit(self) -> None:
-        self.hide()
-        self.edit_requested.emit()
-
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
         if event.key() == QtCore.Qt.Key.Key_Escape:
             self.hide()
@@ -272,8 +266,6 @@ class _WorldCard(QtWidgets.QFrame):
         self.spawns = button("Spawns · 1", lambda: None, footer, role="outlined")
         self.spawns.setAccessibleName("Select starting positions for " + world["label"])
         footer.addStretch()
-        self.edit = button("Edit poses", lambda: None, footer, role="outlined")
-        self.edit.setAccessibleName("Edit starting positions for " + world["label"])
         layout.addLayout(footer)
         budget = QtWidgets.QHBoxLayout()
         budget.addWidget(label("Time limit · seconds", "muted"))
@@ -314,7 +306,6 @@ class _WorldCard(QtWidgets.QFrame):
 
 class WorldSelector(QtWidgets.QWidget):
     changed = QtCore.Signal()
-    edit_spawn = QtCore.Signal(str)
 
     def __init__(self, transport: Transport) -> None:
         super().__init__()
@@ -373,9 +364,6 @@ class WorldSelector(QtWidgets.QWidget):
                 )
                 card.spawns.clicked.connect(
                     lambda checked=False, wid=identity: self.show_spawns(wid)
-                )
-                card.edit.clicked.connect(
-                    lambda checked=False, wid=identity: self.edit_spawn.emit(wid)
                 )
                 self._cards[identity] = card
             self._sync(identity)
@@ -553,7 +541,6 @@ class WorldSelector(QtWidgets.QWidget):
         if popup is None:
             popup = _SpawnPopup(self, self._worlds[world])
             popup.changed.connect(lambda refs, wid=world: self._set_spawns(wid, refs))
-            popup.edit_requested.connect(lambda wid=world: self.edit_spawn.emit(wid))
             self._popups[world] = popup
         popup.refresh(
             self._entries(world), self._references[world], self._has_more.get(world, False)

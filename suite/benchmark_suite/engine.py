@@ -16,6 +16,7 @@ from collections.abc import Callable
 import json
 from pathlib import Path
 import queue
+import re
 import shutil
 import sqlite3
 import time
@@ -35,8 +36,10 @@ from .contracts import (
     mapping,
     text,
 )
+from .deletion import Remover, campaign_ids, delete_rows, plan
 from .monitoring import MONITOR_LAYERS
 from .protocol import PendingRequest, Server
+from .run_map import RunMaps
 from .storage import atomic_json, file_hash, sync_directory
 from .store import Store
 from .timing import TimingPolicy
@@ -47,6 +50,7 @@ READ_METHODS = frozenset(
         "catalog.get",
         "parameters.resolve",
         "campaign.preview",
+        "campaign.delete_preview",
         "campaign.status",
         "results.query",
         "events.read",
@@ -60,18 +64,17 @@ READ_METHODS = frozenset(
 READ_METHODS = READ_METHODS | {
     "measurements.query",
     "spawns.map",
-    "profiles.sweep_preview",
     "profiles.export",
-    "profiles.diff",
     "spawns.export",
     "reports.get",
-    "exports.get",
     "profiles.get",
     "spawns.get",
     "results.get",
+    "results.map",
     "campaign.repeat",
 }
 ACTIVE_STATES = ("RUNNING", "RETRYING", "PAUSING", "PAUSED", "STOPPING", "BLOCKED", "REPORTING")
+COPY_SUFFIX = re.compile(r" \(copy (\d+)\)$")
 
 
 class Engine:
@@ -83,9 +86,6 @@ class Engine:
         library: Any = None,
     ):
         self.store = Store(workspace)
-        from .exports import ExportManager
-
-        self.exports = ExportManager(self.store)
         self.workspace = self.store.workspace
         self.backend, self.library = backend, library
         self.resolve = resolve or CampaignSpec.accepted
@@ -107,6 +107,9 @@ class Engine:
         self.report_reference: dict[str, Any] | None = None
         self.requests: queue.Queue[PendingRequest] = queue.Queue(maxsize=128)
         self.server: Server | None = None
+        # Campaign deletion whose files are being removed: (campaign ID, remover).
+        self.removal: tuple[str, Remover] | None = None
+        self.run_maps = RunMaps(self.workspace)
         if library:
             library.bind(self.store)
         self._recover()
@@ -114,6 +117,10 @@ class Engine:
     def _recover(self) -> None:
         from .jobs import recover
 
+        # Removals that failed are retried at every engine start; their rows are already gone.
+        self.store.db.execute(
+            "UPDATE deletions SET state='REMOVING',detail='' WHERE state='FAILED'"
+        )
         for report in self.store.rows(
             "SELECT * FROM reports WHERE state IN ('QUEUED','COMPACTING','COMMITTING','RUNNING','INDEXING')"
         ):
@@ -176,17 +183,35 @@ class Engine:
                 directory = Path(attempt["directory"])
                 from .datasets import finalize_partial
 
-                try:
-                    finalize_partial(
-                        directory,
+                # A persisted stop request is honoured even when the engine stopped first.
+                stopped = self._stop_requested(attempt["id"])
+                outcome, detail = (
+                    (
+                        "manual_stop",
+                        "Stopped by the researcher; engine interrupted before finalization",
+                    )
+                    if stopped
+                    else (
                         "engine_interruption",
                         "Unexpected engine or host interruption; readable checkpoints retained",
-                        json.loads(attempt["metrics"] or "{}"),
+                    )
+                )
+                try:
+                    finalize_partial(
+                        directory, outcome, detail, json.loads(attempt["metrics"] or "{}")
                     )
                 except (OSError, ValueError) as error:
                     interrupted = json.loads(manifest.read_bytes())
                     interrupted["recovery_error"] = str(error)
                     atomic_json(manifest, interrupted)
+                if stopped:
+                    with self.store.transaction():
+                        self.store.db.execute(
+                            "UPDATE attempts SET outcome='manual_stop',detail=? WHERE id=?",
+                            (detail, attempt["id"]),
+                        )
+                    self._finish(self.store.attempt(attempt["id"]))
+                    continue
                 with self.store.transaction():
                     self.store.db.execute(
                         "UPDATE attempts SET phase='FINISHED',outcome='engine_interruption',"
@@ -210,11 +235,6 @@ class Engine:
         ):
             if campaign["state"] == "STOPPING":
                 self.store.set_state(campaign["id"], "STOPPED")
-                replacement = self._restart_replacement(campaign["id"])
-                if replacement and self.store.campaign(replacement)["state"] == "QUEUED":
-                    self.store.set_state(
-                        replacement, "RECOVERY_REQUIRED", "Engine restarted; Resume is required"
-                    )
             else:
                 self.store.set_state(
                     campaign["id"], "RECOVERY_REQUIRED", "Engine restarted; Resume is required"
@@ -273,6 +293,7 @@ class Engine:
                         "attempt": attempt,
                         "experiment": experiment,
                         "metrics": self.metrics.get(identity, {}),
+                        "stop_requested": self._stop_requested(identity),
                     }
                 )
             return {
@@ -282,16 +303,18 @@ class Engine:
                 "campaigns": campaigns,
                 "active": active,
                 "event_sequence": self._last_sequence(),
-                "export_id": self.exports.identity,
                 "image_id": getattr(self.backend, "runtime", {}).get("image"),
                 "diagnostics": getattr(self.backend, "diagnostics", None),
+                "deletions": {
+                    "removing": self.store.db.execute(
+                        "SELECT count(*) FROM deletions WHERE state='REMOVING'"
+                    ).fetchone()[0],
+                    "failed": self.store.rows(
+                        "SELECT campaign_id,name,detail FROM deletions WHERE state='FAILED' "
+                        "ORDER BY requested_ns DESC LIMIT 20"
+                    ),
+                },
             }
-        if method == "dataset.export":
-            if self.current or self.active or self.job or self.exports.identity:
-                raise ContractError("campaign_id", "Export requires an idle engine", "conflict")
-            return self.exports.submit(text(params.get("campaign_id"), "campaign_id"))
-        if method == "exports.get":
-            return self.exports.get(text(params.get("export_id"), "export_id"))
         if method == "catalog.get":
             return (
                 self.library.catalog()
@@ -324,6 +347,40 @@ class Engine:
                 "operation_id": operation_id,
                 "completed": True,
             }
+        if method == "campaign.delete_preview":
+            entries = plan(self.store, campaign_ids(params.get("campaign_ids")), self.current)
+            return {
+                "campaigns": [
+                    {key: value for key, value in entry.items() if key not in ("paths", "summary")}
+                    for entry in entries
+                ]
+            }
+        if method == "campaign.delete":
+            # The maintainer's GUI action: all or nothing; rows go in this transaction with a
+            # tombstone, files follow in tick (deletion.py).
+            entries = plan(self.store, campaign_ids(params.get("campaign_ids")), self.current)
+            blocked = [
+                entry
+                for entry in entries
+                if not entry["deletable"] and entry["reason"] != "already deleted"
+            ]
+            if blocked:
+                first = blocked[0]
+                raise ContractError(
+                    "campaign_ids",
+                    f"{first['name'] or first['campaign_id']} cannot be deleted: {first['reason']}",
+                    "conflict",
+                )
+            deletable = [entry for entry in entries if entry["deletable"]]
+            delete_rows(self.store, deletable, operation_id)
+            return {
+                "operation_id": operation_id,
+                "deleted": [entry["campaign_id"] for entry in deletable],
+                "already_deleted": [
+                    entry["campaign_id"] for entry in entries if not entry["deletable"]
+                ],
+                "files_pending": bool(deletable),
+            }
         if method == "campaign.move":
             identity = text(params.get("campaign_id"), "campaign_id")
             direction = params.get("direction")
@@ -331,22 +388,7 @@ class Engine:
                 raise ContractError("direction", "Use up, down, first or last")
             if self.store.campaign(identity)["state"] != "QUEUED":
                 raise ContractError("campaign_id", "Only queued campaigns can move", "conflict")
-            rows = self.store.rows(
-                "SELECT id,queue_position FROM campaigns WHERE state='QUEUED' ORDER BY queue_position,id"
-            )
-            ordered = [row["id"] for row in rows]
-            index = ordered.index(identity)
-            target = {
-                "up": max(0, index - 1),
-                "down": min(len(rows) - 1, index + 1),
-                "first": 0,
-                "last": len(rows) - 1,
-            }[direction]
-            ordered.insert(target, ordered.pop(index))
-            self.store.db.executemany(
-                "UPDATE campaigns SET queue_position=? WHERE id=?",
-                ((row["queue_position"], cid) for row, cid in zip(rows, ordered, strict=True)),
-            )
+            self._move_queued(identity, direction)
             self.store.event("campaign.reordered", {"direction": direction}, identity)
             return {"operation_id": operation_id, "completed": True, "campaign_id": identity}
         if method == "reports.generate":
@@ -355,13 +397,7 @@ class Engine:
 
             identity = text(params.get("campaign_id"), "campaign_id")
             campaign = self.store.campaign(identity)
-            if (
-                self.current
-                or self.active
-                or self.job
-                or self.exports.identity
-                or campaign["state"] != "FINISHED"
-            ):
+            if self.current or self.active or self.job or campaign["state"] != "FINISHED":
                 raise ContractError(
                     "campaign_id",
                     "Reports require finished execution and an idle engine",
@@ -430,10 +466,6 @@ class Engine:
                 next_offset=offset + limit if offset + limit < total else None,
             )
         if method in ("campaign.start", "campaign.resume"):
-            if self.exports.identity:
-                raise ContractError(
-                    "campaign_id", "Wait for the active export to finish", "conflict"
-                )
             identity = text(params.get("campaign_id"), "campaign_id")
             campaign = self.store.campaign(identity)
             if self.current and self.current != identity:
@@ -483,51 +515,59 @@ class Engine:
             state = self._stop_campaign(identity, operation_id)
             return {"operation_id": operation_id, "accepted": True, "state": state}
         if method == "campaign.restart":
-            identity = text(params.get("campaign_id"), "campaign_id")
-            campaign = self.store.campaign(identity)
-            if (
-                self.exports.identity
-                or self.job
-                or self.report_import
-                or (self.current and self.current != identity)
-            ):
-                raise ContractError("campaign_id", "Another operation owns execution", "conflict")
-            if campaign["state"] not in {
-                "RUNNING",
-                "RETRYING",
-                "PAUSING",
-                "PAUSED",
-                "STOPPED",
-                "BLOCKED",
-                "RECOVERY_REQUIRED",
-                "FINISHED",
-            }:
-                raise ContractError(
-                    "campaign_id", "Campaign cannot restart from " + campaign["state"], "conflict"
-                )
-            self.backend.preflight()
-            specification = json.loads(campaign["specification"])
-            specification["source_campaign_id"] = identity
-            replacement = self.store.submit(CampaignSpec.accepted(specification))
-            self.store.event(
-                "campaign.restart_requested",
-                {"replacement_campaign_id": replacement, "operation_id": operation_id},
-                identity,
+            # Retired: it stopped the source. A distinct method keeps an old GUI or engine from silently
+            # applying the other semantics.
+            raise ContractError(
+                "method",
+                "campaign.restart was replaced by campaign.restart_copy, which keeps the source campaign",
+                "unsupported",
             )
-            if campaign["state"] not in ("FINISHED", "STOPPED"):
-                source_state = self._stop_campaign(identity, operation_id)
+        if method == "campaign.restart_copy":
+            # Runs a copy of the accepted specification now, or first in the queue when the engine is
+            # busy; the source campaign, its runs and its data are never touched.
+            identity = text(params.get("campaign_id"), "campaign_id")
+            source = self.store.campaign(identity)
+            specification = json.loads(source["specification"])
+            if self.library:
+                catalog = self.library.catalog()
+                missing = sorted(
+                    set(specification["robots"]) - {robot["id"] for robot in catalog["robots"]}
+                ) + sorted(
+                    set(specification["worlds"]) - {world["id"] for world in catalog["worlds"]}
+                )
+                if missing:
+                    raise ContractError(
+                        "campaign_id", "No longer in the catalog: " + ", ".join(missing), "conflict"
+                    )
+            idle = not (self.current or self.active or self.job or self.report_import)
+            if idle:
+                self.backend.preflight()
+            name = self._copy_name(source["name"])
+            specification.update(name=name, source_campaign_id=identity)
+            spec = CampaignSpec.accepted(specification)
+            copy = self.store.submit(spec)
+            self.store.event(
+                "campaign.restarted_from",
+                {
+                    "source_campaign_id": identity,
+                    "source_name": source["name"],
+                    "operation_id": operation_id,
+                },
+                copy,
+            )
+            if idle:
+                self.current, self.queue_enabled = copy, True
+                self.store.set_state(copy, "RUNNING")
             else:
-                source_state = campaign["state"]
-            if self.current != identity:
-                self.current, self.queue_enabled = replacement, True
-                self.store.set_state(replacement, "RUNNING")
+                self._move_queued(copy, "first")
             return {
                 "operation_id": operation_id,
                 "accepted": True,
-                "campaign_id": replacement,
+                "campaign_id": copy,
+                "name": name,
+                "experiments": spec.count,
                 "source_campaign_id": identity,
-                "source_state": source_state,
-                "state": self.store.campaign(replacement)["state"],
+                "state": self.store.campaign(copy)["state"],
             }
         if method in ("experiment.stop", "experiment.restart"):
             experiment_id = text(params.get("experiment_id"), "experiment_id")
@@ -543,6 +583,29 @@ class Engine:
                 "accepted": True,
                 "attempt_id": selected_attempt["id"],
             }
+        if method == "attempt.stop":
+            # Ends one run as manual_stop: its data is kept, the experiment is resolved and not run
+            # again, and reports exclude it (REPORT_POLICY_VERSION).
+            known_keys(params, {"attempt_id"}, "params")
+            identity = text(params.get("attempt_id"), "attempt_id")
+            if identity not in self.active:
+                raise ContractError("attempt_id", "Run is no longer active", "conflict")
+            attempt = self.store.attempt(identity)
+            if attempt["discard_intent"]:
+                raise ContractError("attempt_id", "Run is already being discarded", "conflict")
+            response = {"operation_id": operation_id, "accepted": True, "attempt_id": identity}
+            if self._stop_requested(identity):
+                return dict(response, already_requested=True)
+            if attempt["phase"] not in ("STARTING", "READY", "RUNNING"):
+                raise ContractError("attempt_id", "Run is already ending", "conflict")
+            # Persisted with the command; tick signals the worker only after this commits.
+            self.store.event(
+                "attempt.stop_requested",
+                {"operation_id": operation_id},
+                attempt["campaign_id"],
+                identity,
+            )
+            return response
         if method == "campaign.status":
             identity = text(params.get("campaign_id"), "campaign_id")
             campaign = self.store.campaign(identity)
@@ -572,6 +635,23 @@ class Engine:
                 if row.get(field):
                     row[field] = json.loads(row[field])
             return row
+        if method == "results.map":
+            # Coverage and path map of a finished run, built off the engine loop (run_map.py).
+            known_keys(params, {"attempt_id", "after_sequence"}, "params")
+            identity = text(params.get("attempt_id"), "attempt_id")
+            after = integer(params.get("after_sequence", 0), "after_sequence", 0, 2**63 - 1)
+            attempt = self.store.attempt(identity)
+            if attempt["discarded"] or not attempt["directory"]:
+                return dict(
+                    attempt_id=identity, state="unavailable", reason="Measurements were discarded"
+                )
+            if identity in self.active or attempt["phase"] != "FINISHED":
+                return dict(
+                    attempt_id=identity,
+                    state="running",
+                    reason="Run in progress; its live map is on the Monitor",
+                )
+            return self.run_maps.get(identity, after)
         if method == "measurements.query":
             attempt = self.store.attempt(text(params.get("attempt_id"), "attempt_id"))
             if attempt["discarded"]:
@@ -659,13 +739,44 @@ class Engine:
             "available": True,
         }
 
-    def _restart_replacement(self, identity: str) -> str | None:
-        event = self.store.one(
-            "SELECT payload FROM events WHERE campaign_id=? AND kind='campaign.restart_requested' "
-            "ORDER BY sequence DESC LIMIT 1",
-            (identity,),
+    def _stop_requested(self, identity: str) -> bool:
+        return (
+            self.store.one(
+                "SELECT 1 FROM events WHERE attempt_id=? AND kind='attempt.stop_requested' LIMIT 1",
+                (identity,),
+            )
+            is not None
         )
-        return str(json.loads(event["payload"])["replacement_campaign_id"]) if event else None
+
+    def _move_queued(self, identity: str, direction: str) -> None:
+        rows = self.store.rows(
+            "SELECT id,queue_position FROM campaigns WHERE state='QUEUED' ORDER BY queue_position,id"
+        )
+        ordered = [row["id"] for row in rows]
+        index = ordered.index(identity)
+        target = {
+            "up": max(0, index - 1),
+            "down": min(len(rows) - 1, index + 1),
+            "first": 0,
+            "last": len(rows) - 1,
+        }[direction]
+        ordered.insert(target, ordered.pop(index))
+        self.store.db.executemany(
+            "UPDATE campaigns SET queue_position=? WHERE id=?",
+            ((row["queue_position"], cid) for row, cid in zip(rows, ordered, strict=True)),
+        )
+
+    def _copy_name(self, name: str) -> str:
+        """Next "<base> (copy N)" name; copies of copies do not stack the suffix."""
+        base = COPY_SUFFIX.sub("", name)
+        numbers = [0]
+        for row in self.store.rows("SELECT name FROM campaigns"):
+            match = COPY_SUFFIX.search(row["name"])
+            # Long names were cut to fit 160 characters together with their own suffix.
+            if match and row["name"][: match.start()] == base[: 160 - len(match.group(0))]:
+                numbers.append(int(match.group(1)))
+        suffix = f" (copy {max(numbers) + 1})"
+        return base[: 160 - len(suffix)] + suffix
 
     def _stop_campaign(self, identity: str, operation_id: str) -> str:
         self.store.db.execute(
@@ -704,7 +815,8 @@ class Engine:
         with self.store.transaction():
             self.store.db.execute("DELETE FROM artifacts WHERE attempt_id=?", (attempt["id"],))
             self.store.db.execute(
-                "DELETE FROM events WHERE attempt_id=? AND kind!='attempt.discard_requested'",
+                "DELETE FROM events WHERE attempt_id=? "
+                "AND kind NOT IN ('attempt.discard_requested','attempt.stop_requested')",
                 (attempt["id"],),
             )
             self.store.db.execute(
@@ -847,7 +959,23 @@ class Engine:
                 )
                 is not None
             )
-            if outcome == "timing_rejection" and not attempt["retry"] and parallel:
+            if outcome != "manual_stop" and self._stop_requested(attempt["id"]):
+                # The run ended on its own before the stop took effect; its own outcome stands.
+                self.store.event(
+                    "attempt.stop_superseded",
+                    {"outcome": outcome},
+                    attempt["campaign_id"],
+                    attempt["id"],
+                )
+            if outcome == "engine_interruption":
+                # The experiment returns to Not done until Resume (docs/MEASUREMENTS.md), as for
+                # an interrupted attempt without a finished manifest; an interrupted sequential
+                # replacement keeps its retry_queue entry and runs again as a replacement.
+                self.store.db.execute(
+                    "UPDATE experiments SET state='NOT_DONE',held=0 WHERE id=?",
+                    (attempt["experiment_id"],),
+                )
+            elif outcome == "timing_rejection" and not attempt["retry"] and parallel:
                 self.store.db.execute(
                     "UPDATE experiments SET state='RETRY',retry_used=1 WHERE id=?",
                     (attempt["experiment_id"],),
@@ -923,11 +1051,41 @@ class Engine:
                 ),
             )
 
-    def tick(self) -> None:
-        if self.exports.identity:
-            if self.exports.tick():
-                self.queue_enabled = False
+    def _advance_deletions(self) -> None:
+        """Remove deleted campaigns' files for about 10 ms per tick, oldest deletion first."""
+        if self.removal is None:
+            row = self.store.one(
+                "SELECT campaign_id,paths FROM deletions WHERE state='REMOVING' "
+                "ORDER BY requested_ns LIMIT 1"
+            )
+            if row is None:
+                return
+            self.removal = row["campaign_id"], Remover(self.workspace, json.loads(row["paths"]))
+        identity, remover = self.removal
+        try:
+            finished = remover.advance(0.01)
+        except OSError as error:
+            self.removal = None
+            self.store.db.execute(
+                "UPDATE deletions SET state='FAILED',detail=?,freed_bytes=? WHERE campaign_id=?",
+                (str(error), remover.freed_bytes, identity),
+            )
             return
+        if finished:
+            self.removal = None
+            with self.store.transaction():
+                self.store.db.execute(
+                    "UPDATE deletions SET state='DELETED',detail='',finished_ns=?,freed_bytes=? "
+                    "WHERE campaign_id=?",
+                    (time.time_ns(), remover.freed_bytes, identity),
+                )
+                self.store.event(
+                    "campaign.files_removed", {"freed_bytes": remover.freed_bytes}, identity
+                )
+
+    def tick(self) -> None:
+        self._advance_deletions()
+        self.run_maps.poll()
         if self.report_import is not None:
             try:
                 self._import_report()
@@ -953,6 +1111,8 @@ class Engine:
             attempt = self.store.attempt(identity)
             if attempt["discard_intent"]:
                 worker.stop("manual_discard", "Manual control")
+            elif self._stop_requested(identity):
+                worker.stop("manual_stop", "Stopped by the researcher from the Monitor")
             for event in worker.poll():
                 kind = event.get("kind")
                 if kind == "metrics":
@@ -1010,11 +1170,7 @@ class Engine:
                     self.current, "PAUSED" if campaign["state"] == "PAUSING" else "STOPPED"
                 )
                 if campaign["state"] == "STOPPING":
-                    replacement = self._restart_replacement(self.current)
                     self.current = None
-                    if replacement and self.store.campaign(replacement)["state"] == "QUEUED":
-                        self.current, self.queue_enabled = replacement, True
-                        self.store.set_state(replacement, "RUNNING")
             return
         if campaign["state"] not in ("RUNNING", "RETRYING"):
             return
@@ -1333,9 +1489,12 @@ class Engine:
         self.server = Server(socket_path or self.workspace / "runtime/control.sock", self.requests)
         try:
             while not self.closed:
-                for _ in range(32):
+                # Requests are served as they arrive; each tick starts 20 ms after the previous
+                # one ended, or when the request being handled at that moment finishes.
+                deadline = time.monotonic() + 0.02
+                while (remaining := deadline - time.monotonic()) > 0:
                     try:
-                        pending = self.requests.get_nowait()
+                        pending = self.requests.get(timeout=remaining)
                     except queue.Empty:
                         break
                     if pending.future.done():
@@ -1350,7 +1509,6 @@ class Engine:
                     self.tick()
                 except (OSError, sqlite3.Error) as exc:
                     self._storage_failure(str(exc))
-                time.sleep(0.02)
         finally:
             self.shutdown()
 
@@ -1358,15 +1516,18 @@ class Engine:
         self.closed = True
         if self.server:
             self.server.close()
-        self.exports.close()
+        self.run_maps.close()
         if self.job is not None:
             self.job.close()
             self.job = None
         if self.report_import is not None:
             self.report_import.close()
             self.report_import = None
-        for worker in self.active.values():
-            worker.stop("engine_interruption", "Engine shutdown")
+        for identity, worker in self.active.items():
+            if self._stop_requested(identity):
+                worker.stop("manual_stop", "Stopped by the researcher from the Monitor")
+            else:
+                worker.stop("engine_interruption", "Engine shutdown")
         deadline = time.monotonic() + 50
         while self.active and time.monotonic() < deadline:
             for identity, worker in tuple(self.active.items()):

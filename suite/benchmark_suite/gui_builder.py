@@ -29,7 +29,6 @@ from .contracts import resolve_world_time_limits
 class CampaignBuilder(QtWidgets.QWidget):
     return_requested = QtCore.Signal()
     edit_profile = QtCore.Signal(str, object)
-    edit_spawn = QtCore.Signal(str)
 
     def __init__(self, transport: Transport):
         super().__init__()
@@ -38,9 +37,13 @@ class CampaignBuilder(QtWidgets.QWidget):
         self.source_campaign_id: str | None = None
         self.excluded: set[tuple[str, str, str]] = set()
         self.validated: dict[str, Any] | None = None
+        # Form content the engine accepted, and the content of the preview in flight.
+        self.validated_design: dict[str, Any] | None = None
+        self.pending_design: dict[str, Any] | None = None
         self.validation_tag = ""
         self.submission_tag = ""
         self.import_tag = ""
+        self.export_tag = ""
         self.step = 0
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -106,7 +109,6 @@ class CampaignBuilder(QtWidgets.QWidget):
         self.robot_selector.edit_profile.connect(self.edit_profile.emit)
         self.stack.addWidget(self.robot_selector)
         self.world_selector = WorldSelector(transport)
-        self.world_selector.edit_spawn.connect(self.edit_spawn.emit)
         self.stack.addWidget(self.world_selector)
         execution = surface()
         execution_layout = QtWidgets.QVBoxLayout(execution)
@@ -184,7 +186,7 @@ class CampaignBuilder(QtWidgets.QWidget):
         layout.addWidget(self.error)
         footer = QtWidgets.QHBoxLayout()
         button("Import YAML", self.import_campaign, footer, role="outlined")
-        button("Export YAML", self.export_campaign, footer, role="outlined")
+        self.export_button = button("Export YAML", self.export_campaign, footer, role="outlined")
         footer.addStretch()
         self.back_button = button("Back", lambda: self.show_step(self.step - 1), footer)
         self.next_button = button("Continue", self.next_step, footer, role="primary")
@@ -224,10 +226,39 @@ class CampaignBuilder(QtWidgets.QWidget):
         }
 
     def invalidate(self, *args: Any) -> None:
+        if self.import_tag and self.validation_tag.startswith("campaign-import-"):
+            # Dropping the import's preview would otherwise leave validation blocked.
+            self.import_tag = ""
+            self.set_message("Import cancelled by an edit.", "muted")
         self.validated = None
+        self.validated_design = None
+        self.pending_design = None
         self.validation_tag = ""
-        self.submit_button.setEnabled(False)
+        self.sync_actions()
         self.update_summary()
+
+    def sync_actions(self) -> None:
+        exportable = (
+            self.validated is not None and self.validated_design is not None and not self.import_tag
+        )
+        self.submit_button.setEnabled(self.validated is not None and not self.submission_tag)
+        self.export_button.setEnabled(exportable)
+        self.export_button.setToolTip(
+            "Save the accepted campaign as YAML"
+            if exportable
+            else "Validate the campaign (step 4) to export the accepted YAML"
+        )
+
+    def unchanged_since_validation(self) -> bool:
+        """Whether the form still holds what the engine accepted; invalidates when not."""
+        try:
+            unchanged = self.design() == self.validated_design
+        except ValueError:
+            unchanged = False
+        if not unchanged:
+            self.invalidate()
+            self.set_message("The campaign changed after validation; validate it again.")
+        return unchanged
 
     def update_summary(self) -> None:
         robots, worlds = self.robot_selector.selections(), self.world_selector.selections()
@@ -273,7 +304,7 @@ class CampaignBuilder(QtWidgets.QWidget):
         self.next_button.style().unpolish(self.next_button)
         self.next_button.style().polish(self.next_button)
         self.submit_button.setVisible(self.step == 3)
-        self.submit_button.setEnabled(self.validated is not None and not self.submission_tag)
+        self.sync_actions()
         if self.step == 3:
             self.refresh_combinations()
         self.update_summary()
@@ -370,18 +401,25 @@ class CampaignBuilder(QtWidgets.QWidget):
         if submit:
             if self.validated is None or self.submission_tag:
                 return
+            if not self.unchanged_since_validation():
+                return
             self.submission_tag = "builder-submit-" + uuid.uuid4().hex
-            self.submit_button.setEnabled(False)
+            self.sync_actions()
             self.transport.submit(
                 self.submission_tag, "campaign.submit", {"specification": deepcopy(self.validated)}
             )
         else:
-            self.validation_tag = "builder-preview-" + uuid.uuid4().hex
             try:
                 design = self.design()
             except ValueError as exc:
                 self.set_message(str(exc))
                 return
+            # A new validation replaces the old result, so a failure leaves nothing enabled.
+            self.validated = None
+            self.validated_design = None
+            self.pending_design = deepcopy(design)
+            self.validation_tag = "builder-preview-" + uuid.uuid4().hex
+            self.sync_actions()
             self.set_message("Validating included combinations…", "muted")
             self.transport.submit(
                 self.validation_tag, "campaign.preview", {"specification": design}
@@ -411,27 +449,48 @@ class CampaignBuilder(QtWidgets.QWidget):
             self.transport.submit(self.import_tag, "local.read", {"path": path})
 
     def export_campaign(self) -> None:
+        """Save the specification the engine accepted for the current form."""
+        if self.validated is None or self.validated_design is None or self.import_tag:
+            return
+        if not self.unchanged_since_validation():
+            return
+        # Serialized before the modal dialog: replies delivered while it is open cannot change it.
+        text = yaml.safe_dump(deepcopy(self.validated), sort_keys=False, allow_unicode=True)
+        if len(text.encode()) > 4 * 1024 * 1024:
+            self.set_message(
+                "The validated campaign exceeds the 4 MiB import limit; it cannot be re-imported."
+            )
+            return
         path, _ = QtWidgets.QFileDialog.getSaveFileName(
             self, "Export campaign", "campaign.yaml", "YAML (*.yaml)"
         )
         if path:
-            try:
-                design = self.design()
-            except ValueError as exc:
-                self.set_message(str(exc))
-                return
-            self.transport.submit(
-                "file-saved",
-                "local.write",
-                {"path": path, "text": yaml.safe_dump(design, sort_keys=False)},
-            )
+            self.export_tag = "builder-export-" + uuid.uuid4().hex
+            self.transport.submit(self.export_tag, "local.write", {"path": path, "text": text})
 
     def received(self, tag: str, result: Any) -> None:
         if tag == self.validation_tag:
+            specification = result.get("specification") if isinstance(result, dict) else None
+            if not isinstance(specification, dict):
+                self.import_tag = ""
+                self.invalidate()
+                self.set_message(
+                    "The engine reply has no accepted specification; rebuild the suite image."
+                )
+                return
             if tag.startswith("campaign-import-"):
                 self.import_tag = ""
-                self.apply_design(result["specification"])
-            self.validated = result["specification"]
+                self.apply_design(specification)
+                try:
+                    design: dict[str, Any] | None = self.design()
+                except ValueError as exc:
+                    self.set_message(str(exc))
+                    return
+            else:
+                design = self.pending_design
+            self.validated = specification
+            self.validated_design = design
+            self.pending_design = None
             self.preview.set_record(
                 {
                     "name": self.validated["name"],
@@ -451,12 +510,12 @@ class CampaignBuilder(QtWidgets.QWidget):
                 "Validation passed. Add this campaign to the queue, then explicitly Start it.",
                 "success",
             )
-            self.submit_button.setEnabled(True)
             self.show_step(self.step)
         elif tag == self.submission_tag:
             self.submission_tag = ""
             self.validated = None
-            self.submit_button.setEnabled(False)
+            self.validated_design = None
+            self.sync_actions()
             self.set_message(
                 "Campaign added to the queue. Open Campaigns and press Start to execute.",
                 "success",
@@ -475,10 +534,20 @@ class CampaignBuilder(QtWidgets.QWidget):
             except ValueError as exc:
                 self.import_tag = ""
                 self.set_message(str(exc))
+        elif tag == self.export_tag:
+            self.export_tag = ""
+            self.set_message(f"Validated campaign saved to {result['path']}", "success")
 
     def failed(self, tag: str, error: str) -> None:
-        if tag in (self.validation_tag, self.submission_tag, self.import_tag):
+        if tag == self.export_tag:
+            self.export_tag = ""
+            self.set_message(error)
+        elif tag in (self.validation_tag, self.submission_tag, self.import_tag):
+            if tag == self.validation_tag:
+                self.validated = None
+                self.validated_design = None
+                self.pending_design = None
             self.import_tag = ""
             self.submission_tag = ""
             self.set_message(error)
-            self.submit_button.setEnabled(self.validated is not None)
+            self.sync_actions()

@@ -14,8 +14,6 @@
 
 from collections.abc import Callable
 from functools import partial
-from io import BytesIO
-import base64
 import json
 import math
 import os
@@ -26,22 +24,21 @@ from typing import Any
 import uuid
 import zlib
 
-import numpy as np
 import psutil
-from PIL import Image
 
 from .contracts import ContractError
-from .monitoring import MONITOR_LAYERS, PhysicalPath, ReferenceCells, base_pose, explored_pixels
+from .monitoring import (
+    MONITOR_LAYERS,
+    PhysicalPath,
+    ReferenceCells,
+    base_pose,
+    explored_pixels,
+    png,
+)
 from .protocol import PendingRequest, Server
 from .recording import Recorder, safe
 
 STALE_POSE_WALL_SECONDS = 1.0
-
-
-def png(pixels: np.ndarray[Any, Any]) -> str:
-    buffer = BytesIO()
-    Image.fromarray(pixels).save(buffer, format="PNG")
-    return base64.b64encode(buffer.getvalue()).decode()
 
 
 class WorkerRuntime:
@@ -104,46 +101,63 @@ class WorkerRuntime:
         self.sequence += 1
 
     def tick(self) -> None:
-        worker = self.worker
         for _ in range(16):
             try:
                 pending = self.requests.get_nowait()
             except queue.Empty:
                 break
-            if pending.future.done():
-                continue
-            request = pending.request
+            self._answer(pending)
+
+    def serve(self, seconds: float) -> None:
+        """Answer engine requests as they arrive during the worker loop's pause of ``seconds``.
+
+        Runs on the supervision thread like ``tick``; a request still being answered at the end
+        of the pause finishes first.
+        """
+        deadline = time.monotonic() + seconds
+        while (remaining := deadline - time.monotonic()) > 0:
             try:
-                method, params = request.get("method"), request.get("params", {})
-                if method == "worker.status":
-                    result = dict(sequence=self.sequence, state=self.state, metrics=self.metrics)
-                elif method == "worker.stop":
-                    reason = params.get("reason", "engine_interruption")
-                    if reason not in (
-                        "timing_rejection",
-                        "manual_discard",
-                        "engine_interruption",
-                        "storage_failure",
-                        "startup_failure",
-                    ):
-                        raise ContractError("reason", "Unsupported worker stop reason")
-                    worker.terminal.put((reason, str(params.get("detail", "Suite control")), -1))
-                    result = {"accepted": True}
-                elif method == "worker.monitor":
-                    result = self.monitor(
-                        params.get("after_sequence", 0),
-                        params.get("layers", []),
-                        params.get("revisions", {}),
-                    )
-                else:
-                    raise ContractError("method", "Unsupported worker operation")
-                pending.future.set_result(
-                    {"ok": True, "request_id": request.get("request_id"), "result": result}
+                pending = self.requests.get(timeout=remaining)
+            except queue.Empty:
+                return
+            self._answer(pending)
+
+    def _answer(self, pending: PendingRequest) -> None:
+        if pending.future.done():
+            return
+        request = pending.request
+        try:
+            method, params = request.get("method"), request.get("params", {})
+            if method == "worker.status":
+                result = dict(sequence=self.sequence, state=self.state, metrics=self.metrics)
+            elif method == "worker.stop":
+                reason = params.get("reason", "engine_interruption")
+                if reason not in (
+                    "timing_rejection",
+                    "manual_discard",
+                    "manual_stop",
+                    "engine_interruption",
+                    "storage_failure",
+                    "startup_failure",
+                ):
+                    raise ContractError("reason", "Unsupported worker stop reason")
+                self.worker.terminal.put((reason, str(params.get("detail", "Suite control")), -1))
+                result = {"accepted": True}
+            elif method == "worker.monitor":
+                result = self.monitor(
+                    params.get("after_sequence", 0),
+                    params.get("layers", []),
+                    params.get("revisions", {}),
                 )
-            except (ContractError, ValueError) as exc:
-                pending.future.set_result(
-                    {"ok": False, "error": {"code": "invalid", "message": str(exc)}}
-                )
+            else:
+                raise ContractError("method", "Unsupported worker operation")
+            pending.future.set_result(
+                {"ok": True, "request_id": request.get("request_id"), "result": result}
+            )
+        except (ContractError, ValueError) as exc:
+            pending.future.set_result(
+                {"ok": False, "error": {"code": "invalid", "message": str(exc)}}
+            )
 
     def odometry(self, message: Any, wall: float) -> None:
         worker, recorder = self.worker, self.worker.recorder

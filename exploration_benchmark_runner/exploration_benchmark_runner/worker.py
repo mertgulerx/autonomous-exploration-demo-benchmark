@@ -1375,7 +1375,9 @@ class Worker:
         try:
             while not self.closed:
                 if self.campaign:
-                    time.sleep(0.05)
+                    # The 50 ms pause between ticks; suite requests are answered during
+                    # it instead of waiting for the next tick.
+                    self.runtime.serve(0.05)
                 else:
                     self.observer_executor.spin_once(timeout_sec=0.05)
                 self.tick()

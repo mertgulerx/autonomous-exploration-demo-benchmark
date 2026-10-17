@@ -19,11 +19,13 @@ import uuid
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from .gui_support import PagedTable, TextSelection, Transport, button
+from .contracts import CAMPAIGN_DELETION_LIMIT, PROFILE_DELETION_LIMIT
+from .gui_support import PagedTable, TextSelection, Transport, button, stale_engine_message
 from .gui_pages import SpawnEditor
 from .gui_builder import CampaignBuilder
-from .gui_campaigns import CampaignOverview, CampaignTable
-from .gui_profiles import ProfileEditor, SweepEditor
+from .gui_campaigns import CampaignOverview, CampaignTable, confirm_deletion
+from .gui_run_map import RunMap
+from .gui_profiles import ProfileEditor
 from .gui_style import (
     DetailsPanel,
     Badge,
@@ -39,13 +41,31 @@ from .gui_monitor import LiveMap, WorkerCards, RunMetrics
 from .monitoring import MONITOR_LAYERS, PathCursor, accept_page
 from .gui_reports import ReportBrowser
 from .gui_logs import LogViewer
-from .gui_exports import ExportBrowser
 
 LAYER_TITLES = {"explored": "Explored cells", "navigation": "Nav2 goal and plan"}
 
 
 def metric_number(value: Any, decimals: int = 2) -> str:
     return f"{value:.{decimals}f}" if isinstance(value, (float, int)) else "—"
+
+
+def profile_deletion_message(rows: list[dict[str, Any]], robot_labels: dict[str, str]) -> str:
+    """Confirmation text for deleting whole profiles (one row per revision family)."""
+    count = len(rows)
+    lines = [
+        f"Delete {count} profile{'s' if count != 1 else ''} and all "
+        f"{'their' if count != 1 else 'its'} saved revisions? This cannot be undone.",
+        "",
+        *(f"{row['name']} · {robot_labels.get(row['owner'], row['owner'])}" for row in rows[:10]),
+    ]
+    if count > 10:
+        lines.append(f"and {count - 10} more")
+    lines += [
+        "",
+        "Submitted campaigns, their results and reports keep the exact parameters they recorded. "
+        "Campaign YAML files that name a deleted revision ID will no longer validate.",
+    ]
+    return "\n".join(lines)
 
 
 class Window(QtWidgets.QMainWindow):
@@ -65,7 +85,6 @@ class Window(QtWidgets.QMainWindow):
         self.status: dict[str, Any] = {}
         self.campaign_id: str | None = None
         self.profile_row: dict[str, Any] | None = None
-        self.profile_reference: dict[str, Any] | None = None
         self.result_selection: str | None = None
         self.monitor_id: str | None = None
         self.monitor_requested: str | None = None
@@ -178,6 +197,8 @@ class Window(QtWidgets.QMainWindow):
         return self.pages.currentWidget().objectName().removeprefix("page-")
 
     def open_builder(self) -> None:
+        # The engine or library may have changed since an earlier validation.
+        self.builder.invalidate()
         self.go("builder")
 
     def make_dashboard(self) -> None:
@@ -199,6 +220,15 @@ class Window(QtWidgets.QMainWindow):
         self.active_worker_count.setAccessibleName("Active workers")
         heading.addWidget(self.active_worker_count)
         heading.addSpacing(16)
+        self.deletion_pending = False
+        self.delete_campaigns_button = button(
+            "Delete…", self.request_campaign_deletion, heading, role="danger"
+        )
+        self.delete_campaigns_button.setToolTip(
+            "Delete the selected finished or stopped campaigns and all their results "
+            "(Ctrl or Shift to select several)"
+        )
+        self.delete_campaigns_button.setEnabled(False)
         button("New campaign", self.open_builder, heading, glyph="plus")
         layout.addLayout(heading)
         self.summary = label("Connecting to the background engine…", "muted")
@@ -210,6 +240,7 @@ class Window(QtWidgets.QMainWindow):
         self.campaigns = CampaignTable(self.transport)
         self.campaigns.selected.connect(self.select_campaign)
         self.campaigns.action_requested.connect(self.control_campaign_row)
+        self.campaigns.choice_changed.connect(self.update_delete_button)
         if self.hide_finished.isChecked():
             self.campaigns.filters = {"hide_finished": True}
         self.hide_finished.toggled.connect(self.filter_campaigns)
@@ -221,7 +252,6 @@ class Window(QtWidgets.QMainWindow):
         self.builder = CampaignBuilder(self.transport)
         self.builder.return_requested.connect(lambda: self.go("campaigns"))
         self.builder.edit_profile.connect(self.edit_builder_profile)
-        self.builder.edit_spawn.connect(self.edit_builder_spawn)
         layout.addWidget(self.builder, 1)
 
     def make_profiles(self) -> None:
@@ -231,10 +261,7 @@ class Window(QtWidgets.QMainWindow):
         self.profile_robot.currentIndexChanged.connect(self.refresh_profile_list)
         self.profile_search = QtWidgets.QLineEdit()
         self.profile_search.setPlaceholderText("Search profiles…")
-        self.profile_tag = QtWidgets.QLineEdit()
-        self.profile_tag.setPlaceholderText("Filter by tag")
-        self.profile_tag.setMaximumWidth(160)
-        for field in (self.profile_robot, self.profile_search, self.profile_tag):
+        for field in (self.profile_robot, self.profile_search):
             search.addWidget(field)
         button(
             "New profile", lambda: self.open_profile("new"), search, role="primary", glyph="plus"
@@ -244,7 +271,6 @@ class Window(QtWidgets.QMainWindow):
         self.profile_filter_timer.setInterval(250)
         self.profile_filter_timer.timeout.connect(self.refresh_profile_list)
         self.profile_search.textChanged.connect(lambda _: self.profile_filter_timer.start())
-        self.profile_tag.textChanged.connect(lambda _: self.profile_filter_timer.start())
         layout.addLayout(search)
         split = QtWidgets.QSplitter()
         split.setObjectName("profiles-split")
@@ -254,8 +280,8 @@ class Window(QtWidgets.QMainWindow):
             "library",
             [("name", "Profile"), ("revision", "Revision"), ("created_ns", "Created")],
             method="profiles.list",
+            multiple=True,
         )
-        self.profiles.filters = {"archived": False}
         self.profiles.selected.connect(self.select_profile)
         self.tables.append(self.profiles)
         split.addWidget(self.profiles)
@@ -267,35 +293,24 @@ class Window(QtWidgets.QMainWindow):
         bar = QtWidgets.QHBoxLayout()
         button("Edit", lambda: self.open_profile("edit"), bar)
         button("Clone", lambda: self.open_profile("clone"), bar)
-        button("Use in campaign", self.add_profile_to_campaign, bar)
         details.addLayout(bar)
-        self.profile_reference_label = label(
-            "Choose a reference to compare parameter changes", "muted"
-        )
-        self.profile_reference_label.setWordWrap(True)
-        details.addWidget(self.profile_reference_label)
-        bar = QtWidgets.QHBoxLayout()
-        button("Set reference", self.set_profile_reference, bar, role="outlined")
-        button("Compare", self.compare_profile, bar, role="outlined")
-        details.addLayout(bar)
-        self.profile_difference = DetailsPanel("Parameter changes")
-        details.addWidget(self.profile_difference)
         split.addWidget(panel)
         split.setSizes([650, 420])
         layout.addWidget(split, 1)
         bar = QtWidgets.QHBoxLayout()
-        button("Parameter sweep", self.open_sweep, bar)
         button("Import profile", self.import_profile, bar)
         button("Export profile", self.export_profile, bar)
         bar.addStretch()
-        button("Archive", self.archive_profile, bar, role="danger")
+        delete = button("Delete", self.delete_profiles, bar, role="danger")
+        delete.setToolTip(
+            "Delete the selected profiles and all their revisions (Ctrl or Shift to select several)"
+        )
         layout.addLayout(bar)
 
     def make_spawns(self) -> None:
         layout = self.page("Worlds & Spawns", "worlds")
         self.spawn_editor = SpawnEditor(self.transport)
         self.spawn_editor.changed.connect(self.refresh_libraries)
-        self.spawn_editor.return_requested.connect(self.return_to_builder)
         self.tables.extend(self.spawn_editor.tables)
         layout.addWidget(self.spawn_editor, 1)
 
@@ -304,8 +319,17 @@ class Window(QtWidgets.QMainWindow):
         self.workers = WorkerCards()
         self.workers.chosen.connect(self.choose_worker)
         layout.addWidget(self.workers)
+        title_row = QtWidgets.QHBoxLayout()
         self.focus_title = label("No worker selected", "section")
-        layout.addWidget(self.focus_title)
+        title_row.addWidget(self.focus_title, 1)
+        self.stop_run_button = button("Stop run", self.stop_selected_run, title_row, role="danger")
+        self.stop_run_button.setToolTip(
+            "End the selected run; its data is kept and campaign reports exclude it"
+        )
+        self.stop_run_button.setEnabled(False)
+        self.stop_pending: set[str] = set()
+        self.stop_requested_runs: set[str] = set()
+        layout.addLayout(title_row)
         self.focus_tabs = QtWidgets.QTabWidget()
         inspection = QtWidgets.QSplitter()
         inspection.setObjectName("monitor-inspection-split")
@@ -380,6 +404,7 @@ class Window(QtWidgets.QMainWindow):
             "timing_rejection",
             "engine_interruption",
             "manual_discard",
+            "manual_stop",
             "storage_failure",
         ):
             self.result_outcome.addItem(humanize(value), value)
@@ -408,19 +433,23 @@ class Window(QtWidgets.QMainWindow):
         panel = surface()
         pane = QtWidgets.QVBoxLayout(panel)
         pane.setContentsMargins(20, 20, 20, 20)
-        self.result_detail = DetailsPanel("Run summary")
-        pane.addWidget(self.result_detail, 1)
+        pane.addWidget(label("Run summary", "section"))
+        summary = QtWidgets.QSplitter(QtCore.Qt.Orientation.Vertical)
+        summary.setObjectName("results-summary-split")
+        self.run_map = RunMap(self.transport)
+        summary.addWidget(self.run_map)
+        self.result_detail = DetailsPanel(None)
+        summary.addWidget(self.result_detail)
+        summary.setSizes([360, 300])
+        pane.addWidget(summary, 1)
         split.addWidget(panel)
-        split.setSizes([760, 330])
+        split.setSizes([620, 470])
         run_layout.addWidget(split, 1)
         tabs.addTab(runs, "Runs")
         self.report_browser = ReportBrowser(self.transport)
         self.reports = self.report_browser.reports
         self.tables.append(self.reports)
         tabs.addTab(self.report_browser, "Reports")
-        self.export_browser = ExportBrowser(self.transport)
-        self.tables.append(self.export_browser.table)
-        tabs.addTab(self.export_browser, "Exports")
         tabs.currentChanged.connect(lambda: self.refresh_visible_tables())
         layout.addWidget(tabs, 1)
         self.result_filter_timer = QtCore.QTimer(self)
@@ -453,9 +482,6 @@ class Window(QtWidgets.QMainWindow):
             if table.isVisible():
                 table.refresh()
 
-    def return_to_builder(self) -> None:
-        self.go("builder")
-
     def show_page(self, index: int) -> None:
         if index >= 0:
             key = self.navigation.item(index).data(QtCore.Qt.ItemDataRole.UserRole)
@@ -484,12 +510,16 @@ class Window(QtWidgets.QMainWindow):
         elif tag == "status":
             self.status_pending, self.status = False, result
             self.summary.hide()
+            self.show_deletions(result.get("deletions"))
             self.active_worker_count.setText(str(len(result["active"])))
             self.campaign_total.setText(f"{result['campaigns']['total']:,}")
             if not self.catalog and not self.catalog_pending:
                 self.catalog_pending = True
                 self.transport.submit("catalog", "catalog.get")
             self.workers.update_runs(result["active"], self.catalog)
+            self.stop_requested_runs |= {
+                row["attempt"]["id"] for row in result["active"] if row.get("stop_requested")
+            }
             if self.current_page() == "monitor":
                 self.follow_single_worker()
             selected = next(
@@ -500,11 +530,24 @@ class Window(QtWidgets.QMainWindow):
                 if self.current_page() == "monitor":
                     self.inspect_selected()
             elif self.monitor_id:
+                stopped = self.monitor_id in self.stop_requested_runs
                 self.close_monitor()
-                self.focus_title.setText("Run ended · retained live snapshot")
+                self.focus_title.setText(
+                    ("Run stopped" if stopped else "Run ended") + " · retained live snapshot"
+                )
                 self.monitor_status.setText(
                     "Run ended: the last received path and pose stay on the map"
                 )
+            self.update_stop_button()
+        elif tag.startswith("stop-run:"):
+            self.stop_pending.discard(tag.removeprefix("stop-run:"))
+            self.statusBar().showMessage(
+                "Stop already requested; the run is finalizing"
+                if result.get("already_requested")
+                else "Stop requested; the run is finalizing",
+                8000,
+            )
+            self.refresh_status()
         elif tag == "submit":
             self.select_campaign({"id": result["campaign_id"], "name": self.builder.name.text()})
             self.builder.show_step(0)
@@ -605,10 +648,23 @@ class Window(QtWidgets.QMainWindow):
             self.monitor_pending = False
             if self.monitor_id and result.get("attempt_id") == self.monitor_id:
                 self.apply_monitor(result)
-        elif tag == "sweep":
-            self.statusBar().showMessage(f"{result['count']} sweep profiles", 8000)
+        elif tag == "profile-delete":
+            self.profile_row = None
+            self.profile_details.clear()
+            deleted: dict[str, set[str]] = {}
+            for revision in result["revisions"]:
+                deleted.setdefault(revision["owner"], set()).add(revision["id"])
+            for owner, revisions in deleted.items():
+                self.builder.robot_selector.forget_profiles(owner, revisions)
             self.refresh_libraries()
-        elif tag in ("profile-import", "profile-archive", "spawn-save"):
+            count = len(result["family_ids"])
+            self.statusBar().showMessage(
+                f"Deleted {count} profile{'s' if count != 1 else ''} "
+                f"({result['deleted_revisions']} revisions); {result['referenced_campaigns']} "
+                "campaigns keep their recorded parameters",
+                10000,
+            )
+        elif tag == "profile-import":
             self.refresh_libraries()
             self.statusBar().showMessage("Library saved", 6000)
         elif tag.endswith("-read"):
@@ -620,31 +676,53 @@ class Window(QtWidgets.QMainWindow):
         elif tag == "file-saved":
             self.statusBar().showMessage("Export saved", 5000)
         elif tag.startswith("campaign-control:"):
-            identity = tag.removeprefix("campaign-control:")
-            name = next(
-                (row["name"] for _, row in self.campaigns.model.records() if row["id"] == identity),
-                "Restarted campaign",
-            )
             self.campaigns.finish_control(
-                identity, result.get("source_state", result.get("state", "PAUSING"))
+                tag.removeprefix("campaign-control:"), result.get("state", "PAUSING")
             )
-            if result.get("source_campaign_id"):
-                self.campaigns.view.clearSelection()
-                self.campaigns.view.setCurrentIndex(QtCore.QModelIndex())
-                self.select_campaign({"id": result["campaign_id"], "name": name})
+        elif tag == "campaign-delete-preview":
+            identities = confirm_deletion(self, result["campaigns"])
+            if identities:
+                self.transport.submit(
+                    "campaign-delete", "campaign.delete", {"campaign_ids": identities}
+                )
+            else:
+                self.deletion_pending = False
+                self.update_delete_button()
+        elif tag == "campaign-delete":
+            self.deletion_pending = False
+            gone = result["deleted"] + result["already_deleted"]
+            self.campaigns.forget(gone)
+            if self.campaign_id in gone:
+                self.clear_campaign()
+            self.campaigns.refresh()
+            count = len(result["deleted"])
+            self.statusBar().showMessage(
+                f"Deleted {count} campaign{'s' if count != 1 else ''}; removing files…", 10000
+            )
+            self.update_delete_button()
+        elif tag.startswith("campaign-restart:"):
+            self.campaigns.finish_control(tag.removeprefix("campaign-restart:"))
+            self.campaigns.view.clearSelection()
+            self.campaigns.view.setCurrentIndex(QtCore.QModelIndex())
+            self.select_campaign({"id": result["campaign_id"], "name": result["name"]})
+            self.statusBar().showMessage(
+                f"Started “{result['name']}”"
+                if result["state"] == "RUNNING"
+                else f"Queued “{result['name']}”; it runs after the current campaign",
+                10000,
+            )
+            self.campaigns.refresh()
         elif tag == "campaign-status":
             self.campaign_status_pending = False
             campaign, counters = result["campaign"], result["counters"]
             if campaign["id"] != self.campaign_id:
                 return
             self.campaign_overview.update_campaign(campaign, counters)
-        elif tag == "profile-difference":
-            self.profile_difference.set_difference(result)
 
     def failed(self, tag: str, error: str) -> None:
+        if tag.startswith("run-map:"):
+            return  # the run map reports its own errors
         if tag.startswith("report-generate:") and tag != self.report_browser.generation_tag:
-            return
-        if tag.startswith("dataset-export:") and tag != self.export_browser.preparation_tag:
             return
         if tag == "catalog":
             self.catalog_pending = False
@@ -657,10 +735,11 @@ class Window(QtWidgets.QMainWindow):
         elif tag == "monitor":
             # The Monitor reports its own errors; polling at 10 Hz must not flood the status bar.
             self.monitor_pending = False
-            if "Unsupported operation: monitor.get" in error:
-                self.monitor_status.setText(
-                    "The engine image predates the ground-truth Monitor; rebuild the suite image"
-                )
+            stale = stale_engine_message(
+                error, "Unsupported operation: monitor.get", "the ground-truth Monitor"
+            )
+            if stale:
+                self.monitor_status.setText(stale)
                 self.monitor_timer.stop()
             elif self.monitor_id and self.monitor_requested == self.monitor_id:
                 self.monitor_status.setText(f"Monitor unavailable: {error}")
@@ -671,17 +750,53 @@ class Window(QtWidgets.QMainWindow):
             self.events_pending = False
         elif tag == "campaign-status":
             self.campaign_status_pending = False
+            if "Campaign does not exist" in error:
+                self.clear_campaign()
+        elif tag == "profile-delete":
+            stale = stale_engine_message(error, "Unsupported library operation", "profile deletion")
+            if stale:
+                error = stale
+            else:
+                self.refresh_profile_list()
+        elif tag in ("campaign-delete-preview", "campaign-delete"):
+            self.deletion_pending = False
+            self.update_delete_button()
+            error = (
+                stale_engine_message(
+                    error, "Unsupported operation: campaign.delete", "campaign deletion"
+                )
+                or error
+            )
         elif tag.startswith("campaign-control:"):
             self.campaigns.finish_control(tag.removeprefix("campaign-control:"))
+        elif tag.startswith("campaign-restart:"):
+            self.campaigns.finish_control(tag.removeprefix("campaign-restart:"))
+            stale = stale_engine_message(
+                error, "Unsupported operation: campaign.restart_copy", "Restart as a copy"
+            )
+            if stale:
+                error = stale + " No campaign was changed."
+        elif tag.startswith("stop-run:"):
+            self.stop_pending.discard(tag.removeprefix("stop-run:"))
+            self.update_stop_button()
+            stale = stale_engine_message(error, "Unsupported operation: attempt.stop", "Stop run")
+            if stale:
+                # A dialog, not the status bar: the run keeps going.
+                QtWidgets.QMessageBox.information(
+                    self, "Stop run unavailable", "The run continues. " + stale
+                )
+                return
         self.statusBar().showMessage(error, 12000)
 
     def fill_catalog(self) -> None:
         self.spawn_editor.catalog = self.catalog
         self.builder.catalog = self.catalog
-        self.results.model.names = {
-            "robot_id": {r["id"]: r["label"] for r in self.catalog["robots"]},
-            "world_id": {w["id"]: w["label"] for w in self.catalog["worlds"]},
-        }
+        self.results.model.set_names(
+            {
+                "robot_id": {r["id"]: r["label"] for r in self.catalog["robots"]},
+                "world_id": {w["id"]: w["label"] for w in self.catalog["worlds"]},
+            }
+        )
         self.builder.robot_selector.set_catalog(self.catalog["robots"], self.catalog["parameters"])
         self.builder.world_selector.set_catalog(self.catalog["worlds"])
         self.result_robot.clear()
@@ -769,7 +884,7 @@ class Window(QtWidgets.QMainWindow):
         self.results_context.setText(row.get("name", "Selected campaign") + " · recorded outcomes")
         self.result_selection = None
         self.result_detail.clear()
-        self.export_browser.set_campaign(self.campaign_id)
+        self.run_map.clear()
         self.report_browser.set_campaign(self.campaign_id)
         self.filter_results()
 
@@ -777,6 +892,7 @@ class Window(QtWidgets.QMainWindow):
         self.result_selection = None
         self.result_row: dict[str, Any] = {}
         self.result_detail.clear()
+        self.run_map.clear()
         filters: dict[str, Any] = {"campaign_id": self.campaign_id} if self.campaign_id else {}
         for key, value in (
             ("robot_id", self.result_robot.currentData()),
@@ -794,25 +910,85 @@ class Window(QtWidgets.QMainWindow):
         self.results.model.replace([])
         self.results.refresh()
 
+    def update_delete_button(self, *args: Any) -> None:
+        count = len(self.campaigns.chosen)
+        self.delete_campaigns_button.setText(f"Delete {count}…" if count else "Delete…")
+        self.delete_campaigns_button.setEnabled(bool(count) and not self.deletion_pending)
+
+    def request_campaign_deletion(self) -> None:
+        identities = list(self.campaigns.chosen)
+        if not identities or self.deletion_pending:
+            return
+        if len(identities) > CAMPAIGN_DELETION_LIMIT:
+            self.statusBar().showMessage(
+                f"Select at most {CAMPAIGN_DELETION_LIMIT} campaigns to delete at once", 8000
+            )
+            return
+        self.deletion_pending = True
+        self.update_delete_button()
+        self.transport.submit(
+            "campaign-delete-preview", "campaign.delete_preview", {"campaign_ids": identities}
+        )
+
+    def show_deletions(self, deletions: dict[str, Any] | None) -> None:
+        """State file removal of deleted campaigns; older engines send nothing."""
+        if not deletions or not (deletions["removing"] or deletions["failed"]):
+            return
+        parts = []
+        if deletions["removing"]:
+            parts.append(f"Removing the files of {deletions['removing']} deleted campaign(s)…")
+        if deletions["failed"]:
+            parts.append(
+                "File removal failed for "
+                + "; ".join(f"{row['name']} ({row['detail']})" for row in deletions["failed"][:3])
+                + ". The engine retries at its next start."
+            )
+        self.summary.setText(" ".join(parts))
+        self.summary.show()
+
+    def clear_campaign(self) -> None:
+        self.campaign_id = None
+        self.campaign_overview.reset("No campaign selected")
+        self.results_context.setText("No campaign selected")
+        self.result_selection = None
+        self.result_detail.clear()
+        self.run_map.clear()
+        self.report_browser.set_campaign("")
+        self.filter_results()
+
     def filter_campaigns(self, checked: bool) -> None:
+        self.campaigns.clear_choice()
         self.settings.setValue("hide_finished_campaigns", checked)
         self.campaigns.filters = {"hide_finished": True} if checked else {}
         self.campaigns.reset_page()
 
     def control_campaign_row(self, identity: str, operation: str) -> None:
-        if operation in ("stop", "restart"):
-            message = (
-                "Stop every active worker and leave remaining experiments Not done? "
-                if operation == "stop"
-                else "Stop every active worker and restart the entire campaign from the beginning? "
+        if operation == "stop" and not self.confirm_discard(
+            "Stop campaign",
+            "Stop every active worker and leave remaining experiments Not done? Active partial "
+            "measurements will be discarded. Completed results remain available.",
+        ):
+            self.campaigns.finish_control(identity)
+            return
+        if operation == "restart":
+            name = next(
+                (row["name"] for _, row in self.campaigns.model.records() if row["id"] == identity),
+                "this campaign",
             )
-            if not self.confirm_discard(
-                operation.capitalize() + " campaign",
-                message
-                + "Active partial measurements will be discarded. Completed results remain available.",
-            ):
+            answer = QtWidgets.QMessageBox.question(
+                self,
+                "Restart campaign",
+                f"Run a new copy of “{name}” with the same accepted settings? This campaign and its "
+                "results stay unchanged. The copy starts now when no other campaign is running; "
+                "otherwise it runs next in the queue.",
+            )
+            if answer != QtWidgets.QMessageBox.StandardButton.Yes:
                 self.campaigns.finish_control(identity)
                 return
+            self.transport.submit(
+                "campaign-restart:" + identity, "campaign.restart_copy", {"campaign_id": identity}
+            )
+            return
         self.transport.submit(
             "campaign-control:" + identity, "campaign." + operation, {"campaign_id": identity}
         )
@@ -823,38 +999,10 @@ class Window(QtWidgets.QMainWindow):
             self.profile_row = None
             self.profiles.filters = {
                 "robot_id": robot,
-                "archived": False,
                 "search": self.profile_search.text().strip(),
-                "tag": self.profile_tag.text().strip(),
             }
             self.profiles.offset = 0
             self.profiles.refresh()
-
-    def set_profile_reference(self) -> None:
-        if self.profile_row:
-            self.profile_reference = self.profile_row
-            self.profile_reference_label.setText(
-                f"Reference: {self.profile_row['name']} · revision {self.profile_row['revision']}"
-            )
-
-    def compare_profile(self) -> None:
-        if self.profile_reference and self.profile_row:
-            self.transport.submit(
-                "profile-difference",
-                "profiles.diff",
-                {
-                    "left": self.profile_reference["id"],
-                    "right": self.profile_row["id"],
-                },
-            )
-
-    def add_profile_to_campaign(self) -> None:
-        if not self.profile_row:
-            return
-        owner, identity = self.profile_row["owner"], self.profile_row["id"]
-        self.builder.robot_selector.add_profile(
-            owner, identity, self.profile_row["name"] + f" · r{self.profile_row['revision']}"
-        )
 
     def open_profile(self, operation: str) -> None:
         if operation == "new":
@@ -875,21 +1023,28 @@ class Window(QtWidgets.QMainWindow):
         editor.show()
         return editor
 
-    def archive_profile(self) -> None:
-        if self.profile_row:
-            self.transport.submit(
-                "profile-archive", "profiles.archive", {"revision_id": self.profile_row["id"]}
-            )
-
-    def open_sweep(self) -> None:
-        robot = self.profile_robot.currentData()
-        if not robot:
+    def delete_profiles(self) -> None:
+        records = self.profiles.selected_records()
+        if records is None:
+            self.statusBar().showMessage("Scroll so every selected profile is loaded", 8000)
             return
-        parent_id = self.profile_row["id"] if self.profile_row else None
-        editor = SweepEditor(self.transport, self.catalog, robot, parent_id)
-        editor.setParent(self, editor.windowFlags())
-        editor.saved.connect(self.refresh_libraries)
-        editor.show()
+        if not records:
+            self.statusBar().showMessage("Select profiles to delete", 8000)
+            return
+        # One entry per profile (revision family); the last selected revision names it.
+        families = {record["family_id"]: record for record in records}
+        if len(families) > PROFILE_DELETION_LIMIT:
+            self.statusBar().showMessage(
+                f"Select at most {PROFILE_DELETION_LIMIT} profiles to delete at once", 8000
+            )
+            return
+        robots = {robot["id"]: robot["label"] for robot in self.catalog.get("robots", [])}
+        if self.confirm_discard(
+            "Delete profiles", profile_deletion_message(list(families.values()), robots)
+        ):
+            self.transport.submit(
+                "profile-delete", "profiles.delete", {"family_ids": list(families)}
+            )
 
     def select_profile(self, row: dict[str, Any]) -> None:
         self.profile_row = row
@@ -915,12 +1070,6 @@ class Window(QtWidgets.QMainWindow):
         self.builder.robot_selector.replace_profile(robot, reference, profile)
         self.refresh_libraries()
 
-    def edit_builder_spawn(self, world: str) -> None:
-        index = self.spawn_editor.spawn_world.findData(world)
-        if index >= 0:
-            self.spawn_editor.spawn_world.setCurrentIndex(index)
-        self.go("worlds")
-
     def follow_single_worker(self) -> None:
         active = self.status.get("active", [])
         if len(active) == 1 and self.selected_attempt != active[0]["attempt"]["id"]:
@@ -934,6 +1083,7 @@ class Window(QtWidgets.QMainWindow):
             return
         self.selected_attempt = identity
         self.workers.select(identity)
+        self.update_stop_button()
         experiment = active["experiment"]
         self.focus_title.setText(
             f"{humanize(experiment['world_id'])} · {experiment['profile_name']} · {experiment['spawn_name']} · repetition {experiment['repetition'] + 1}"
@@ -943,6 +1093,73 @@ class Window(QtWidgets.QMainWindow):
         if focus_map:
             self.focus_tabs.setCurrentIndex(0)
         self.inspect_selected()
+
+    def selected_run(self) -> dict[str, Any] | None:
+        return next(
+            (
+                r
+                for r in self.status.get("active", [])
+                if r["attempt"]["id"] == self.selected_attempt
+            ),
+            None,
+        )
+
+    def update_stop_button(self) -> None:
+        active = self.selected_run()
+        self.stop_run_button.setEnabled(
+            active is not None
+            and active["attempt"]["phase"] in ("STARTING", "READY", "RUNNING")
+            and not active.get("stop_requested")
+            and not active["attempt"].get("discard_intent")
+            and active["attempt"]["id"] not in self.stop_pending
+        )
+
+    def stop_run_text(self, active: dict[str, Any]) -> str:
+        experiment, attempt = active["experiment"], active["attempt"]
+        robot = next(
+            (
+                r["label"]
+                for r in self.catalog.get("robots", [])
+                if r["id"] == experiment["robot_id"]
+            ),
+            experiment["robot_id"],
+        )
+        return (
+            f"{robot} · {humanize(experiment['world_id'])} · {experiment['profile_name']} · "
+            f"{experiment['spawn_name']} · repetition {experiment['repetition'] + 1} · "
+            f"attempt {attempt['number']}\n\n"
+            "The run ends as Stopped. Its recorded data is kept for inspection, but campaign "
+            "reports and statistics exclude it, and it is not run again. The campaign continues "
+            "with the next experiment. If the run ends on its own before the stop takes effect, "
+            "its own outcome is kept."
+        )
+
+    def stop_selected_run(self) -> None:
+        active = self.selected_run()
+        if active is None:
+            return
+        box = QtWidgets.QMessageBox(
+            QtWidgets.QMessageBox.Icon.Warning,
+            "Stop this run?",
+            self.stop_run_text(active),
+            QtWidgets.QMessageBox.StandardButton.NoButton,
+            self,
+        )
+        stop = box.addButton("Stop run", QtWidgets.QMessageBox.ButtonRole.DestructiveRole)
+        box.setDefaultButton(box.addButton(QtWidgets.QMessageBox.StandardButton.Cancel))
+        box.exec()
+        if box.clickedButton() is not stop:
+            return
+        identity = active["attempt"]["id"]
+        self.stop_pending.add(identity)
+        self.update_stop_button()
+        # A fixed request ID makes a repeated click return the stored answer.
+        self.transport.submit(
+            "stop-run:" + identity,
+            "attempt.stop",
+            {"attempt_id": identity},
+            request_id="attempt-stop:" + identity,
+        )
 
     def confirm_discard(self, title: str, explanation: str) -> bool:
         return (
@@ -1110,6 +1327,8 @@ class Window(QtWidgets.QMainWindow):
     def select_result(self, row: dict[str, Any]) -> None:
         self.result_selection = row["id"]
         self.result_row = row
+        identity = row["id"] if self.results.table == "attempts" else row.get("final_attempt_id")
+        self.run_map.show_attempt(identity, "No finished attempt for this experiment")
         self.result_detail.set_record(
             {
                 key.removesuffix("_id"): self.results.model.names.get(key, {}).get(value, value)
@@ -1130,7 +1349,6 @@ class Window(QtWidgets.QMainWindow):
         self.transport.submit(
             "result-detail", "results.get", {"table": self.results.table, "id": row["id"]}
         )
-        identity = row["id"] if self.results.table == "attempts" else row.get("final_attempt_id")
         if identity:
             self.log_viewer.select_attempt(identity, row.get("directory"))
 
@@ -1219,8 +1437,8 @@ class Window(QtWidgets.QMainWindow):
         self.settings.sync()
         self.poll.stop()
         self.monitor_timer.stop()
-        copy_closed = self.export_browser.close_copy()
-        if self.transport.close() and copy_closed:
+        self.run_map.close_timers()
+        if self.transport.close():
             event.accept()
         else:
             event.ignore()

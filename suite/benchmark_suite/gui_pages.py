@@ -15,14 +15,20 @@
 
 import math
 from typing import Any
+import uuid
+
 from PySide6 import QtCore, QtWidgets
+
+from .contracts import next_spawn_name
 from .gui_support import FloatEdit, Transport, MapView, PagedTable, button
 from .gui_style import label, surface
+
+# Bound on the spawn-name scan per pass (250 names per page).
+NAME_SCAN_PAGES = 40
 
 
 class SpawnEditor(QtWidgets.QWidget):
     changed = QtCore.Signal()
-    return_requested = QtCore.Signal()
 
     def __init__(self, transport: Transport):
         super().__init__()
@@ -32,6 +38,11 @@ class SpawnEditor(QtWidgets.QWidget):
         self.export_path = ""
         self.loaded_yaw = 0.0
         self.loaded_heading_text = ""
+        # Saved spawn names per world, and the scan that reads them: (world, token, archived pass).
+        self.spawn_names: dict[str, list[str]] = {}
+        self.name_scan: tuple[str, str, bool] | None = None
+        self.scan_buffer: list[str] = []
+        self.scan_pages = 0
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(16)
@@ -45,7 +56,6 @@ class SpawnEditor(QtWidgets.QWidget):
         bar.addWidget(label("Robot footprint", "muted"))
         bar.addWidget(self.spawn_robot)
         bar.addStretch()
-        button("Back to campaign", self.return_requested.emit, bar, role="outlined")
         layout.addLayout(bar)
         split = QtWidgets.QSplitter()
         split.setObjectName("spawn-editor-split")
@@ -68,25 +78,23 @@ class SpawnEditor(QtWidgets.QWidget):
         self.spawns = PagedTable(
             transport, "spawn-table", "library", [("name", "Spawn"), ("revision", "Revision")]
         )
-        self.spawns.filters = {"kind": "spawn", "archived": 0}
+        self.spawns.filters = {"kind": "spawn"}
         self.spawns.selected.connect(self.select_spawn)
         self.tables = [self.spawns]
         pane.addWidget(self.spawns, 1)
         row = QtWidgets.QHBoxLayout()
-        button("New", self.new_spawn, row)
-        button("Clone", self.clone_spawn, row)
         more = button("More", lambda: None, row, role="outlined")
         menu = QtWidgets.QMenu(more)
         menu.addAction("Import YAML", self.import_spawn)
         menu.addAction("Export YAML", self.export_spawn)
-        menu.addSeparator()
-        menu.addAction("Archive selected", self.archive_spawn)
         more.setMenu(menu)
+        row.addStretch()
         pane.addLayout(row)
         pane.addWidget(label("Position & heading", "section"))
         form = QtWidgets.QFormLayout()
         form.setVerticalSpacing(12)
-        self.spawn_name = QtWidgets.QLineEdit("Spawn")
+        # Every save creates a new spawn; the name is the next "Spawn N" unless the user types one.
+        self.spawn_name = QtWidgets.QLineEdit(next_spawn_name(()))
         form.addRow("Name", self.spawn_name)
         self.pose_fields = []
         for title in ("X · metres", "Y · metres", "Heading · degrees"):
@@ -111,7 +119,8 @@ class SpawnEditor(QtWidgets.QWidget):
         world = self.spawn_world.currentData()
         if world and self.catalog:
             self.spawn_row = None
-            self.spawns.filters = {"kind": "spawn", "owner": world, "archived": 0}
+            self.suggest_name(world)
+            self.spawns.filters = {"kind": "spawn", "owner": world}
             self.spawns.offset = 0
             self.spawns.refresh()
             pose = next(w["default_spawn"] for w in self.catalog["worlds"] if w["id"] == world)
@@ -160,8 +169,6 @@ class SpawnEditor(QtWidgets.QWidget):
             "y": y,
             "yaw": yaw,
         }
-        if self.spawn_row:
-            value["family_id"] = self.spawn_row["family_id"]
         self.transport.submit(
             "spawn-edit:save",
             "spawns.save",
@@ -169,17 +176,67 @@ class SpawnEditor(QtWidgets.QWidget):
         )
 
     def select_spawn(self, row: dict[str, Any]) -> None:
+        """Load a saved spawn as the template for a new one (and as the Export YAML target)."""
         self.spawn_row = row
         self.transport.submit("spawn-edit:get", "spawns.get", {"revision_id": row["id"]})
+
+    def suggest_name(self, world: str) -> None:
+        """Propose the next "Spawn N" for the world unless the user typed a name, then rescan."""
+        if not self.spawn_name.isModified():
+            self.spawn_name.setText(next_spawn_name(self.spawn_names.get(world, [])))
+        self.name_scan = (world, uuid.uuid4().hex, False)
+        self.scan_buffer, self.scan_pages = [], 0
+        self.scan_page(0)
+
+    def scan_page(self, offset: int) -> None:
+        assert self.name_scan is not None
+        world, token, archived = self.name_scan
+        self.scan_pages += 1
+        # Both passes together read every saved name, whether or not an engine filters archived rows.
+        self.transport.submit(
+            "spawn-names:" + token,
+            "spawns.list",
+            {
+                "world_id": world,
+                "search": "spawn",
+                "summary": True,
+                "limit": 250,
+                "offset": offset,
+                "archived": archived,
+            },
+        )
+
+    def scanned_names(self, result: dict[str, Any]) -> None:
+        assert self.name_scan is not None
+        world, token, archived = self.name_scan
+        self.scan_buffer.extend(str(row["name"]) for row in result["rows"])
+        more = result.get("next_offset")
+        if more is not None and self.scan_pages < NAME_SCAN_PAGES:
+            self.scan_page(more)
+            return
+        if more is not None:
+            self.message.setText(
+                "Not every saved spawn name was read; check the name before saving."
+            )
+        if not archived:
+            self.name_scan, self.scan_pages = (world, token, True), 0
+            self.scan_page(0)
+            return
+        self.name_scan = None
+        self.spawn_names[world] = self.scan_buffer
+        if world == self.spawn_world.currentData() and not self.spawn_name.isModified():
+            self.spawn_name.setText(next_spawn_name(self.spawn_names[world]))
 
     def received(self, tag: str, result: Any) -> None:
         if tag == "spawn-map" and result["world_id"] == self.spawn_world.currentData():
             self.spawn_map.set_map(result)
+        elif self.name_scan and tag == "spawn-names:" + self.name_scan[1]:
+            self.scanned_names(result)
         elif tag == "spawn-edit:get" and self.spawn_row and result["id"] == self.spawn_row["id"]:
+            # A template: its pose is loaded, while the name stays the next "Spawn N" (or the typed one).
             row = self.spawn_row
             self.spawn_world.setCurrentIndex(self.spawn_world.findData(result["world_id"]))
             self.spawn_row = row
-            self.spawn_name.setText(result["name"])
             self.map_pose(result["x"], result["y"], result["yaw"])
         elif tag == "spawn-edit:read":
             self.transport.submit(
@@ -196,21 +253,20 @@ class SpawnEditor(QtWidgets.QWidget):
                 "local.write",
                 {"path": self.export_path, "text": result["yaml"]},
             )
-        elif tag in ("spawn-edit:save", "spawn-edit:import", "spawn-edit:archive"):
+        elif tag in ("spawn-edit:save", "spawn-edit:import"):
             self.message.setText(
-                "Spawn library saved; submitted campaigns keep their existing poses"
+                f"Saved “{result['name']}” as a new spawn; submitted campaigns keep their poses"
             )
             self.changed.emit()
+            world = self.spawn_world.currentData()
+            if world:
+                if tag == "spawn-edit:save":
+                    # The typed name has been used: the next save gets a fresh suggestion.
+                    self.spawn_names.setdefault(world, []).append(str(result["name"]))
+                    self.spawn_name.setModified(False)
+                self.suggest_name(world)
         elif tag == "spawn-edit:written":
             self.message.setText("Spawn YAML exported")
-
-    def new_spawn(self) -> None:
-        self.spawn_row = None
-        self.spawn_name.setText("Spawn")
-
-    def clone_spawn(self) -> None:
-        self.spawn_row = None
-        self.spawn_name.setText(self.spawn_name.text() + " copy")
 
     def import_spawn(self) -> None:
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
@@ -230,13 +286,11 @@ class SpawnEditor(QtWidgets.QWidget):
                     "spawn-edit:export", "spawns.export", {"revision_id": self.spawn_row["id"]}
                 )
 
-    def archive_spawn(self) -> None:
-        if self.spawn_row:
-            self.transport.submit(
-                "spawn-edit:archive", "spawns.archive", {"revision_id": self.spawn_row["id"]}
-            )
-            self.spawn_row = None
-
     def failed(self, tag: str, message: str) -> None:
-        if tag.startswith("spawn-edit:") or tag == "spawn-map":
+        if self.name_scan and tag == "spawn-names:" + self.name_scan[1]:
+            self.name_scan = None
+            self.message.setText(
+                f"Could not read saved spawn names: {message}. Check the name before saving."
+            )
+        elif tag.startswith("spawn-edit:") or tag == "spawn-map":
             self.message.setText(message)

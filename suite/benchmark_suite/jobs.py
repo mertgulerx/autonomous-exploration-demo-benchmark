@@ -56,10 +56,10 @@ def execute(connection: Connection, operation: str, payload: dict[str, Any], tok
             from .reports import generate
 
             result = generate(payload)
-        elif operation == "export":
-            from .exports import export_campaign
+        elif operation == "run_map":
+            from .run_map import build
 
-            result = export_campaign(payload)
+            result = build(payload)
         else:
             raise ValueError("Unknown analysis operation: " + operation)
         connection.send({"ok": True, "result": result})

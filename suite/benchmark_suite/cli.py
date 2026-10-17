@@ -17,7 +17,6 @@ import json
 from pathlib import Path
 import signal
 import sys
-import time
 from typing import Any
 
 import yaml
@@ -50,11 +49,24 @@ def parser() -> argparse.ArgumentParser:
         operation.add_argument("file", type=Path)
     for name in ("start", "pause", "resume", "end"):
         operations.add_parser(name).add_argument("campaign_id")
-    for name in ("stop", "restart"):
-        operations.add_parser(name).add_argument("campaign_id")
+    operations.add_parser("stop").add_argument("campaign_id")
+    restart = operations.add_parser(
+        "restart",
+        help="Run a copy of the campaign now or next in the queue; the source is unchanged",
+    )
+    restart.add_argument("campaign_id")
+    restart.add_argument("--request-id")
     query = operations.add_parser("query")
     query.add_argument(
-        "table", choices=("campaigns", "experiments", "attempts", "library", "reports", "exports")
+        "table",
+        choices=(
+            "campaigns",
+            "experiments",
+            "attempts",
+            "library",
+            "reports",
+            "deletions",
+        ),
     )
     query.add_argument("--filters", default="{}")
     query.add_argument("--offset", type=int, default=0)
@@ -63,13 +75,6 @@ def parser() -> argparse.ArgumentParser:
     call.add_argument("method")
     call.add_argument("--params", default="{}")
     call.add_argument("--request-id")
-    export = operations.add_parser(
-        "export", help="Prepare a portable, hash-verified campaign bundle"
-    )
-    export.add_argument("campaign_id")
-    export.add_argument("--wait", action="store_true")
-    export.add_argument("--destination", type=Path)
-    operations.add_parser("verify-export").add_argument("directory", type=Path)
     return command
 
 
@@ -78,11 +83,6 @@ def main(argv: list[str] | None = None) -> int:
     workspace = arguments.workspace.expanduser().resolve()
     socket = arguments.socket or control_socket(workspace)
     try:
-        if arguments.operation == "verify-export":
-            from .exports import verify_export
-
-            print(json.dumps(verify_export(arguments.directory.resolve()), indent=2))
-            return 0
         if arguments.operation == "engine":
             from .engine import Engine
             from .library import Library
@@ -122,7 +122,7 @@ def main(argv: list[str] | None = None) -> int:
             )
         elif arguments.operation in ("stop", "restart"):
             method, params = (
-                "campaign." + arguments.operation,
+                "campaign.stop" if arguments.operation == "stop" else "campaign.restart_copy",
                 {"campaign_id": arguments.campaign_id},
             )
         elif arguments.operation == "query":
@@ -137,24 +137,9 @@ def main(argv: list[str] | None = None) -> int:
             )
         elif arguments.operation == "call":
             method, params = arguments.method, json.loads(arguments.params)
-        elif arguments.operation == "export":
-            method, params = "dataset.export", {"campaign_id": arguments.campaign_id}
         client = Client(socket)
         try:
             result = client.call(method, params, getattr(arguments, "request_id", None))
-            if arguments.operation == "export" and (arguments.wait or arguments.destination):
-                identity = result["export_id"]
-                while True:
-                    result = client.call("exports.get", {"export_id": identity})
-                    if result["state"] not in ("QUEUED", "RUNNING"):
-                        break
-                    time.sleep(0.25)
-                if result["state"] != "FINISHED":
-                    raise OSError("Export " + result["state"] + ": " + result["detail"])
-                if arguments.destination:
-                    from .exports import copy_export
-
-                    result = copy_export(Path(result["path"]), arguments.destination)
         finally:
             client.close()
         print(json.dumps(result, indent=2, ensure_ascii=False, allow_nan=False))
