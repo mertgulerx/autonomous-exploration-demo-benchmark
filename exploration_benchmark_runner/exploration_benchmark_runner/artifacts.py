@@ -237,7 +237,7 @@ class Recorder:
         self.coverage_samples = 0
         descriptor = configuration["scenario"].get("coverage_reference")
         if descriptor:
-            from .coverage import Reference, METRIC_VERSION
+            from .coverage import Reference
 
             reference = coverage_reference or Reference(descriptor["metadata_file"])
             if reference.metadata_hash != descriptor["metadata_sha256"]:
@@ -245,9 +245,10 @@ class Recorder:
             destination = self.directory / "coverage_reference"
             reference.save(destination)
             self.manifest["coverage"] = dict(
-                metric_version=METRIC_VERSION,
+                metric_version=reference.metric_version,
                 reference=descriptor,
                 definition="100 * current SLAM-free reference cells / fixed target cells",
+                target_margin_m=reference.margin,
                 free_value=0,
                 sample_interval_simulation_seconds=1.0,
                 stale_delivery_wall_seconds=5.0,

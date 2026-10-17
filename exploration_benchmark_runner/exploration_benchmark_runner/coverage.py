@@ -29,7 +29,11 @@ from zipfile import BadZipFile
 
 import numpy as np
 
-METRIC_VERSION = 1
+METRIC_VERSION = 2  # 2: target floor at least TARGET_MARGIN from non-target cells (18 October 2026)
+SUPPORTED_METRIC_VERSIONS = (1, 2)  # 1 stays readable for recorded runs and their reports
+# A 0.05 m SLAM grid rarely marks the two cells next to a wall free (the wall hit and its raster neighbour,
+# plus the frozen alignment's few centimetres), so version 2 leaves them out of the target.
+TARGET_MARGIN = 0.10
 MILESTONES = (25.0, 50.0, 75.0, 90.0, 95.0)  # T25 added 17 October 2026
 SAMPLE_INTERVAL = 1.0
 STALE_SECONDS = 5.0
@@ -37,6 +41,25 @@ STALE_SECONDS = 5.0
 
 def sha256(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
+
+
+def reference_file(directory, world):
+    """The world's current coverage reference (metric version ``METRIC_VERSION``)."""
+    return Path(directory) / f"{world}_v{METRIC_VERSION}.json"
+
+
+def erode(mask, cells):
+    """Cells of ``mask`` whose centre lies more than ``cells`` cell widths from the centre of every cell
+    outside it (cells beyond the grid count as outside)."""
+    reach = int(math.floor(cells + 1e-9))
+    height, width = mask.shape
+    padded = np.pad(mask, reach, constant_values=False)
+    kept = mask.copy()
+    for dy in range(-reach, reach + 1):
+        for dx in range(-reach, reach + 1):
+            if dx * dx + dy * dy <= cells * cells + 1e-9:
+                kept &= padded[reach + dy : reach + dy + height, reach + dx : reach + dx + width]
+    return kept
 
 
 def reference_directory():
@@ -91,8 +114,11 @@ class Reference:
             self.metadata_bytes = self.file.read_bytes()
             self.metadata = json.loads(self.metadata_bytes)
             data = self.metadata
-            if data["metric_version"] != METRIC_VERSION:
+            self.metric_version = data["metric_version"]
+            if self.metric_version not in SUPPORTED_METRIC_VERSIONS:
                 raise ValueError("unsupported metric version")
+            # Version 1: all free floor; version 2: free floor beyond the recorded margin.
+            self.margin = float(data["target_margin_m"]) if self.metric_version >= 2 else 0.0
             self.grid_file = self.file.parent / data["grid_file"]
             self.grid_bytes = self.grid_file.read_bytes()
             if hashlib.sha256(self.grid_bytes).hexdigest() != data["grid_sha256"]:
@@ -110,6 +136,8 @@ class Reference:
             if self.collision.shape != shape or self.inclusion.shape != shape:
                 raise ValueError("reference dimensions disagree")
             self.target = self.inclusion & ~self.collision
+            if self.margin > 0:
+                self.target = erode(self.target, self.margin / self.resolution)
             rows, columns = np.nonzero(self.target)
             self.count = len(rows)
             if not self.count or self.count != data["target_cells"]:
@@ -154,7 +182,7 @@ class Reference:
     def descriptor(self):
         return dict(
             id=self.identity,
-            metric_version=METRIC_VERSION,
+            metric_version=self.metric_version,
             metadata_file=str(self.file.resolve()),
             metadata_sha256=self.metadata_hash,
             grid_sha256=self.metadata["grid_sha256"],
@@ -173,7 +201,7 @@ class Reference:
 
 def attach_reference(root, scenario, directory=None, *, validate=True):
     reference = Reference(
-        Path(directory or reference_directory()) / (scenario["world"] + ".json")
+        reference_file(directory or reference_directory(), scenario["world"])
     )
     if validate:
         reference.validate_scenario(root, scenario)

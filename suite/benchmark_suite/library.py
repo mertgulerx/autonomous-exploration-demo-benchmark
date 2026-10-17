@@ -23,7 +23,7 @@ import yaml
 
 from exploration_benchmark_runner.parameters import ParameterSchema, UniqueKeyLoader
 from exploration_benchmark_runner.configuration import robot_parameter_schema, scenario
-from exploration_benchmark_runner.coverage import Reference
+from exploration_benchmark_runner.coverage import Reference, reference_file
 from exploration_benchmark_robots.catalog import RobotCatalog, resolve_physical_settings
 from exploration_benchmark_robots.preflight import validate_spawn
 
@@ -90,7 +90,7 @@ class Library:
         self.accepted_robots: dict[str, dict[str, Any]] = {}
         self.references = {
             world: Reference(
-                self.root / "exploration_benchmark_runner/config/coverage" / (world + ".json")
+                reference_file(self.root / "exploration_benchmark_runner/config/coverage", world)
             )
             for world in ("bookstore", "corridor", "warehouse")
         }

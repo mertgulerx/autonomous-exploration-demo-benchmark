@@ -28,7 +28,7 @@ import psutil
 import yaml
 
 from exploration_benchmark_runner.configuration import scenario
-from exploration_benchmark_runner.coverage import Reference
+from exploration_benchmark_runner.coverage import Reference, reference_file
 from exploration_benchmark_runner.launch_spec import WorkerLaunchSpec
 from exploration_benchmark_runner.processes import DomainLease, ProcessScope
 
@@ -367,9 +367,9 @@ class NativeBackend:
             pose["yaw"],
         ]
         reference = Reference(
-            self.root
-            / "exploration_benchmark_runner/config/coverage"
-            / (experiment["world_id"] + ".json")
+            reference_file(
+                self.root / "exploration_benchmark_runner/config/coverage", experiment["world_id"]
+            )
         )
         world["coverage_reference"] = reference.descriptor()
         root = Path(attempt["directory"]).parents[1]

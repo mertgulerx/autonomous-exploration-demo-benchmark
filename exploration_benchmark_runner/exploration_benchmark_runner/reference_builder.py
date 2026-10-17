@@ -31,7 +31,15 @@ import numpy as np
 import yaml
 
 from .configuration import scenario
-from .coverage import METRIC_VERSION, Reference, sha256, reference_directory
+from .coverage import (
+    METRIC_VERSION,
+    TARGET_MARGIN,
+    Reference,
+    erode,
+    reference_directory,
+    reference_file,
+    sha256,
+)
 
 
 def pose(element):
@@ -341,7 +349,7 @@ def generate(root, world, directory):
         raise ValueError("Spawn lies outside reference free space; review geometry/ROI")
     unreachable = inclusion & ~collision & (components != component)
     inclusion &= ~unreachable
-    target = inclusion & ~collision
+    target = erode(inclusion & ~collision, TARGET_MARGIN / res)
     count = int(target.sum())
     grid_file = directory / (world + ".npz")
     np.savez_compressed(
@@ -350,8 +358,9 @@ def generate(root, world, directory):
         inclusion=inclusion.astype(np.uint8),
     )
     metadata = dict(
-        id=f"{world}_coverage_v1",
+        id=f"{world}_coverage_v{METRIC_VERSION}",
         metric_version=METRIC_VERSION,
+        target_margin_m=TARGET_MARGIN,
         world=world,
         spawn=selected["spawn"],
         resolution=res,
@@ -378,7 +387,7 @@ def generate(root, world, directory):
             ),
         ),
     )
-    (directory / (world + ".json")).write_text(json.dumps(metadata, indent=2) + "\n")
+    reference_file(directory, world).write_text(json.dumps(metadata, indent=2) + "\n")
     import matplotlib
 
     matplotlib.use("Agg")
@@ -493,7 +502,7 @@ def main():
             if args.command == "generate":
                 generate(args.project_root, world, directory)
                 continue
-            reference = Reference(directory / (world + ".json"))
+            reference = Reference(reference_file(directory, world))
             if args.command == "fetch":
                 uris = {
                     key[5:].split("#", 1)[0]

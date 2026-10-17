@@ -1,0 +1,695 @@
+{
+  "id": "corridor_coverage_v2",
+  "metric_version": 2,
+  "target_margin_m": 0.1,
+  "world": "corridor",
+  "spawn": [
+    -8.11,
+    0.31,
+    0.1,
+    0.0
+  ],
+  "resolution": 0.05,
+  "origin": [
+    -9.1,
+    -6.6,
+    0.0
+  ],
+  "width": 364,
+  "height": 264,
+  "target_cells": 45648,
+  "target_area_m2": 114.12000000000002,
+  "grid_file": "corridor.npz",
+  "grid_sha256": "eb2505baeb599de943f955dcb615096b6da20c2bf0b355e29b5f49e0b6ee5547",
+  "source_sha256": {
+    "simulation/worlds/corridor/corridor.world": "2b52a0ad88202c2f2b72f39a9101340ae9b9443c4245356c7a2c6ea11a5c07de",
+    "exploration_benchmark_runner/config/coverage/scenarios.yaml": "693ba684585aaae272ff2333c2da55ec3f41b5fb0c285968d114354d6bb20c26",
+    "simulation/Week-7-8-ROS2-Navigation/bme_ros2_navigation/urdf/mogi_bot.urdf": "11b3a0684efb4f44bd12719f36ed6732b6dbf1d4570ea14580f4e81ba8af263a"
+  },
+  "generation": {
+    "body_height_slab": [
+      0.03,
+      0.35
+    ],
+    "settings": {
+      "bounds": [
+        -9.1,
+        -6.6,
+        9.1,
+        6.6
+      ],
+      "inclusion_polygons": [
+        [
+          [
+            -9,
+            -2
+          ],
+          [
+            9,
+            -2
+          ],
+          [
+            9,
+            2
+          ],
+          [
+            -9,
+            2
+          ]
+        ],
+        [
+          [
+            -6,
+            2
+          ],
+          [
+            -3,
+            2
+          ],
+          [
+            -3,
+            6.5
+          ],
+          [
+            -6,
+            6.5
+          ]
+        ],
+        [
+          [
+            3,
+            2
+          ],
+          [
+            6,
+            2
+          ],
+          [
+            6,
+            6.5
+          ],
+          [
+            3,
+            6.5
+          ]
+        ],
+        [
+          [
+            -5.625,
+            -6.5
+          ],
+          [
+            -3.375,
+            -6.5
+          ],
+          [
+            -3.375,
+            -2
+          ],
+          [
+            -5.625,
+            -2
+          ]
+        ],
+        [
+          [
+            -1.125,
+            -6.5
+          ],
+          [
+            1.125,
+            -6.5
+          ],
+          [
+            1.125,
+            -2
+          ],
+          [
+            -1.125,
+            -2
+          ]
+        ],
+        [
+          [
+            3.375,
+            -6.5
+          ],
+          [
+            5.625,
+            -6.5
+          ],
+          [
+            5.625,
+            -2
+          ],
+          [
+            3.375,
+            -2
+          ]
+        ]
+      ],
+      "exclusion_polygons": [],
+      "review": "Central corridor, both top rooms and all three bottom rooms; exclude all exterior floor."
+    },
+    "connectivity": "4-connected free floor from spawn; not a footprint planner",
+    "unreachable_free_cells": 0,
+    "collision_records": [
+      {
+        "model": "floor",
+        "collision": "floor_collision",
+        "bounds": [
+          [
+            -11.0,
+            -9.0,
+            -0.05
+          ],
+          [
+            11.0,
+            9.0,
+            0.0
+          ]
+        ]
+      },
+      {
+        "model": "wall_layout",
+        "collision": "collision",
+        "bounds": [
+          [
+            -9.060000000010087,
+            -2.060000000000294,
+            0.0
+          ],
+          [
+            -8.939999999989913,
+            2.060000000000294,
+            1.6
+          ]
+        ]
+      },
+      {
+        "model": "wall_layout",
+        "collision": "collision",
+        "bounds": [
+          [
+            8.939999999989913,
+            -2.060000000000294,
+            0.0
+          ],
+          [
+            9.060000000010087,
+            2.060000000000294,
+            1.6
+          ]
+        ]
+      },
+      {
+        "model": "wall_layout",
+        "collision": "collision",
+        "bounds": [
+          [
+            -9.06,
+            1.94,
+            0.0
+          ],
+          [
+            -5.9399999999999995,
+            2.06,
+            1.6
+          ]
+        ]
+      },
+      {
+        "model": "wall_layout",
+        "collision": "collision",
+        "bounds": [
+          [
+            -5.2,
+            1.94,
+            0.0
+          ],
+          [
+            -3.8,
+            2.06,
+            1.6
+          ]
+        ]
+      },
+      {
+        "model": "wall_layout",
+        "collision": "collision",
+        "bounds": [
+          [
+            -3.06,
+            1.94,
+            0.0
+          ],
+          [
+            3.06,
+            2.06,
+            1.6
+          ]
+        ]
+      },
+      {
+        "model": "wall_layout",
+        "collision": "collision",
+        "bounds": [
+          [
+            3.8,
+            1.94,
+            0.0
+          ],
+          [
+            5.2,
+            2.06,
+            1.6
+          ]
+        ]
+      },
+      {
+        "model": "wall_layout",
+        "collision": "collision",
+        "bounds": [
+          [
+            5.9399999999999995,
+            1.94,
+            0.0
+          ],
+          [
+            9.06,
+            2.06,
+            1.6
+          ]
+        ]
+      },
+      {
+        "model": "wall_layout",
+        "collision": "collision",
+        "bounds": [
+          [
+            -6.0600000000113114,
+            1.939999999999706,
+            0.0
+          ],
+          [
+            -5.9399999999886886,
+            6.560000000000294,
+            1.6
+          ]
+        ]
+      },
+      {
+        "model": "wall_layout",
+        "collision": "collision",
+        "bounds": [
+          [
+            -3.060000000011311,
+            1.939999999999706,
+            0.0
+          ],
+          [
+            -2.939999999988689,
+            6.560000000000294,
+            1.6
+          ]
+        ]
+      },
+      {
+        "model": "wall_layout",
+        "collision": "collision",
+        "bounds": [
+          [
+            -6.0600000000000005,
+            6.44,
+            0.0
+          ],
+          [
+            -2.94,
+            6.56,
+            1.6
+          ]
+        ]
+      },
+      {
+        "model": "wall_layout",
+        "collision": "collision",
+        "bounds": [
+          [
+            2.939999999988689,
+            1.939999999999706,
+            0.0
+          ],
+          [
+            3.060000000011311,
+            6.560000000000294,
+            1.6
+          ]
+        ]
+      },
+      {
+        "model": "wall_layout",
+        "collision": "collision",
+        "bounds": [
+          [
+            5.9399999999886886,
+            1.939999999999706,
+            0.0
+          ],
+          [
+            6.0600000000113114,
+            6.560000000000294,
+            1.6
+          ]
+        ]
+      },
+      {
+        "model": "wall_layout",
+        "collision": "collision",
+        "bounds": [
+          [
+            2.94,
+            6.44,
+            0.0
+          ],
+          [
+            6.0600000000000005,
+            6.56,
+            1.6
+          ]
+        ]
+      },
+      {
+        "model": "wall_layout",
+        "collision": "collision",
+        "bounds": [
+          [
+            -9.06,
+            -2.06,
+            0.0
+          ],
+          [
+            -5.5649999999999995,
+            -1.94,
+            1.6
+          ]
+        ]
+      },
+      {
+        "model": "wall_layout",
+        "collision": "collision",
+        "bounds": [
+          [
+            -5.625,
+            -2.06,
+            0.0
+          ],
+          [
+            -5.25,
+            -1.94,
+            1.6
+          ]
+        ]
+      },
+      {
+        "model": "wall_layout",
+        "collision": "collision",
+        "bounds": [
+          [
+            -3.75,
+            -2.06,
+            0.0
+          ],
+          [
+            -3.375,
+            -1.94,
+            1.6
+          ]
+        ]
+      },
+      {
+        "model": "wall_layout",
+        "collision": "collision",
+        "bounds": [
+          [
+            -3.435,
+            -2.06,
+            0.0
+          ],
+          [
+            -1.065,
+            -1.94,
+            1.6
+          ]
+        ]
+      },
+      {
+        "model": "wall_layout",
+        "collision": "collision",
+        "bounds": [
+          [
+            -1.125,
+            -2.06,
+            0.0
+          ],
+          [
+            -0.75,
+            -1.94,
+            1.6
+          ]
+        ]
+      },
+      {
+        "model": "wall_layout",
+        "collision": "collision",
+        "bounds": [
+          [
+            0.75,
+            -2.06,
+            0.0
+          ],
+          [
+            1.125,
+            -1.94,
+            1.6
+          ]
+        ]
+      },
+      {
+        "model": "wall_layout",
+        "collision": "collision",
+        "bounds": [
+          [
+            1.065,
+            -2.06,
+            0.0
+          ],
+          [
+            3.435,
+            -1.94,
+            1.6
+          ]
+        ]
+      },
+      {
+        "model": "wall_layout",
+        "collision": "collision",
+        "bounds": [
+          [
+            3.375,
+            -2.06,
+            0.0
+          ],
+          [
+            3.75,
+            -1.94,
+            1.6
+          ]
+        ]
+      },
+      {
+        "model": "wall_layout",
+        "collision": "collision",
+        "bounds": [
+          [
+            5.25,
+            -2.06,
+            0.0
+          ],
+          [
+            5.625,
+            -1.94,
+            1.6
+          ]
+        ]
+      },
+      {
+        "model": "wall_layout",
+        "collision": "collision",
+        "bounds": [
+          [
+            5.5649999999999995,
+            -2.06,
+            0.0
+          ],
+          [
+            9.06,
+            -1.94,
+            1.6
+          ]
+        ]
+      },
+      {
+        "model": "wall_layout",
+        "collision": "collision",
+        "bounds": [
+          [
+            -5.6850000000113114,
+            -6.560000000000294,
+            0.0
+          ],
+          [
+            -5.5649999999886886,
+            -1.939999999999706,
+            1.6
+          ]
+        ]
+      },
+      {
+        "model": "wall_layout",
+        "collision": "collision",
+        "bounds": [
+          [
+            -3.435000000011311,
+            -6.560000000000294,
+            0.0
+          ],
+          [
+            -3.314999999988689,
+            -1.939999999999706,
+            1.6
+          ]
+        ]
+      },
+      {
+        "model": "wall_layout",
+        "collision": "collision",
+        "bounds": [
+          [
+            -5.6850000000000005,
+            -6.56,
+            0.0
+          ],
+          [
+            -3.315,
+            -6.44,
+            1.6
+          ]
+        ]
+      },
+      {
+        "model": "wall_layout",
+        "collision": "collision",
+        "bounds": [
+          [
+            -1.185000000011311,
+            -6.560000000000294,
+            0.0
+          ],
+          [
+            -1.064999999988689,
+            -1.939999999999706,
+            1.6
+          ]
+        ]
+      },
+      {
+        "model": "wall_layout",
+        "collision": "collision",
+        "bounds": [
+          [
+            1.064999999988689,
+            -6.560000000000294,
+            0.0
+          ],
+          [
+            1.185000000011311,
+            -1.939999999999706,
+            1.6
+          ]
+        ]
+      },
+      {
+        "model": "wall_layout",
+        "collision": "collision",
+        "bounds": [
+          [
+            -1.185,
+            -6.56,
+            0.0
+          ],
+          [
+            1.185,
+            -6.44,
+            1.6
+          ]
+        ]
+      },
+      {
+        "model": "wall_layout",
+        "collision": "collision",
+        "bounds": [
+          [
+            3.314999999988689,
+            -6.560000000000294,
+            0.0
+          ],
+          [
+            3.435000000011311,
+            -1.939999999999706,
+            1.6
+          ]
+        ]
+      },
+      {
+        "model": "wall_layout",
+        "collision": "collision",
+        "bounds": [
+          [
+            5.5649999999886886,
+            -6.560000000000294,
+            0.0
+          ],
+          [
+            5.6850000000113114,
+            -1.939999999999706,
+            1.6
+          ]
+        ]
+      },
+      {
+        "model": "wall_layout",
+        "collision": "collision",
+        "bounds": [
+          [
+            3.315,
+            -6.56,
+            0.0
+          ],
+          [
+            5.6850000000000005,
+            -6.44,
+            1.6
+          ]
+        ]
+      }
+    ],
+    "generator_sha256": "3c5f9d84fb2d36b5ca7691414e905e603695caf4cdfbbaf86ec410c49a660756",
+    "tool_versions": {
+      "numpy": "2.4.4",
+      "scipy": "1.17.1",
+      "shapely": "2.1.2",
+      "trimesh": "4.12.2"
+    },
+    "derived_from": "corridor.json (metric version 1): same grid, target cells within 0.1 m of collision or excluded cells removed"
+  }
+}
