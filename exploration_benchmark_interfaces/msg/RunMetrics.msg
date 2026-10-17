@@ -19,8 +19,7 @@ float64 cpu_average_percent
 float64 rss_average_mib
 float64 cpu_seconds
 float64 distance_m
-# Elapsed wall/simulation time since first raw-odometry movement; zero before it.
-float64 wall_elapsed
+# Elapsed simulation time since first raw-odometry movement; zero before it.
 float64 simulation_elapsed
 bool motion_started
 # Explorer activation to first movement; increases while waiting, then freezes.

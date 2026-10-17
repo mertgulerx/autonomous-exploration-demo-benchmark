@@ -31,6 +31,11 @@ from .protocol import Client
 from .storage import require_local_storage
 
 DEFAULT_IMAGE = "autonomous-exploration-benchmark:suite"
+VERSION_LABEL = "org.benchmark.suite.version"
+# Campaign states during which the engine is not stopped for an image update.
+BUSY_STATES = frozenset({"RUNNING", "RETRYING", "PAUSING", "STOPPING", "REPORTING"})
+# Suite CLI commands that only read: they never build or replace the engine.
+READ_ONLY_COMMANDS = frozenset({"status", "catalog", "query", "validate", "verify-export"})
 BASE_IMAGE = "autonomous-exploration-benchmark:jazzy-harmonic"
 DEFAULT_WORKSPACE = (Path(__file__).resolve().parents[2] / "results/campaigns/default").resolve()
 
@@ -140,7 +145,34 @@ def inspect(
     return dict(data[0])
 
 
-def build_image(root: Path, image: str, *, cancelled: Callable[[], bool] | None = None) -> None:
+def required_version(root: Path) -> int:
+    """The suite image version this checkout needs (``suite/IMAGE_VERSION``: one integer, ``#`` comments)."""
+    lines = (root / "suite/IMAGE_VERSION").read_text().splitlines()
+    values = [line.strip() for line in lines if line.strip() and not line.strip().startswith("#")]
+    if len(values) != 1 or not values[0].isdigit():
+        raise ContractError("image", "suite/IMAGE_VERSION must hold one whole number")
+    return int(values[0])
+
+
+def image_version(image: dict[str, Any] | None) -> int:
+    """The version an installed image was built for (0: missing, or built before versioning)."""
+    label = ((image or {}).get("Config", {}).get("Labels") or {}).get(VERSION_LABEL, "")
+    return int(label) if str(label).isdigit() else 0
+
+
+def engine_busy(socket: Path) -> bool:
+    """Whether the running engine has active runs or a campaign in progress (True when it cannot tell)."""
+    try:
+        status = Client(socket, timeout=10).call("engine.status")
+    except (OSError, ContractError, ValueError):
+        return True
+    rows = (status.get("campaigns") or {}).get("rows") or []
+    return bool(status.get("active")) or any(row.get("state") in BUSY_STATES for row in rows)
+
+
+def build_image(
+    root: Path, image: str, *, cancelled: Callable[[], bool] | None = None, version: int = 0
+) -> None:
     command = partial(docker, cancelled=cancelled)
     lookup = partial(inspect, cancelled=cancelled)
     base = os.environ.get("BENCHMARK_SUITE_BASE", BASE_IMAGE)
@@ -199,6 +231,8 @@ def build_image(root: Path, image: str, *, cancelled: Callable[[], bool] | None 
         str(root / "docker/Dockerfile.suite"),
         "--build-arg",
         "BENCHMARK_BASE=" + base,
+        "--label",
+        f"{VERSION_LABEL}={version}",
         "-t",
         image,
         str(root),
@@ -239,7 +273,11 @@ def ensure_engine(
     rebuild: bool = False,
     diagnostics: bool | None = None,
     cancelled: Callable[[], bool] | None = None,
+    update: bool = True,
 ) -> dict[str, Any]:
+    """Start or reconnect the workspace's engine. With ``update``, an image older than ``suite/IMAGE_VERSION`` is
+    rebuilt first; a running engine is stopped for that only while no campaign runs, otherwise it keeps its
+    image until a later start finds it idle."""
     check_cancelled(cancelled)
     command = partial(docker, cancelled=cancelled)
     lookup = partial(inspect, cancelled=cancelled)
@@ -279,13 +317,36 @@ def ensure_engine(
     )
     accepted_diagnostics = current_diagnostics if diagnostics is None else diagnostics
     installed = lookup("image", image)
-    if installed is None or rebuild:
-        if running and running["State"]["Running"]:
+    version = required_version(root)
+    outdated = installed is not None and image_version(installed) != version
+    build = installed is None or rebuild or (outdated and update)
+    if build and running and running["State"]["Running"]:
+        if rebuild:
             raise ContractError(
                 "runtime",
                 "Stop the owned engine before rebuilding; running campaigns keep their accepted runtime",
             )
-        build_image(root, image, cancelled=cancelled)
+        if installed is not None and engine_busy(socket):
+            build = False
+            print(
+                f"The suite image is version {image_version(installed)}, this checkout needs {version}; "
+                "a campaign is running, so the engine keeps its image and updates at the next start "
+                "while it is idle.",
+                flush=True,
+            )
+        else:
+            print("Stopping the idle engine to update its image…", flush=True)
+            command("stop", "--time", "60", name, timeout=120)
+            running = lookup("container", name)
+    elif outdated and not update:
+        print(
+            f"Note: the suite image is version {image_version(installed)}, this checkout needs {version}; "
+            "it is rebuilt at the next start of the engine or GUI.",
+            flush=True,
+        )
+    if build:
+        print(f"Building suite image version {version}…", flush=True)
+        build_image(root, image, cancelled=cancelled, version=version)
         installed = lookup("image", image)
     assert installed is not None
     if (installed["Config"].get("Labels") or {}).get("org.benchmark.suite") != "1":
@@ -454,6 +515,7 @@ def main() -> int:
             image=arguments.image,
             rebuild=arguments.rebuild,
             diagnostics=arguments.diagnostics,
+            update=not (arguments.cli and arguments.cli[0] in READ_ONLY_COMMANDS),
         )
         print(
             f"Engine: {runtime['container']}\nWorkspace: {runtime['workspace']}\nSocket: {runtime['socket']}",

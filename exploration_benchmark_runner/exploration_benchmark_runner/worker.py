@@ -739,7 +739,6 @@ class Worker:
                 percent=m["percent"],
                 reached=m["reached"],
                 simulation_elapsed=m["simulation_elapsed"] or 0.0,
-                wall_elapsed=m["wall_elapsed"] or 0.0,
             )
             for m in fields.get("coverage_milestones", [])
         ]
@@ -1091,7 +1090,7 @@ class Worker:
         if self.recorder and self.phase == "RUNNING":
             if self.campaign:
                 self.recorder.clock = self.clock_value
-                self.recorder.origins = self.measurements.movement_simulation_start, self.measurements.movement_wall_start
+                self.recorder.origin = self.measurements.movement_simulation_start
                 snapshot["explorer_pid"] = self.explorer_identity[0] if self.explorer_identity else None
                 snapshot["explorer_resources_available"] = cpu is not None and rss is not None
                 self.runtime.sample_resources(wall)

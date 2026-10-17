@@ -662,19 +662,28 @@ class Engine:
         if method == "events.read":
             after = integer(params.get("after_sequence", 0), "after_sequence", 0, 2**63 - 1)
             limit = integer(params.get("limit", 200), "limit", 1, 500)
+            # Optional scopes: one campaign's or one attempt's events.
+            scope = {
+                key: text(params[key], key)
+                for key in ("campaign_id", "attempt_id")
+                if params.get(key) is not None
+            }
             current = self._last_sequence()
             if after > current:
                 return {"events": [], "last_sequence": current, "snapshot_required": True}
+            terms = "".join(f" AND {key}=?" for key in scope)
             rows = self.store.rows(
-                "SELECT * FROM events WHERE sequence>? ORDER BY sequence LIMIT ?", (after, limit)
+                f"SELECT * FROM events WHERE sequence>?{terms} ORDER BY sequence LIMIT ?",
+                (after, *scope.values(), limit),
             )
             for row in rows:
                 row["payload"] = json.loads(row["payload"])
-            return {
-                "events": rows,
-                "last_sequence": rows[-1]["sequence"] if rows else after,
-                "snapshot_required": False,
-            }
+            if scope and len(rows) < limit:
+                # Every matching event up to ``current`` was returned: the reader may skip ahead.
+                last = current
+            else:
+                last = rows[-1]["sequence"] if rows else after
+            return {"events": rows, "last_sequence": last, "snapshot_required": False}
         if method == "monitor.get":
             identity = text(params.get("attempt_id"), "attempt_id")
             if identity not in self.active:

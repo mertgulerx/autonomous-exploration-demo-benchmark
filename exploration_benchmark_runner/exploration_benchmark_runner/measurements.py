@@ -146,11 +146,6 @@ class Measurements:
             rss_average_mib=self.rss_sum / self.samples if self.samples else 0.0,
             cpu_seconds=self.cpu_seconds,
             distance_m=self.distance,
-            wall_elapsed=(
-                max(0.0, wall - self.movement_wall_start)
-                if self.motion_started
-                else 0.0
-            ),
             simulation_elapsed=(
                 max(0.0, simulation - self.movement_simulation_start)
                 if self.motion_started

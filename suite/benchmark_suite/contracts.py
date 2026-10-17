@@ -22,7 +22,7 @@ import re
 from typing import Any, Mapping
 
 PROTOCOL_VERSION = 1
-DATASET_VERSION = 5
+DATASET_VERSION = 8  # 8: summaries add average_speed_mps (18 October 2026)
 GAZEBO_SEED = 1234
 DEFAULT_LIMIT = 1800.0
 NO_MOVEMENT_LIMIT = 180.0
@@ -35,6 +35,18 @@ PROFILE_DELETION_LIMIT = 250
 REPORT_POLICY_VERSION = "reported-outcomes-v1"
 REPORTED_OUTCOMES = frozenset({"completed", "time_limit", "no_movement"})
 STOPPED_OUTCOMES = frozenset({"manual_stop"})
+
+
+def average_speed(distance_m: Any, elapsed_seconds: Any) -> float | None:
+    """Average speed in m/s (``docs/MEASUREMENTS.md``): the raw-odometry distance over the simulation time since
+    the first movement. None when either is unavailable or not finite, the distance is negative or no
+    simulation time has passed (runs that never moved)."""
+    values = (distance_m, elapsed_seconds)
+    if any(isinstance(v, bool) or not isinstance(v, (int, float)) for v in values):
+        return None
+    if not all(math.isfinite(v) for v in values) or distance_m < 0 or elapsed_seconds <= 0:
+        return None
+    return float(distance_m) / float(elapsed_seconds)
 
 
 def report_exclusion(outcome: str | None) -> str | None:

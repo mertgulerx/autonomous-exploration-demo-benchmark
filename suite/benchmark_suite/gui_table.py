@@ -17,8 +17,6 @@ from typing import Any, cast
 from PySide6 import QtCore, QtGui, QtWidgets
 from shiboken6 import isValid
 
-from .gui_style import COLORS
-
 
 class TableTextDelegate(QtWidgets.QStyledItemDelegate):
     def __init__(self, view: QtWidgets.QTableView):
@@ -190,8 +188,9 @@ class TableTextDelegate(QtWidgets.QStyledItemDelegate):
         )
         selected: Any = QtGui.QTextLayout.FormatRange()
         selected.start, selected.length = span[0], span[1] - span[0]
-        selected.format.setBackground(QtGui.QColor(COLORS["action.primary"]))
-        selected.format.setForeground(QtGui.QColor(COLORS["text.on-accent"]))
+        palette = self.view.palette()
+        selected.format.setBackground(palette.color(QtGui.QPalette.ColorRole.Highlight))
+        selected.format.setForeground(palette.color(QtGui.QPalette.ColorRole.HighlightedText))
         painter.save()
         painter.setClipRect(rect)
         role = (

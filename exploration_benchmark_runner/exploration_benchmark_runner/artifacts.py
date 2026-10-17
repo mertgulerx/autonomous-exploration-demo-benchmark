@@ -60,7 +60,7 @@ def freeze_interrupted_coverage(manifest, metrics, directory):
     milestones = metrics.get("coverage_milestones", coverage.get("milestones", []))
     for milestone in milestones:
         if not milestone["reached"]:
-            milestone["simulation_elapsed"] = milestone["wall_elapsed"] = None
+            milestone["simulation_elapsed"] = None
     metrics["coverage_quality_flags"] = sorted(flags)
     coverage.update(
         frozen=True,
@@ -112,7 +112,6 @@ class Recorder:
                 "rss_average_mib",
                 "cpu_seconds",
                 "distance_m",
-                "wall_elapsed",
                 "simulation_elapsed",
                 "motion_started",
                 "pre_motion_wall_elapsed",
@@ -133,7 +132,7 @@ class Recorder:
         )
         self.writer.writeheader()
         self.manifest = dict(
-            schema_version=4,
+            schema_version=5,
             robot=configuration.get("robot", {"id": "mogi", "metadata": "legacy"}),
             configuration=configuration,
             profile=profile,
@@ -224,7 +223,6 @@ class Recorder:
                 "simulation",
                 "wall_monotonic",
                 "simulation_elapsed",
-                "wall_elapsed",
                 "map_received_wall",
                 "map_received_unix",
                 "coverage_percent",
@@ -324,7 +322,6 @@ class Recorder:
                         percent=p,
                         reached=False,
                         simulation_elapsed=None,
-                        wall_elapsed=None,
                     )
                     for p in MILESTONES
                 ],

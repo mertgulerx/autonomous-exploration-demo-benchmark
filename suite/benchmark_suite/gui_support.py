@@ -12,7 +12,6 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import base64
 from collections import OrderedDict
 import math
 from pathlib import Path
@@ -21,14 +20,12 @@ import subprocess
 from typing import Any, Iterator
 import uuid
 
-import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
-import pyqtgraph as pg
 
 from .contracts import ContractError, canonical
 from .protocol import Client
 from .storage import atomic_bytes
-from .gui_style import COLORS, cell_text, icon
+from .gui_style import cell_text
 from .gui_table import TableTextDelegate
 
 
@@ -133,30 +130,6 @@ class FloatEdit(QtWidgets.QLineEdit):
     def emit_value(self) -> None:
         if self.hasAcceptableInput():
             self.valueChanged.emit(self.value())
-
-
-def button(
-    label: str, action: Any, layout: Any, *, role: str = "secondary", glyph: str | None = None
-) -> QtWidgets.QPushButton:
-    widget = QtWidgets.QPushButton(label)
-    widget.setProperty("role", role)
-    if role == "danger" and glyph is None:
-        glyph = "alert"
-    if glyph:
-        widget.setProperty("glyph", glyph)
-        color = (
-            COLORS["text.on-accent"]
-            if role == "primary"
-            else COLORS["status.error"]
-            if role == "danger"
-            else COLORS["surface.base"]
-            if role == "secondary"
-            else COLORS["text.muted"]
-        )
-        widget.setIcon(icon(glyph, color))
-    widget.clicked.connect(action)
-    layout.addWidget(widget)
-    return widget
 
 
 def stale_engine_message(error: str, marker: str, feature: str) -> str | None:
@@ -434,6 +407,7 @@ class PagedTable(QtWidgets.QWidget):
         method: str = "results.query",
         result_key: str = "rows",
         multiple: bool = False,
+        model: PagedTableModel | None = None,
     ):
         super().__init__()
         self.transport, self.tag, self.table = transport, tag, table
@@ -450,7 +424,7 @@ class PagedTable(QtWidgets.QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(12)
         self.view = QtWidgets.QTableView()
-        self.model = PagedTableModel(columns)
+        self.model = model if model is not None else PagedTableModel(columns)
         self.view.setModel(self.model)
         self.view.setSelectionBehavior(QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows)
         self.view.setSelectionMode(
@@ -637,122 +611,3 @@ class PagedTable(QtWidgets.QWidget):
                 self.refresh()
                 return
             self.label.setText(message)
-
-
-class HeadingArrow(pg.ArrowItem):  # type: ignore[misc]
-    def __init__(self, view: "MapView"):
-        super().__init__(
-            angle=0, headLen=15, tipAngle=30, brush=COLORS["text.strong"], pen=COLORS["text.strong"]
-        )
-        self.view = view
-
-    def hoverEvent(self, event: Any) -> None:
-        if self.view.editable:
-            event.acceptDrags(QtCore.Qt.MouseButton.LeftButton)
-
-    def mouseDragEvent(self, event: Any) -> None:
-        if not self.view.editable or event.button() != QtCore.Qt.MouseButton.LeftButton:
-            event.ignore()
-            return
-        event.accept()
-        point = self.view.plotItem.vb.mapSceneToView(event.scenePos())
-        x, y, _ = self.view.pose
-        if math.hypot(point.x() - x, point.y() - y) > 1e-6:
-            yaw = math.atan2(point.y() - y, point.x() - x)
-            self.view.first_click = None
-            self.view.set_pose(x, y, yaw)
-            self.view.pose_selected.emit(x, y, yaw)
-
-
-class MapView(pg.PlotWidget):  # type: ignore[misc]
-    pose_selected = QtCore.Signal(float, float, float)
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.plotItem.hideButtons()
-        self.setAspectLocked()
-        self.setLabel("bottom", "World X", units="m")
-        self.setLabel("left", "World Y", units="m")
-        self.showGrid(x=True, y=True, alpha=0.12)
-        self.image = pg.ImageItem(axisOrder="row-major")
-        self.addItem(self.image)
-        self.footprint = self.plot(pen=pg.mkPen(COLORS["text.heading"], width=2))
-        self.arrow = HeadingArrow(self)
-        self.addItem(self.arrow)
-        self.pose = [0.0, 0.0, 0.0]
-        self.vertices: list[list[float]] = []
-        self.editable = False
-        self.first_click: tuple[float, float] | None = None
-        self.map_initialized = False
-        self.scene().sigMouseClicked.connect(self._click)
-        self.setBackground(COLORS["surface.sunken"])
-        for axis_name in ("bottom", "left"):
-            axis = self.getAxis(axis_name)
-            axis.setPen(COLORS["border.control"])
-            axis.setTextPen(COLORS["text.muted"])
-            axis.setLabel(color=COLORS["text.muted"])
-            axis.setTickFont(QtGui.QFont(QtGui.QGuiApplication.font().family(), 9))
-
-    def clear_view(self) -> None:
-        self.map_initialized = False
-        self.image.clear()
-        self.footprint.setData([], [])
-
-    def hide_pose(self) -> None:
-        self.footprint.setData([], [])
-        self.arrow.hide()
-
-    def set_map(self, result: dict[str, Any]) -> None:
-        image = QtGui.QImage.fromData(base64.b64decode(result["image_png"]))
-        if image.isNull():
-            raise ValueError("Unreadable map image")
-        image = image.convertToFormat(QtGui.QImage.Format.Format_RGBA8888)
-        array = np.frombuffer(image.constBits(), dtype=np.uint8).reshape(
-            image.height(), image.bytesPerLine()
-        )
-        pixels = array[:, : image.width() * 4].reshape(image.height(), image.width(), 4).copy()
-        ink_color = QtGui.QColor(COLORS["text.heading"])
-        paper_color = QtGui.QColor(COLORS["surface.raised"])
-        ink = np.array((ink_color.red(), ink_color.green(), ink_color.blue()), dtype=np.uint16)
-        paper = np.array(
-            (paper_color.red(), paper_color.green(), paper_color.blue()), dtype=np.uint16
-        )
-        pixels[:, :, :3] = ink + pixels[:, :, :3].astype(np.uint16) * (paper - ink) // 255
-        self.image.setImage(pixels, autoLevels=False)
-        x, y, yaw = result["origin"]
-        resolution = result["resolution"]
-        c, s = math.cos(yaw) * resolution, math.sin(yaw) * resolution
-        self.image.setTransform(QtGui.QTransform(c, s, -s, c, x, y))
-        if not self.map_initialized:
-            self.map_initialized = True
-            self.setRange(rect=self.image.mapRectToParent(self.image.boundingRect()), padding=0.04)
-
-    def set_pose(
-        self, x: float, y: float, yaw: float, vertices: list[list[float]] | None = None
-    ) -> None:
-        self.pose = [x, y, yaw]
-        if vertices is not None:
-            self.vertices = vertices
-        self.arrow.show()
-        self.arrow.setPos(x, y)
-        self.arrow.setStyle(angle=180 - math.degrees(yaw))
-        if self.vertices:
-            a = np.asarray(self.vertices + self.vertices[:1])
-            c, s = math.cos(yaw), math.sin(yaw)
-            a = a @ np.array([[c, s], [-s, c]]) + [x, y]
-            self.footprint.setData(a[:, 0], a[:, 1])
-
-    def _click(self, event: Any) -> None:
-        if not self.editable or event.button() != QtCore.Qt.MouseButton.LeftButton:
-            return
-        point = self.plotItem.vb.mapSceneToView(event.scenePos())
-        if self.first_click is None:
-            self.first_click = point.x(), point.y()
-            self.set_pose(point.x(), point.y(), self.pose[2])
-            self.pose_selected.emit(*self.pose)
-        else:
-            x, y = self.first_click
-            yaw = math.atan2(point.y() - y, point.x() - x)
-            self.first_click = None
-            self.set_pose(x, y, yaw)
-            self.pose_selected.emit(x, y, yaw)

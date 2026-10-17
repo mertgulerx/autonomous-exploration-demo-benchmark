@@ -36,7 +36,6 @@ COMMON = IDENTITIES + [
     ("receipt_utc_ns", pa.int64(), False),
     ("receipt_monotonic_ns", pa.int64(), False),
     ("simulation_elapsed_ns", pa.int64(), True),
-    ("wall_elapsed_ns", pa.int64(), True),
     ("valid", pa.bool_(), False),
     ("quality_flags", pa.list_(pa.string()), False),
 ]

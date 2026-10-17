@@ -56,7 +56,13 @@ from .monitoring import (
     PathSettings,
     explored_pixels,
 )
-from .report_data import OUTCOME_SCHEMA, SUMMARY_SCHEMA, parquet_rows, summarize
+from .report_data import (
+    MILESTONE_PERCENTS,
+    OUTCOME_SCHEMA,
+    SUMMARY_SCHEMA,
+    parquet_rows,
+    summarize,
+)
 from .run_map import (
     GROUND_TRUTH_COLUMNS,
     GroundTruthPath,
@@ -322,8 +328,8 @@ def attempt_figures(directory: Path, destination: Path, summary: dict[str, Any])
         ]
         for label, key, unit in (
             ("Simulation elapsed", "simulation_elapsed_seconds", "s"),
-            ("Wall elapsed", "wall_elapsed_seconds", "s"),
             ("Distance", "distance_m", "m"),
+            ("Average speed", "average_speed_mps", "m/s"),
             ("Average explorer CPU", "cpu_average_percent", "%"),
             ("Average explorer RSS", "rss_average_mib", "MiB"),
         ):
@@ -331,14 +337,12 @@ def attempt_figures(directory: Path, destination: Path, summary: dict[str, Any])
             details.append(
                 f"{label}: {value:.3f} {unit}" if value is not None else f"{label}: unavailable"
             )
-        details.append("First reached (observed, simulation / wall seconds):")
-        for percent in (50, 75, 90, 95):
-            sim, wall = (
-                summary.get(f"first_{percent}_{clock}_seconds") for clock in ("simulation", "wall")
-            )
+        details.append("First reached (observed, simulation seconds):")
+        for percent in MILESTONE_PERCENTS:
+            sim = summary.get(f"first_{percent}_simulation_seconds")
             details.append(
-                f"  {percent}%: {sim:.3f} / {wall:.3f}"
-                if sim is not None and wall is not None
+                f"  {percent}%: {sim:.3f}"
+                if sim is not None
                 else f"  {percent}%: unreached / unavailable"
             )
         details.extend(
@@ -635,7 +639,7 @@ def group_reports(
                     incident_maps(pages, query, key, profiles, paths, destination)
             outputs.append(pdf)
         aggregation = query.execute(
-            "SELECT robot_id,world_id,spawn_id,profile_id,comparison_key,count(*) AS final_attempts,count(*) FILTER(WHERE outcome='completed') AS completed,count(*) FILTER(WHERE timing_eligible) AS timing_eligible, median(completion_seconds) FILTER(WHERE timing_eligible) AS successful_completion_median_seconds,quantile_cont(completion_seconds,0.25) FILTER(WHERE timing_eligible) AS successful_completion_q25_seconds,quantile_cont(completion_seconds,0.75) FILTER(WHERE timing_eligible) AS successful_completion_q75_seconds,median(distance_m) FILTER(WHERE timing_eligible) AS distance_median_m,median(cpu_average_percent) FILTER(WHERE timing_eligible) AS cpu_median_percent,median(rss_average_mib) FILTER(WHERE timing_eligible) AS rss_median_mib,median(tail_90_to_95_seconds) FILTER(WHERE coverage_eligible) AS tail_90_95_median_seconds FROM reported GROUP BY ALL"
+            "SELECT robot_id,world_id,spawn_id,profile_id,comparison_key,count(*) AS final_attempts,count(*) FILTER(WHERE outcome='completed') AS completed,count(*) FILTER(WHERE timing_eligible) AS timing_eligible, median(completion_seconds) FILTER(WHERE timing_eligible) AS successful_completion_median_seconds,quantile_cont(completion_seconds,0.25) FILTER(WHERE timing_eligible) AS successful_completion_q25_seconds,quantile_cont(completion_seconds,0.75) FILTER(WHERE timing_eligible) AS successful_completion_q75_seconds,median(distance_m) FILTER(WHERE timing_eligible) AS distance_median_m,median(average_speed_mps) FILTER(WHERE timing_eligible) AS average_speed_median_mps,median(cpu_average_percent) FILTER(WHERE timing_eligible) AS cpu_median_percent,median(rss_average_mib) FILTER(WHERE timing_eligible) AS rss_median_mib,median(tail_90_to_95_seconds) FILTER(WHERE coverage_eligible) AS tail_90_95_median_seconds FROM reported GROUP BY ALL"
         ).fetch_arrow_table()
         policy = {
             b"report_policy": REPORT_POLICY_VERSION.encode(),
@@ -948,6 +952,11 @@ def _generate(payload: dict[str, Any]) -> dict[str, Any]:
                 "reported_final_experiments": sum(
                     count for outcome, count in finals.items() if report_exclusion(outcome) is None
                 ),
+                "reported": {
+                    outcome: count
+                    for outcome, count in sorted(finals.items())
+                    if report_exclusion(outcome) is None
+                },
                 "excluded": {
                     outcome: count
                     for outcome, count in sorted(finals.items())

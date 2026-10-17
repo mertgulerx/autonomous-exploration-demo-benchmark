@@ -71,7 +71,6 @@ class SyntheticWorker:
                 "wall_monotonic": time.monotonic(),
                 "clock": float(self.step),
                 "simulation_elapsed": float(self.step - 2),
-                "wall_elapsed": None,
                 "motion_started": True,
             }
         ]

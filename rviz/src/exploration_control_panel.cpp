@@ -815,13 +815,12 @@ void ExplorationControlPanel::metricsReceived(const interfaces::msg::RunMetrics&
                                       : coverage_flags.join(", "));
   const QString text =
       QString(
-          "CPU%1: %2%    RAM%1: %3 MiB    Distance: %4 m\nWall (from first move): %5 s    "
-          "Simulation: %6 s    RTF: %7\nTiming: %8    Outcome: %9")
+          "CPU%1: %2%    RAM%1: %3 MiB    Distance: %4 m\nSimulation (from first move): %5 s    "
+          "RTF: %6\nTiming: %7    Outcome: %8")
           .arg(m.frozen ? " (avg)" : "")
           .arg(cpu, 0, 'f', 1)
           .arg(rss, 0, 'f', 1)
           .arg(m.distance_m, 0, 'f', 2)
-          .arg(m.wall_elapsed, 0, 'f', 1)
           .arg(m.simulation_elapsed, 0, 'f', 1)
           .arg(m.rtf, 0, 'f', 2)
           .arg(health)

@@ -195,6 +195,7 @@ class Library:
                     "movement_speed": profile["max_linear_speed"],
                     "turning_speed": profile["max_angular_speed"],
                     "footprint": profile["footprint"],
+                    "kinematics": profile["kinematics"],
                     "physics_step": profile["physics_step"],
                     "worlds": profile["worlds"],
                     "defaults": defaults,
@@ -344,7 +345,7 @@ class Library:
         if family_id and not previous:
             raise ContractError(
                 "family_id",
-                "This profile was deleted; save it as a new profile with Clone",
+                "This profile was deleted; save it as a new profile",
                 "not_found",
             )
         if family_id and previous and (previous["owner"] != owner or previous["kind"] != kind):

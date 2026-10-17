@@ -16,4 +16,3 @@
 float64 percent
 bool reached
 float64 simulation_elapsed
-float64 wall_elapsed

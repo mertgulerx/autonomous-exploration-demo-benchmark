@@ -26,7 +26,7 @@ import zlib
 
 import psutil
 
-from .contracts import ContractError
+from .contracts import ContractError, average_speed
 from .monitoring import (
     MONITOR_LAYERS,
     PhysicalPath,
@@ -96,7 +96,10 @@ class WorkerRuntime:
             angular_speed=self.angular_speed,
         )
         if not result.get("motion_started"):
-            result["simulation_elapsed"] = result["wall_elapsed"] = None
+            result["simulation_elapsed"] = None
+        result["average_speed_mps"] = average_speed(
+            result.get("distance_m"), result.get("simulation_elapsed")
+        )
         self.metrics = safe(result)
         self.sequence += 1
 
@@ -178,10 +181,7 @@ class WorkerRuntime:
         )
         self.planar_speed = math.hypot(v.linear.x, v.linear.y) if valid else None
         self.angular_speed = v.angular.z if valid else None
-        recorder.origins = (
-            worker.measurements.movement_simulation_start,
-            worker.measurements.movement_wall_start,
-        )
+        recorder.origin = worker.measurements.movement_simulation_start
         recorder.clock = worker.clock_value
         row = recorder.row(
             "raw_odometry",

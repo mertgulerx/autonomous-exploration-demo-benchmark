@@ -64,7 +64,7 @@ class Recorder:
         self.resource_peak_rss: float | None = None
         self.resource_previous: tuple[float, float, float] | None = None
         self.resource_integral_cpu = self.resource_integral_rss = self.resource_duration = 0.0
-        self.origins: tuple[float | None, float | None] = None, None
+        self.origin: float | None = None
         self.clock = 0.0
         self.segments: list[dict[str, Any]] = []
         self.manifest = dict(
@@ -144,7 +144,7 @@ class Recorder:
         clock_ns: int | None = None,
     ) -> dict[str, Any]:
         receipt = receipt_monotonic_ns or time.monotonic_ns()
-        motion_sim, motion_wall = self.origins
+        motion_sim = self.origin
         clock = clock_ns if clock_ns is not None else nanoseconds(self.clock)
         return dict(
             self.identity,
@@ -156,9 +156,6 @@ class Recorder:
             valid=valid,
             simulation_elapsed_ns=clock - round(motion_sim * 1e9)
             if clock is not None and motion_sim is not None and clock >= round(motion_sim * 1e9)
-            else None,
-            wall_elapsed_ns=receipt - round(motion_wall * 1e9)
-            if motion_wall is not None and receipt >= round(motion_wall * 1e9)
             else None,
             quality_flags=[],
         )
@@ -256,7 +253,6 @@ class Recorder:
             map_receipt_monotonic_ns=nanoseconds(sample["map_received_wall"]),
             map_age_ns=nanoseconds(sample["coverage_map_age"]),
             simulation_elapsed_ns=nanoseconds(sample["simulation_elapsed"]),
-            wall_elapsed_ns=nanoseconds(sample["wall_elapsed"]),
         )
         self.enqueue("coverage", safe(row))
         for milestone in sample["milestones_crossed"]:

@@ -588,7 +588,7 @@ class Coordinator(Node):
             json.loads(path.read_text())
             if path.is_file()
             else dict(
-                schema_version=4,
+                schema_version=5,
                 configuration=handle.config,
                 robot=handle.config["robot"],
             )

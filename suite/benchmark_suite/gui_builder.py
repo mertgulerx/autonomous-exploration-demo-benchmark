@@ -17,22 +17,76 @@ from typing import Any
 import uuid
 
 import yaml
-from PySide6 import QtCore, QtWidgets
+from PySide6 import QtCore, QtGui, QtWidgets
 
-from .gui_style import DetailsPanel, label, surface
-from .gui_support import Transport, button
+from .gui_cells import OverlayScrollBar
+from .gui_support import Transport
+from .gui_review import (
+    VALIDATE_ACCEPTED,
+    VALIDATE_CHANGES,
+    AcceptedCard,
+    ChangesCard,
+    Combination,
+    CombinationsCard,
+    ReviewPage,
+    accepted_facts,
+    change_blocks,
+)
 from .gui_robots import RobotSelector
 from .gui_worlds import WorldSelector
+from .gui_theme import ThemeManager
+from .gui_widgets import CardSplit, place, plural
+from .gui_wizard import (
+    DraftFacts,
+    DraftSummary,
+    ExecutionCard,
+    SummaryItem,
+    WizardFooter,
+    WizardHead,
+    seconds,
+)
 from .contracts import resolve_world_time_limits
 
 
+class StepCards(QtWidgets.QWidget):
+    """Step 3's settings card and the 420 px draft summary, as tall as the taller of the two; the gap between
+    them can be dragged (remembered; a double click restores the design's width)."""
+
+    def __init__(
+        self, themes: ThemeManager, execution: ExecutionCard, summary: DraftSummary
+    ) -> None:
+        super().__init__()
+        self.execution, self.summary = execution, summary
+        execution.setParent(self)
+        summary.setParent(self)
+        self.side = CardSplit(themes, self, "builder/summary", self.relayout, across=True, sign=-1)
+
+    def relayout(self) -> None:
+        width = self.width()
+        height = max(self.execution.natural_height(), self.summary.natural_height())
+        self.setMinimumHeight(height)
+        side = self.side.resolve(420, 340, width - 16 - 520)
+        place(self.execution, 0, 0, width - side - 16, height)
+        place(self.summary, width - side, 0, side, height)
+        self.side.place(width - side - 16, 0, 16, height)
+
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
+        super().resizeEvent(event)
+        self.relayout()
+
+
 class CampaignBuilder(QtWidgets.QWidget):
+    """New campaign (03–08): the head with the steps, one page per step and the bottom bar. Messages go to
+    toasts (``message``: text and kind, D8)."""
+
     return_requested = QtCore.Signal()
     edit_profile = QtCore.Signal(str, object)
+    message = QtCore.Signal(str, str)
 
-    def __init__(self, transport: Transport):
+    def __init__(self, transport: Transport, themes: ThemeManager):
         super().__init__()
         self.transport = transport
+        self.themes = themes
         self.catalog: dict[str, Any] = {}
         self.source_campaign_id: str | None = None
         self.excluded: set[tuple[str, str, str]] = set()
@@ -48,158 +102,66 @@ class CampaignBuilder(QtWidgets.QWidget):
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(16)
-        heading = QtWidgets.QHBoxLayout()
-        self.return_button = button(
-            "Campaigns", self.return_requested.emit, heading, role="outlined", glyph="arrow-left"
-        )
-        self.return_button.setAccessibleName("Back to campaigns")
-        self.return_button.setToolTip("Back to campaigns")
-        heading.addWidget(label("New campaign", "title"))
-        heading.addStretch()
-        counters = QtWidgets.QWidget()
-        counters.setObjectName("campaignCounters")
-        counts_layout = QtWidgets.QHBoxLayout(counters)
-        counts_layout.setContentsMargins(0, 0, 0, 0)
-        counts_layout.setSpacing(24)
-        self.counts: dict[str, QtWidgets.QLabel] = {}
-        for key, title in (
-            ("robots", "Robots"),
-            ("profiles", "Profiles"),
-            ("worlds", "Worlds"),
-            ("repetitions", "Repetitions"),
-            ("experiments", "Planned experiments"),
-        ):
-            if key == "experiments":
-                divider = QtWidgets.QFrame()
-                divider.setObjectName("campaignCounterDivider")
-                divider.setFixedSize(1, 36)
-                counts_layout.addWidget(divider)
-            column = QtWidgets.QVBoxLayout()
-            column.setSpacing(0)
-            value = label("0", "counter")
-            value.setAccessibleName(title)
-            value.setAlignment(
-                QtCore.Qt.AlignmentFlag.AlignRight | QtCore.Qt.AlignmentFlag.AlignVCenter
-            )
-            value.setMinimumHeight(32)
-            value.setProperty("total", key == "experiments")
-            caption = label(title, "muted")
-            caption.setAlignment(QtCore.Qt.AlignmentFlag.AlignRight)
-            column.addWidget(value)
-            column.addWidget(caption)
-            counts_layout.addLayout(column)
-            self.counts[key] = value
-        heading.addWidget(counters)
-        layout.addLayout(heading)
-        steps = QtWidgets.QHBoxLayout()
-        self.step_buttons = []
-        for index, title in enumerate(
-            ("Robots & profiles", "Worlds & spawns", "Execution", "Review")
-        ):
-            control = button(
-                f"{index + 1}  {title.replace('&', '&&')}",
-                lambda checked=False, i=index: self.show_step(i),
-                steps,
-            )
-            self.step_buttons.append(control)
-        layout.addLayout(steps)
+        self.head = WizardHead(themes)
+        self.head.back.clicked.connect(self.return_requested.emit)
+        self.head.steps.step_selected.connect(self.show_step)
+        layout.addWidget(self.head)
         self.stack = QtWidgets.QStackedWidget()
         layout.addWidget(self.stack, 1)
-        self.robot_selector = RobotSelector(transport=transport)
+        self.robot_selector = RobotSelector(themes, transport)
+        self.robot_selector.notice.connect(lambda text: self.set_message(text, "muted"))
         self.robot_selector.edit_profile.connect(self.edit_profile.emit)
         self.stack.addWidget(self.robot_selector)
-        self.world_selector = WorldSelector(transport)
+        self.world_selector = WorldSelector(themes, transport)
         self.stack.addWidget(self.world_selector)
-        execution = surface()
-        execution_layout = QtWidgets.QVBoxLayout(execution)
-        execution_layout.setContentsMargins(24, 24, 24, 24)
-        execution_layout.addWidget(
-            label("Name your study and choose execution settings", "section")
-        )
-        form = QtWidgets.QFormLayout()
-        form.setVerticalSpacing(16)
-        self.name = QtWidgets.QLineEdit("Exploration study")
-        self.description = QtWidgets.QLineEdit()
-        self.description.setPlaceholderText("Optional research notes")
-        self.repetitions = QtWidgets.QSpinBox()
-        self.repetitions.setRange(1, 1000000)
-        self.repetitions.setValue(1)
-        presets = QtWidgets.QWidget()
-        preset_layout = QtWidgets.QHBoxLayout(presets)
-        preset_layout.setContentsMargins(0, 0, 0, 0)
-        preset_layout.addWidget(self.repetitions, 1)
-        for count in (1, 10, 100):
-            button(
-                str(count),
-                lambda checked=False, n=count: self.repetitions.setValue(n),
-                preset_layout,
-            )
-        self.concurrency = QtWidgets.QComboBox()
-        for count in (1, 2, 3, 4):
-            self.concurrency.addItem(
-                "Sequential" if count == 1 else f"{count} parallel workers", count
-            )
-        form.addRow("Campaign name", self.name)
-        form.addRow("Description", self.description)
-        form.addRow("Repetitions per combination", presets)
-        form.addRow("Execution", self.concurrency)
-        execution_layout.addLayout(form)
-        execution_layout.addWidget(
-            label(
-                "Timing-rejected parallel attempts receive one final sequential replacement.",
-                "muted",
-            )
-        )
-        execution_layout.addStretch()
-        self.stack.addWidget(execution)
-        review = QtWidgets.QWidget()
-        review_layout = QtWidgets.QVBoxLayout(review)
-        review_layout.setContentsMargins(0, 0, 0, 0)
-        review_layout.addWidget(
-            label("Review combinations before adding the campaign to the queue", "section")
-        )
-        review_layout.addWidget(
-            label(
-                "Uncheck a combination to exclude it explicitly. Validation checks every included spawn.",
-                "muted",
-            )
-        )
-        self.compatibility = QtWidgets.QTableWidget(0, 5)
-        self.compatibility.setHorizontalHeaderLabels(
-            ["Include", "Robot", "World", "Spawn", "Time limit"]
-        )
-        self.compatibility.verticalHeader().hide()
-        self.compatibility.horizontalHeader().setSectionResizeMode(
-            QtWidgets.QHeaderView.ResizeMode.Stretch
-        )
-        self.compatibility.setShowGrid(False)
-        self.compatibility.setSelectionBehavior(
-            QtWidgets.QAbstractItemView.SelectionBehavior.SelectRows
-        )
-        self.compatibility.itemChanged.connect(self.change_exclusion)
-        review_layout.addWidget(self.compatibility, 2)
-        self.preview = DetailsPanel("Accepted campaign")
-        review_layout.addWidget(self.preview, 1)
-        self.stack.addWidget(review)
-        self.error = label("", "error")
-        self.error.setWordWrap(True)
-        layout.addWidget(self.error)
-        footer = QtWidgets.QHBoxLayout()
-        button("Import YAML", self.import_campaign, footer, role="outlined")
-        self.export_button = button("Export YAML", self.export_campaign, footer, role="outlined")
-        footer.addStretch()
-        self.back_button = button("Back", lambda: self.show_step(self.step - 1), footer)
-        self.next_button = button("Continue", self.next_step, footer, role="primary")
-        self.submit_button = button(
-            "Add to queue", lambda: self.submit_design(True), footer, role="primary"
-        )
-        layout.addLayout(footer)
+        # Step 3: the settings card and the draft summary side by side (``grid 1fr 420px``).
+        self.execution = ExecutionCard(themes)
+        self.summary = DraftSummary(themes)
+        self.summary.change_requested.connect(self.show_step)
+        execution_page = StepCards(themes, self.execution, self.summary)
+        # A long draft (many robots or worlds) makes both cards taller; the step then scrolls.
+        execution_scroll = QtWidgets.QScrollArea()
+        execution_scroll.setWidgetResizable(True)
+        execution_scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
+        execution_scroll.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        execution_scroll.viewport().setAutoFillBackground(False)
+        execution_page.setAutoFillBackground(False)
+        execution_scroll.setWidget(execution_page)
+        OverlayScrollBar(themes, execution_scroll)
+        self.stack.addWidget(execution_scroll)
+        self.fit_step_cards()
+        self.name = self.execution.name
+        self.description = self.execution.description
+        self.repetitions = self.execution.repetitions
+        self.concurrency = self.execution.concurrency
+        self.concurrency.set_index(0)
+        # Step 4: the combinations over the profile changes, and the accepted campaign (08).
+        self.combinations = CombinationsCard(themes)
+        self.combinations.toggled.connect(self.toggle_exclusion)
+        self.combinations.toggled_all.connect(self.toggle_all_exclusions)
+        self.changes = ChangesCard(themes)
+        self.accepted = AcceptedCard(themes)
+        self.world_selector.map_loaded.connect(self.accepted.set_map)
+        self.review_page = ReviewPage(self.combinations, self.changes, self.accepted)
+        self.stack.addWidget(self.review_page)
+        self.footer = WizardFooter(themes)
+        layout.addWidget(self.footer)
+        self.footer.import_button.clicked.connect(self.import_campaign)
+        self.export_button = self.footer.export_button
+        self.export_button.clicked.connect(self.export_campaign)
+        self.back_button = self.footer.back_button
+        self.back_button.clicked.connect(lambda: self.show_step(self.step - 1))
+        self.next_button = self.footer.next_button
+        self.next_button.clicked.connect(self.next_step)
+        self.footer.validate_button.clicked.connect(lambda: self.submit_design(False))
+        self.submit_button = self.footer.submit_button
+        self.submit_button.clicked.connect(lambda: self.submit_design(True))
         self.robot_selector.changed.connect(self.invalidate)
         self.world_selector.changed.connect(self.invalidate)
         for field in (self.name, self.description):
             field.textChanged.connect(self.invalidate)
         self.repetitions.valueChanged.connect(self.invalidate)
-        self.concurrency.currentIndexChanged.connect(self.invalidate)
+        self.concurrency.changed.connect(self.invalidate)
         transport.received.connect(self.received)
         transport.failed.connect(self.failed)
         self.show_step(0)
@@ -219,7 +181,7 @@ class CampaignBuilder(QtWidgets.QWidget):
             "robots": robots,
             "worlds": worlds,
             "repetitions": self.repetitions.value(),
-            "concurrency": self.concurrency.currentData(),
+            "concurrency": self.concurrency.value(),
             "world_time_limits": self.world_selector.time_limits(),
             "exclusions": [list(v) for v in sorted(self.excluded & combinations)],
             **({"source_campaign_id": self.source_campaign_id} if self.source_campaign_id else {}),
@@ -234,8 +196,22 @@ class CampaignBuilder(QtWidgets.QWidget):
         self.validated_design = None
         self.pending_design = None
         self.validation_tag = ""
+        self.show_unvalidated(VALIDATE_ACCEPTED)
         self.sync_actions()
         self.update_summary()
+        if self.step == 3:
+            self.refresh_combinations()
+
+    def show_unvalidated(self, message: str) -> None:
+        """Step 4 without an accepted campaign: the cards that describe it say why."""
+        self.accepted.set_message(message)
+        self.changes.set_blocks([], VALIDATE_CHANGES)
+
+    def labels(self, kind: str) -> dict[str, str]:
+        """Catalog labels by ID of ``kind`` ("robots" or "worlds")."""
+        return {
+            entry["id"]: entry.get("label", entry["id"]) for entry in self.catalog.get(kind, [])
+        }
 
     def sync_actions(self) -> None:
         exportable = (
@@ -244,9 +220,7 @@ class CampaignBuilder(QtWidgets.QWidget):
         self.submit_button.setEnabled(self.validated is not None and not self.submission_tag)
         self.export_button.setEnabled(exportable)
         self.export_button.setToolTip(
-            "Save the accepted campaign as YAML"
-            if exportable
-            else "Validate the campaign (step 4) to export the accepted YAML"
+            "Save the accepted campaign as YAML" if exportable else "Available after validation"
         )
 
     def unchanged_since_validation(self) -> bool:
@@ -270,14 +244,72 @@ class CampaignBuilder(QtWidgets.QWidget):
                     for s in spawns
                 )
         count *= self.repetitions.value()
-        for key, value in {
-            "robots": len(robots),
-            "profiles": sum(map(len, robots.values())),
-            "worlds": len(worlds),
-            "repetitions": self.repetitions.value(),
-            "experiments": count,
-        }.items():
-            self.counts[key].setText(f"{value:,}")
+        self.footer.totals.set_counts(
+            len(robots),
+            sum(map(len, robots.values())),
+            len(worlds),
+            self.repetitions.value(),
+            count,
+        )
+        self.summary.set_facts(self.draft_facts())
+        self.fit_step_cards()
+
+    def fit_step_cards(self) -> None:
+        """Step 3's cards share one height: the settings card's or the draft summary's, the taller."""
+        execution_page = self.execution.parentWidget()
+        if isinstance(execution_page, StepCards):
+            execution_page.relayout()
+
+    def draft_facts(self) -> DraftFacts:
+        """Step 3's summary of the form: robots and profiles, worlds and poses, combinations per robot."""
+        robots, worlds = self.robot_selector.selections(), self.world_selector.selections()
+        robot_labels, world_labels = self.labels("robots"), self.labels("worlds")
+        try:
+            limits: dict[str, float] = self.world_selector.time_limits()
+        except ValueError:
+            limits = {}
+        world_items = []
+        for world, spawns in worlds.items():
+            names = ", ".join(self.world_selector.spawn_label(world, s) for s in spawns)
+            limit = limits.get(world)
+            if limit is not None:
+                names += " · " + ("unlimited" if limit == 0 else f"{seconds(limit)} s")
+            world_items.append(SummaryItem(world_labels.get(world, world), names))
+        combinations, left_out = [], []
+        for robot, profiles in robots.items():
+            poses = 0
+            for world, spawns in worlds.items():
+                for spawn in spawns:
+                    if (robot, world, self.spawn_identity(world, spawn)) in self.excluded:
+                        left_out.append(
+                            f"{robot_labels.get(robot, robot)} · {world_labels.get(world, world)}"
+                            f" · {self.world_selector.spawn_label(world, spawn)}"
+                        )
+                    else:
+                        poses += 1
+            detail = f"{plural(len(profiles), 'profile')} × {plural(poses, 'starting pose')}"
+            combinations.append(
+                SummaryItem(robot_labels.get(robot, robot), detail, len(profiles) * poses)
+            )
+        if not left_out:
+            note = ""
+        elif len(left_out) == 1:
+            note = left_out[0] + " is left out in Review."
+        else:
+            note = ", ".join(left_out[:-1]) + " and " + left_out[-1] + " are left out in Review."
+        return DraftFacts(
+            robots=tuple(
+                SummaryItem(
+                    robot_labels.get(robot, robot),
+                    ", ".join(self.robot_selector.profile_label(robot, ref) for ref in references),
+                )
+                for robot, references in robots.items()
+            ),
+            worlds=tuple(world_items),
+            combinations=tuple(combinations),
+            per_repetition=sum(item.count or 0 for item in combinations),
+            note=note,
+        )
 
     @staticmethod
     def spawn_identity(world: str, reference: Any) -> str:
@@ -292,28 +324,20 @@ class CampaignBuilder(QtWidgets.QWidget):
     def show_step(self, index: int) -> None:
         self.step = max(0, min(index, 3))
         self.stack.setCurrentIndex(self.step)
-        for i, control in enumerate(self.step_buttons):
-            control.setProperty("role", "selected" if i == self.step else "outlined")
-            control.style().unpolish(control)
-            control.style().polish(control)
-        self.back_button.setVisible(self.step > 0)
-        self.next_button.setText("Validate campaign" if self.step == 3 else "Continue")
-        self.next_button.setProperty(
-            "role", "secondary" if self.step == 3 and self.validated else "primary"
-        )
-        self.next_button.style().unpolish(self.next_button)
-        self.next_button.style().polish(self.next_button)
+        self.head.steps.set_step(self.step, range(self.step))
+        self.back_button.setEnabled(self.step > 0)
+        self.next_button.setVisible(self.step < 3)
+        self.footer.validate_button.setVisible(self.step == 3)
         self.submit_button.setVisible(self.step == 3)
         self.sync_actions()
         if self.step == 3:
             self.refresh_combinations()
         self.update_summary()
+        self.footer.relayout()
 
     def set_message(self, text: str, kind: str = "error") -> None:
-        self.error.setProperty("kind", kind)
-        self.error.style().unpolish(self.error)
-        self.error.style().polish(self.error)
-        self.error.setText(text)
+        """A toast (D8): errors stay until dismissed; progress and success fade."""
+        self.message.emit(text, {"error": "bad", "success": "ok"}.get(kind, "neutral"))
 
     def next_step(self) -> None:
         if self.step == 0:
@@ -328,72 +352,52 @@ class CampaignBuilder(QtWidgets.QWidget):
                     "Select at least one world and a starting pose for each selected world."
                 )
                 return
-        self.error.clear()
-        if self.step == 3:
-            self.submit_design(False)
-        else:
-            self.show_step(self.step + 1)
+        self.show_step(self.step + 1)
 
-    def refresh_combinations(self) -> None:
-        self.compatibility.blockSignals(True)
-        self.compatibility.setRowCount(0)
-        robots = {r["id"]: r for r in self.catalog.get("robots", [])}
-        worlds = {w["id"]: w for w in self.catalog.get("worlds", [])}
-        try:
-            limits = self.world_selector.time_limits()
-        except ValueError as exc:
-            self.set_message(str(exc))
-            limits = {}
-        for robot in self.robot_selector.selections():
+    def combination_rows(self) -> list[Combination]:
+        """Every robot, world and starting pose of the form; robot and profiles once per robot (08)."""
+        robot_labels, world_labels = self.labels("robots"), self.labels("worlds")
+        rows = []
+        for robot, references in self.robot_selector.selections().items():
+            profiles = ", ".join(self.robot_selector.profile_label(robot, r) for r in references)
+            first = True
             for world, spawns in self.world_selector.selections().items():
                 for spawn in spawns:
-                    row = self.compatibility.rowCount()
-                    self.compatibility.insertRow(row)
-                    identity = self.spawn_identity(world, spawn)
-                    include = QtWidgets.QTableWidgetItem()
-                    include.setFlags(
-                        QtCore.Qt.ItemFlag.ItemIsEnabled | QtCore.Qt.ItemFlag.ItemIsUserCheckable
-                    )
-                    include.setData(QtCore.Qt.ItemDataRole.UserRole, (robot, world, identity))
-                    include.setCheckState(
-                        QtCore.Qt.CheckState.Unchecked
-                        if (robot, world, identity) in self.excluded
-                        else QtCore.Qt.CheckState.Checked
-                    )
-                    self.compatibility.setItem(row, 0, include)
-                    values = [
-                        robots.get(robot, {}).get("label", robot),
-                        worlds.get(world, {}).get("label", world),
-                        spawn.get("name", identity)
-                        if isinstance(spawn, dict)
-                        else "Default"
-                        if spawn == "Default"
-                        else self.spawn_label(world, spawn),
-                        "Invalid"
-                        if world not in limits
-                        else "Unlimited"
-                        if limits[world] == 0
-                        else f"{limits[world]:g} s",
-                    ]
-                    for column, text in enumerate(values, 1):
-                        item = QtWidgets.QTableWidgetItem(text)
-                        item.setFlags(
-                            QtCore.Qt.ItemFlag.ItemIsEnabled | QtCore.Qt.ItemFlag.ItemIsSelectable
+                    rows.append(
+                        Combination(
+                            (robot, world, self.spawn_identity(world, spawn)),
+                            robot_labels.get(robot, robot) if first else "",
+                            profiles if first else "",
+                            world_labels.get(world, world),
+                            self.spawn_label(world, spawn),
+                            len(references) * self.repetitions.value(),
                         )
-                        self.compatibility.setItem(row, column, item)
-        self.compatibility.blockSignals(False)
+                    )
+                    first = False
+        return rows
 
-    def spawn_label(self, world: str, identity: str) -> str:
-        return self.world_selector.spawn_label(world, identity)
+    def refresh_combinations(self) -> None:
+        self.combinations.set_rows(self.combination_rows(), self.excluded)
+        self.review_page.relayout()
 
-    def change_exclusion(self, item: QtWidgets.QTableWidgetItem) -> None:
-        if item.column() == 0:
-            identity = tuple(item.data(QtCore.Qt.ItemDataRole.UserRole))
-            if item.checkState() == QtCore.Qt.CheckState.Checked:
-                self.excluded.discard(identity)
-            else:
-                self.excluded.add(identity)
-            self.invalidate()
+    def spawn_label(self, world: str, reference: Any) -> str:
+        return self.world_selector.spawn_label(world, reference)
+
+    def toggle_exclusion(self, key: tuple[str, str, str]) -> None:
+        if key in self.excluded:
+            self.excluded.discard(key)
+        else:
+            self.excluded.add(key)
+        self.invalidate()
+
+    def toggle_all_exclusions(self) -> None:
+        """The header check: include every combination, or leave them all out."""
+        keys = {row.key for row in self.combination_rows()}
+        if keys & self.excluded:
+            self.excluded -= keys
+        else:
+            self.excluded |= keys
+        self.invalidate()
 
     def submit_design(self, submit: bool) -> None:
         if self.import_tag:
@@ -420,7 +424,7 @@ class CampaignBuilder(QtWidgets.QWidget):
             self.pending_design = deepcopy(design)
             self.validation_tag = "builder-preview-" + uuid.uuid4().hex
             self.sync_actions()
-            self.set_message("Validating included combinations…", "muted")
+            self.show_unvalidated("Validating included combinations…")
             self.transport.submit(
                 self.validation_tag, "campaign.preview", {"specification": design}
             )
@@ -430,7 +434,7 @@ class CampaignBuilder(QtWidgets.QWidget):
         self.name.setText(value["name"])
         self.description.setText(value.get("description", ""))
         self.repetitions.setValue(value["repetitions"])
-        self.concurrency.setCurrentIndex(self.concurrency.findData(value["concurrency"]))
+        self.concurrency.set_value(value["concurrency"])
         self.excluded = {tuple(v) for v in value["exclusions"]}
         self.robot_selector.set_selections(value["robots"])
         self.world_selector.set_selections(value["worlds"])
@@ -488,28 +492,16 @@ class CampaignBuilder(QtWidgets.QWidget):
                     return
             else:
                 design = self.pending_design
+            imported = tag.startswith("campaign-import-")
             self.validated = specification
             self.validated_design = design
             self.pending_design = None
-            self.preview.set_record(
-                {
-                    "name": self.validated["name"],
-                    "experiments": result["count"],
-                    "minimum_attempts": result["expected_minimum_attempts"],
-                    "workers": self.validated["concurrency"],
-                    "world_time_limits": ", ".join(
-                        f"{world.capitalize()}: {'unlimited' if limit == 0 else f'{limit:g} s'}"
-                        for world, limit in resolve_world_time_limits(
-                            self.validated, self.validated["worlds"]
-                        )
-                    ),
-                    "timing_retry": result["timing_retry"],
-                }
-            )
-            self.set_message(
-                "Validation passed. Add this campaign to the queue, then explicitly Start it.",
-                "success",
-            )
+            self.show_accepted(specification, result.get("timing_retry"))
+            if imported:  # the import lands on step 1, away from the accepted campaign card
+                self.set_message(
+                    "Validation passed. Add this campaign to the queue, then explicitly Start it.",
+                    "success",
+                )
             self.show_step(self.step)
         elif tag == self.submission_tag:
             self.submission_tag = ""
@@ -547,7 +539,25 @@ class CampaignBuilder(QtWidgets.QWidget):
                 self.validated = None
                 self.validated_design = None
                 self.pending_design = None
+            if tag == self.validation_tag and tag.startswith("builder-preview-"):
+                self.accepted.set_error(error)  # 08: the error in the card's band
+                self.changes.set_blocks([], VALIDATE_CHANGES)
+                if self.step != 3:  # the band is out of sight
+                    self.set_message(error)
+            else:
+                self.set_message(error)
             self.import_tag = ""
             self.submission_tag = ""
-            self.set_message(error)
             self.sync_actions()
+
+    def show_accepted(self, specification: dict[str, Any], timing_retry: Any) -> None:
+        """Step 4's view of what the engine accepted: the campaign card and the profile changes."""
+        facts = accepted_facts(specification, timing_retry, self.labels("worlds"), self.spawn_label)
+        maps = {}
+        for world in facts.worlds:
+            self.world_selector.ensure_map(world.world_id)
+            maps[world.world_id] = self.world_selector.world_map(world.world_id)
+        self.accepted.set_accepted(facts, maps)
+        robots = {r["id"]: r for r in self.catalog.get("robots", [])}
+        blocks = change_blocks(specification, robots, self.catalog.get("parameters", {}))
+        self.changes.set_blocks(blocks, "" if blocks else "Every robot runs its Default profile.")

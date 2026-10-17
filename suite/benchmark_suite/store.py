@@ -93,6 +93,32 @@ CREATE INDEX IF NOT EXISTS deletions_state ON deletions(state,requested_ns);
 """
 
 
+# Campaign states in the order the Campaigns table lists them with ``sort_by="attention"``.
+ATTENTION_ORDER = (
+    "RECOVERY_REQUIRED",
+    "BLOCKED",
+    "RUNNING",
+    "RETRYING",
+    "PAUSING",
+    "STOPPING",
+    "PAUSED",
+    "QUEUED",
+    "STOPPED",
+    "REPORTING",
+    "FINISHED",
+)
+ATTENTION_RANK = (
+    "CASE state "
+    + " ".join(f"WHEN '{state}' THEN {rank}" for rank, state in enumerate(ATTENTION_ORDER))
+    + f" ELSE {len(ATTENTION_ORDER)} END"
+)
+CAMPAIGN_SORT_KEYS = frozenset(
+    {"name", "state", "count", "report_state", "created_ns", "attention"}
+)
+# Metrics copied into attempt summaries (``results.query`` with ``summary``).
+SUMMARY_METRICS = ("coverage_percent", "simulation_elapsed", "distance_m")
+
+
 class Store:
     def __init__(self, workspace: Path):
         self.workspace = workspace.resolve()
@@ -331,12 +357,17 @@ class Store:
             if (
                 table != "campaigns"
                 or type(sort_by) is not str
-                or sort_by not in {"name", "state", "count", "report_state", "created_ns"}
+                or sort_by not in CAMPAIGN_SORT_KEYS
             ):
                 raise ContractError("sort_by", "Choose a campaign table column")
             direction = "DESC" if sort_descending else "ASC"
-            collation = " COLLATE NOCASE" if sort_by in {"name", "state", "report_state"} else ""
-            order = f"(state='FINISHED') ASC,{sort_by}{collation} {direction},queue_position,id"
+            if sort_by == "attention":
+                # Campaigns that need the researcher first, newest first within a state.
+                order = f"{ATTENTION_RANK} {direction},created_ns DESC,id"
+            else:
+                nocase = sort_by in {"name", "state", "report_state"}
+                collation = " COLLATE NOCASE" if nocase else ""
+                order = f"(state='FINISHED') ASC,{sort_by}{collation} {direction},queue_position,id"
         elif sort_descending:
             raise ContractError("sort_by", "Choose a column before setting the sort direction")
         terms: list[str] = []
@@ -385,6 +416,10 @@ class Store:
             selection = ",".join(("a." if table == "attempts" else "") + field for field in fields)
             if table == "attempts":
                 selection += ",e.robot_id,e.world_id,e.profile_id,e.profile_name,e.spawn_id,e.spawn_name,e.repetition"
+                # Values a run table shows without the metrics document; null when not recorded.
+                selection += "".join(
+                    f",json_extract(a.metrics,'$.{key}') {key}" for key in SUMMARY_METRICS
+                )
         page_where, page_arguments, page_offset = where, list(arguments), offset
         backwards = False
         if cursor is not None:

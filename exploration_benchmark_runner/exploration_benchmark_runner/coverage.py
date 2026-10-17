@@ -30,7 +30,7 @@ from zipfile import BadZipFile
 import numpy as np
 
 METRIC_VERSION = 1
-MILESTONES = (50.0, 75.0, 90.0, 95.0)
+MILESTONES = (25.0, 50.0, 75.0, 90.0, 95.0)  # T25 added 17 October 2026
 SAMPLE_INTERVAL = 1.0
 STALE_SECONDS = 5.0
 
@@ -248,7 +248,7 @@ class Coverage:
 
     def __init__(self, calculator):
         self.calculator = calculator
-        self.motion_sim = self.motion_wall = None
+        self.motion_sim = None
         self.last_sample_sim = None
         self.last_clock = None
         self.last_advance_wall = None
@@ -256,7 +256,7 @@ class Coverage:
         self.flags = set()
         self.baseline = None
         self.milestones = [
-            dict(percent=p, reached=False, simulation_elapsed=None, wall_elapsed=None)
+            dict(percent=p, reached=False, simulation_elapsed=None)
             for p in MILESTONES
         ]
         self.latest = dict(
@@ -278,7 +278,7 @@ class Coverage:
     def start_motion(self, simulation, wall, grid, received_wall, received_unix):
         if self.motion_sim is not None or self.frozen:
             return None
-        self.motion_sim, self.motion_wall = simulation, wall
+        self.motion_sim = simulation
         # Movement itself is evidence that the active simulation has advanced.
         # The captured baseline map must pass the same delivery-age policy.
         if self.last_advance_wall is None:
@@ -357,9 +357,6 @@ class Coverage:
             if self.motion_sim is not None
             else None
         )
-        elapsed_wall = (
-            max(0.0, wall - self.motion_wall) if self.motion_wall is not None else None
-        )
         crossed = []
         if status == "valid" and self.motion_sim is not None:
             for milestone in self.milestones:
@@ -367,7 +364,6 @@ class Coverage:
                     milestone.update(
                         reached=True,
                         simulation_elapsed=elapsed_sim,
-                        wall_elapsed=elapsed_wall,
                     )
                     crossed.append(dict(milestone))
         return dict(
@@ -375,7 +371,6 @@ class Coverage:
             simulation=simulation,
             wall_monotonic=wall,
             simulation_elapsed=elapsed_sim,
-            wall_elapsed=elapsed_wall,
             map_received_wall=received_wall,
             map_received_unix=received_unix,
             **self.latest,

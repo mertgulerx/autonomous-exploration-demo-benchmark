@@ -34,11 +34,12 @@ from .analysis import (
     tail_durations,
     with_navigation,
 )
-from .contracts import DATASET_VERSION, content_hash
+from .contracts import DATASET_VERSION, average_speed, content_hash
 from .datasets import files, iter_rows, materialize_manifest
 from .schemas import IDENTITIES, SCHEMAS
 from .storage import atomic_json, file_hash, load_object, sync_directory
 
+MILESTONE_PERCENTS = (25, 50, 75, 90, 95)  # coverage milestones (``coverage.MILESTONES``)
 SUMMARY_FIELDS = [
     ("repetition", pa.int32()),
     ("block_id", pa.string()),
@@ -58,11 +59,11 @@ SUMMARY_FIELDS = [
     ("motion_eligible", pa.bool_()),
     ("navigation_eligible", pa.bool_()),
     ("simulation_elapsed_seconds", pa.float64()),
-    ("wall_elapsed_seconds", pa.float64()),
     ("completion_seconds", pa.float64()),
     ("coverage_percent", pa.float64()),
     ("covered_m2", pa.float64()),
     ("distance_m", pa.float64()),
+    ("average_speed_mps", pa.float64()),
     ("cpu_average_percent", pa.float64()),
     ("rss_average_mib", pa.float64()),
     ("cpu_seconds", pa.float64()),
@@ -97,11 +98,7 @@ SUMMARY_FIELDS = [
     ("drift_p95_m", pa.float64()),
     ("incidents", pa.int64()),
     ("detail_json", pa.string()),
-] + [
-    (f"first_{percent}_{clock}_seconds", pa.float64())
-    for percent in (50, 75, 90, 95)
-    for clock in ("simulation", "wall")
-]
+] + [(f"first_{percent}_simulation_seconds", pa.float64()) for percent in MILESTONE_PERCENTS]
 
 SUMMARY_SCHEMA = pa.schema(
     [pa.field(name, typ, nullable=nullable) for name, typ, nullable in IDENTITIES]
@@ -364,7 +361,6 @@ def summarize(
     drift = quantiles(directory, "ground_truth", "odometry_drift_m")
     milestones = manifest.get("coverage", {}).get("milestones", [])
     sim = metrics.get("simulation_elapsed") if metrics.get("motion_started") else None
-    wall = metrics.get("wall_elapsed") if metrics.get("motion_started") else None
     completion = sim if outcome == "completed" else None
     tail = tail_durations(milestones, completion)
     resources = manifest.get("resource_summary", {})
@@ -396,13 +392,13 @@ def summarize(
         motion_eligible=bool(eligibility.get("motion")) and detector.gaps == 0,
         navigation_eligible=bool(eligibility.get("navigation")),
         simulation_elapsed_seconds=sim,
-        wall_elapsed_seconds=wall,
         completion_seconds=completion,
         coverage_percent=metrics.get("coverage_percent")
         if metrics.get("coverage_status") == "valid"
         else None,
         covered_m2=covered,
         distance_m=metrics.get("distance_m"),
+        average_speed_mps=average_speed(metrics.get("distance_m"), sim),
         cpu_average_percent=metrics.get("cpu_average_percent"),
         rss_average_mib=metrics.get("rss_average_mib"),
         cpu_seconds=metrics.get("cpu_seconds"),
@@ -441,11 +437,14 @@ def summarize(
         incidents=sum(incident_counts.values()),
         **navigation_counts(directory),
     )
+    for percent in MILESTONE_PERCENTS:  # runs recorded before T25 have no 25 % entry: unavailable
+        result[f"first_{percent}_simulation_seconds"] = None
     for item in milestones:
-        for clock in ("simulation", "wall"):
-            result[f"first_{int(item['percent'])}_{clock}_seconds"] = (
-                item.get(clock + "_elapsed") if item.get("reached") else None
-            )
+        if int(item["percent"]) not in MILESTONE_PERCENTS:
+            continue
+        result[f"first_{int(item['percent'])}_simulation_seconds"] = (
+            item.get("simulation_elapsed") if item.get("reached") else None
+        )
     detail = dict(
         schema_version=DATASET_VERSION,
         analysis_version=ANALYSIS_VERSION,
