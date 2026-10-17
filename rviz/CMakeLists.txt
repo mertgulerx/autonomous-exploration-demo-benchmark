@@ -89,6 +89,16 @@ install(FILES
   DESTINATION share/${PROJECT_NAME}
 )
 
+install(PROGRAMS
+  src/frontier_path_tracker.py
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+install(FILES
+  src/frontier_path_tracker.yaml
+  DESTINATION share/${PROJECT_NAME}/config
+)
+
 set(BENCHMARK_CONFIG_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../config")
 if(IS_DIRECTORY "${BENCHMARK_CONFIG_DIR}")
   install(DIRECTORY

@@ -44,10 +44,6 @@ RUN rm -rf /opt/benchmark_ws/rviz/test \
       -o -name CTestTestfile.cmake -o -name comparison_probe \
       -o -name parameter_editor_probe -o -name single_run_panel_probe \) \
       -exec rm -rf {} +
-RUN rm -f /opt/benchmark_ws/rviz/src/frontier_path_tracker.py \
-    /opt/benchmark_ws/rviz/src/frontier_path_tracker.yaml \
-    /opt/benchmark_ws/install/rviz_autonomous_exploration_benchmark/lib/rviz_autonomous_exploration_benchmark/frontier_path_tracker.py \
-    /opt/benchmark_ws/install/rviz_autonomous_exploration_benchmark/share/rviz_autonomous_exploration_benchmark/config/frontier_path_tracker.yaml
 COPY exploration_benchmark_robots /opt/benchmark_ws/exploration_benchmark_robots
 COPY exploration_benchmark_runner /opt/benchmark_ws/exploration_benchmark_runner
 COPY exploration_benchmark_interfaces /opt/benchmark_ws/exploration_benchmark_interfaces

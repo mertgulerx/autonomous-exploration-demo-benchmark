@@ -29,7 +29,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 import math
 import time
-from typing import Any
+from typing import Any, cast
 import uuid
 
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -54,6 +54,7 @@ from .gui_menus import show_tooltip
 from .gui_style import cell_text, duration, fixed, humanize, number, worker_values
 from .gui_support import Transport, stale_engine_message
 from .gui_theme import ThemeManager, snap
+from .gui_viewers import TITLES, Kind, RunViewers
 from .gui_widgets import (
     BODY,
     CARD_TITLE,
@@ -630,10 +631,22 @@ class Measurements(QtWidgets.QScrollArea):
 # ---------- run card ----------
 
 RUN_META = TextStyle(13, 400, 18, tabular=True)
+VIEWER_TIPS: dict[Kind, str] = {
+    "gazebo": (
+        "Open the Gazebo GUI on the selected run's simulation; it closes when the run ends. Pausing, moving or "
+        "deleting entities changes the run, and rendering adds host load: watch the real-time factor"
+    ),
+    "rviz": (
+        "Open RViz on the selected run (the navigation view without Exploration Control, with the traveled "
+        "path from when it opens; simulation time); it closes when the run ends. Rendering adds host load: "
+        "watch the real-time factor"
+    ),
+}
 
 
 class RunCard(Card):
-    """``.card.run``: the head (52 px, rule: view switch, attempt facts, Stop run) over the selected view.
+    """``.card.run``: the head (52 px, rule: view switch, attempt facts, Launch RViz, Stop run) over the selected
+    view.
     Without a run it shows only a centred message in ``text.secondary``."""
 
     def __init__(
@@ -654,6 +667,12 @@ class RunCard(Card):
         self.views.changed.connect(self.show_view)
         self.ended = StatusBadge(themes, None, self)
         self.meta = TextLine(themes, "", RUN_META, "text.secondary", self)
+        self.gazebo = Button(themes, "Launch Gazebo", icon="aupright", parent=self)
+        self.rviz = Button(themes, "Launch RViz", icon="aupright", parent=self)
+        self.viewer_buttons: dict[Kind, Button] = {"gazebo": self.gazebo, "rviz": self.rviz}
+        for kind, button in self.viewer_buttons.items():
+            button.setToolTip(VIEWER_TIPS[kind])
+            button.setEnabled(False)
         self.stop = Button(themes, "Stop run", icon="stop", variant="danger", parent=self)
         self.stop.setToolTip(
             "End the selected run; its data is kept and campaign reports exclude it"
@@ -669,7 +688,7 @@ class RunCard(Card):
 
     def set_run_shown(self, shown: bool) -> None:
         self.has_run = shown
-        for widget in (self.views, self.meta, self.stop):
+        for widget in (self.views, self.meta, self.gazebo, self.rviz, self.stop):
             widget.setVisible(shown)
         self.ended.setVisible(shown and self.ended.look is not None)
         for index, body in enumerate(self.bodies):
@@ -708,12 +727,21 @@ class RunCard(Card):
         place(self.views, left + 12, top + (51 - 32) / 2, seg, 32)
         stop = self.stop.natural_width()
         place(self.stop, left + width - 12 - stop, top + (51 - 32) / 2, stop, 32)
+        right = left + width - 12 - stop
+        for button in (
+            self.rviz,
+            self.gazebo,
+        ):  # right to left: Launch Gazebo, Launch RViz, Stop run
+            natural = button.natural_width()
+            right -= 8 + natural
+            place(button, right, top + (51 - 32) / 2, natural, 32)
+        actions = left + width - 12 - right
         x = left + 12 + seg + 16
         if self.ended.isVisible() and self.ended.look is not None:
             badge = self.ended.look.width
             place(self.ended, x, top + (51 - 22) / 2, badge, 22)
             x += badge + 12
-        place(self.meta, x, top + (51 - 18) / 2, max(0.0, left + width - 12 - stop - 16 - x), 18)
+        place(self.meta, x, top + (51 - 18) / 2, max(0.0, left + width - 12 - actions - 16 - x), 18)
         body_top = top + 52
         for body in self.bodies:
             body.setGeometry(
@@ -864,6 +892,10 @@ class MonitorPage(QtWidgets.QWidget):
         self.event_view = EventView(themes, self.events, self.slots)
         self.card = RunCard(themes, self.map_pane, self.log_view, self.event_view)
         self.card.stop.clicked.connect(self.stop_selected_run)
+        self.viewers = RunViewers(self)
+        self.viewers.done.connect(self._viewer_done)
+        self.card.gazebo.clicked.connect(lambda: self.launch_viewer("gazebo"))
+        self.card.rviz.clicked.connect(lambda: self.launch_viewer("rviz"))
         layout.addWidget(self.card, 1)
         self.events.changed.connect(self._refresh_strip)  # readiness details come from events
         self.monitor_timer = QtCore.QTimer(self)
@@ -895,6 +927,16 @@ class MonitorPage(QtWidgets.QWidget):
     def run_of(self, identity: str | None) -> dict[str, Any] | None:
         return next((r for r in self.active_runs() if r["attempt"]["id"] == identity), None)
 
+    def robot_footprint(self, robot_id: str) -> tuple[tuple[float, float], ...]:
+        """The robot's catalog footprint (robot frame, metres); empty when the catalog has none."""
+        robot: Mapping[str, Any] = next(
+            (r for r in self.catalog.get("robots", []) if r["id"] == robot_id), {}
+        )
+        try:
+            return tuple((float(x), float(y)) for x, y in robot.get("footprint") or [])
+        except (TypeError, ValueError):
+            return ()
+
     def robot_labels(self) -> dict[str, str]:
         return {r["id"]: r.get("label", r["id"]) for r in self.catalog.get("robots", [])}
 
@@ -905,6 +947,9 @@ class MonitorPage(QtWidgets.QWidget):
             if isinstance(row, dict) and row.get("id"):
                 self.campaign_names[row["id"]] = row.get("name", "")
         self.stop_requested_runs |= {r["attempt"]["id"] for r in active if r.get("stop_requested")}
+        live = {r["attempt"]["id"] for r in active}
+        for attempt_id in self.viewers.attempts() - live:  # a run's viewers close when the run ends
+            self.viewers.stop(attempt_id)
         if self.active_page:
             self.follow_single_worker()
         self._update_head()  # a new campaign resets the slots before the active runs' are added
@@ -1027,13 +1072,38 @@ class MonitorPage(QtWidgets.QWidget):
 
     def update_stop_button(self) -> None:
         active = self.selected_run()
+        live = active is not None and active["attempt"]["phase"] in ("STARTING", "READY", "RUNNING")
         self.card.stop.setEnabled(
             active is not None
-            and active["attempt"]["phase"] in ("STARTING", "READY", "RUNNING")
+            and live
             and not active.get("stop_requested")
             and not active["attempt"].get("discard_intent")
             and active["attempt"]["id"] not in self.stop_pending
         )
+        for kind, button in self.card.viewer_buttons.items():
+            button.setEnabled(
+                active is not None
+                and live
+                and (kind, active["attempt"]["id"]) not in self.viewers.pending
+            )
+
+    def launch_viewer(self, kind: Kind) -> None:
+        active = self.selected_run()
+        if active is None:
+            return
+        robot = str(active["experiment"]["robot_id"])
+        title = "Run · " + self.stop_context(active) + " - " + TITLES[kind]
+        self.viewers.launch(kind, active["attempt"], robot, title)
+        self.update_stop_button()
+        self.notify.emit(f"Starting {TITLES[kind]}…", "neutral", 4000)
+
+    def _viewer_done(self, kind: str, attempt_id: str, error: str) -> None:
+        self.viewers.finished(cast(Kind, kind), attempt_id, error)
+        if self.run_of(attempt_id) is None:
+            self.viewers.stop(attempt_id)  # the run ended while the viewer started
+        self.update_stop_button()
+        if error:
+            self.notify.emit(error, "bad", 0)
 
     def stop_context(self, active: Mapping[str, Any]) -> str:
         experiment, attempt = active["experiment"], active["attempt"]
@@ -1076,7 +1146,7 @@ class MonitorPage(QtWidgets.QWidget):
         # reply is ignored, so at most one request is outstanding.
         self.monitor_id = self.selected_attempt
         self.monitor_cursor = PathCursor()
-        self.live = LiveLayers()
+        self.live = LiveLayers(footprint=self.robot_footprint(active["experiment"]["robot_id"]))
         self.layer_revisions = {}
         self.reference_mismatch = False
         self.live_map.set_layers(self.live)

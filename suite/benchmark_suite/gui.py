@@ -112,7 +112,7 @@ class Window(QtWidgets.QMainWindow):
         # Window-wide layers, bottom to top: dialogs, popups, toasts, keyboard focus.
         self.modal = ModalHost(self.themes, self)
         self.popups = PopupHost(self.themes, self)
-        self.toasts = ToastArea(self.themes, self)
+        self.toasts = ToastArea(self.themes, self, top=self.topbar.height() + 16)
         self.focus_ring = FocusRing(self.themes, self)
         self.go("campaigns")
         geometry = self.settings.value("geometry")
@@ -250,7 +250,7 @@ class Window(QtWidgets.QMainWindow):
             if kind == "bad"
             else "neutral"
         )
-        self.notify(text, tone, timeout_ms or 6000)
+        self.notify(text, tone, timeout_ms or 5000)
 
     def open_worker(self, attempt_id: str) -> None:
         """A Live on the map tile: the Monitor with that run selected."""
@@ -291,8 +291,8 @@ class Window(QtWidgets.QMainWindow):
     def navigate(self, key: str) -> None:
         self.go(self._campaign_page if key == "campaigns" else key)
 
-    def notify(self, text: str, kind: ToastKind = "neutral", timeout_ms: int = 6000) -> None:
-        """A toast (the design has no status bar); errors (``bad``) stay until dismissed."""
+    def notify(self, text: str, kind: ToastKind = "neutral", timeout_ms: int = 5000) -> None:
+        """A toast (the design has no status bar); errors (``bad``) fade after 5 s; all are dismissible."""
         self.toasts.show_message(text, kind, timeout_ms)
 
     def refresh_status(self) -> None:
@@ -663,6 +663,7 @@ class Window(QtWidgets.QMainWindow):
         self.settings.sync()
         self.poll.stop()
         self.monitor.deactivate()
+        self.monitor.viewers.stop_all()
         self.results_page.close_timers()
         if self.transport.close():
             event.accept()

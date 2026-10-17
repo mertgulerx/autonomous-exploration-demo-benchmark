@@ -1,0 +1,22 @@
+frontier_path_tracker:
+  ros__parameters:
+    # TF frames used to read the robot pose and accumulate the traversed path in map coordinates.
+    global_frame: map
+    robot_base_frame: base_footprint
+
+    # Latched path topic shown in RViz for the robot's completed trajectory.
+    path_topic: /explore/traversed_path
+    package_topics:
+      - "frontier_exploration_ros2_mrtsp:/explore/traversed_path"
+      - "frontier_exploration_ros2_nearest:/explore/traversed_path/frontier_exploration_ros2_nearest"
+      - "m_explore_ros2:/explore/traversed_path/m_explore_ros2"
+      - "nav2_wavefront_frontier_exploration:/explore/traversed_path/nav2_wavefront_frontier_exploration"
+      - "roadmap_explorer:/explore/traversed_path/roadmap_explorer"
+    active_package_topic: /explore/path_tracker/active_package
+    initial_pose_topic: /explore/path_tracker/initial_pose
+    default_package: frontier_exploration_ros2_mrtsp
+    reset_topic: /explore/reset_traveled_path
+
+    # Sampling guard to keep the path detailed without publishing duplicate poses.
+    update_rate_hz: 5.0
+    min_translation_delta_m: 0.05

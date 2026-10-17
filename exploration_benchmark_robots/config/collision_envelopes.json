@@ -3,6 +3,70 @@
   "planar_margin_m": 0.005,
   "spawn_clearance_m": 0.01,
   "robots": {
+    "tb3_burger": {
+      "root_frame": "base_footprint",
+      "lower": [
+        -0.10200000000000001,
+        -0.08902627592784,
+        -0.010007156477147137
+      ],
+      "upper": [
+        0.038000000000000006,
+        0.08902627592784,
+        0.1885
+      ],
+      "nominal_footprint": [
+        [
+          -0.10200000000000001,
+          -0.08902627592784
+        ],
+        [
+          -0.10200000000000001,
+          0.08902627592784
+        ],
+        [
+          0.038000000000000006,
+          0.08902627592784
+        ],
+        [
+          0.038000000000000006,
+          -0.08902627592784
+        ]
+      ],
+      "joint_pose": "Zero positions; collision geometry of the simulated turtlebot3_gazebo model.sdf (links posed in the model frame)"
+    },
+    "tb3_waffle_pi": {
+      "root_frame": "base_footprint",
+      "lower": [
+        -0.1965,
+        -0.15302627592784,
+        -0.010007156477147137
+      ],
+      "upper": [
+        0.0685,
+        0.15302627592784,
+        0.1385
+      ],
+      "nominal_footprint": [
+        [
+          -0.1965,
+          -0.15302627592784
+        ],
+        [
+          -0.1965,
+          0.15302627592784
+        ],
+        [
+          0.0685,
+          0.15302627592784
+        ],
+        [
+          0.0685,
+          -0.15302627592784
+        ]
+      ],
+      "joint_pose": "Zero positions; collision geometry of the simulated turtlebot3_gazebo model.sdf (links posed in the model frame)"
+    },
     "tb4_standard": {
       "root_frame": "base_footprint",
       "lower": [

@@ -336,7 +336,7 @@ class CampaignBuilder(QtWidgets.QWidget):
         self.footer.relayout()
 
     def set_message(self, text: str, kind: str = "error") -> None:
-        """A toast (D8): errors stay until dismissed; progress and success fade."""
+        """A toast (D8): errors fade after 5 s, as other messages by default; all are dismissible."""
         self.message.emit(text, {"error": "bad", "success": "ok"}.get(kind, "neutral"))
 
     def next_step(self) -> None:

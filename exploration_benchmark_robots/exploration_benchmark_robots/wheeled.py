@@ -192,8 +192,6 @@ def prepare_wheeled(profile, scenario, directory, lookup, generated, bridge):
         save_description(plant, directory, generated)
     elif adapter == "rosbot":
         prepare_rosbot(profile, directory, lookup, generated, bridge)
-    elif adapter == "clearpath":
-        prepare_clearpath(profile, directory, lookup, generated, bridge)
     elif adapter == "husarion_ugv":
         prepare_ugv(profile, directory, lookup, generated, bridge)
     else:
@@ -204,20 +202,16 @@ def prepare_rosbot(profile, directory, lookup, generated, bridge):
     import xacro
 
     model = profile["model"]
-    drive_name = (
-        "mecanum_drive_controller"
-        if model == "rosbot_xl"
-        else "differential_drive_controller"
-    )
+    drive_name = "differential_drive_controller"
     source = Path(lookup("rosbot_controller")) / "config" / model / "controllers.yaml"
     content = (
         source.read_text()
         .replace("<namespace>/", "")
         .replace("<manipulator_state>", "inactive")
     )
-    content = content.replace(
-        "<mecanum>", "True" if model == "rosbot_xl" else "False"
-    ).replace("<drive_controller>", drive_name)
+    content = content.replace("<mecanum>", "False").replace(
+        "<drive_controller>", drive_name
+    )
     controls = yaml.safe_load(content)
     drive = controls["/**"][drive_name]["ros__parameters"]
     drive.update(use_sim_time=True, enable_odom_tf=True, base_frame_id="base_footprint")
@@ -234,7 +228,7 @@ def prepare_rosbot(profile, directory, lookup, generated, bridge):
         components_config=str(
             share / "config" / model / (profile["configuration"] + ".yaml")
         ),
-        mecanum="True" if model == "rosbot_xl" else "False",
+        mecanum="False",
     )
     plant = ET.fromstring(
         xacro.process_file(
@@ -278,86 +272,6 @@ def prepare_rosbot(profile, directory, lookup, generated, bridge):
         generated["odometry_provenance"] = (
             "Native ROSbot EKF: measured wheel velocities and IMU yaw/rate; raw wheel metrics retained"
         )
-    save_description(plant, directory, generated)
-
-
-def prepare_clearpath(profile, directory, lookup, generated, bridge):
-    import xacro
-    from clearpath_generator_common.description.generator import DescriptionGenerator
-
-    setup = directory / "vendor_setup"
-    setup.mkdir()
-    model = profile["model"]
-    control = profile["native_drive"]
-    robot = dict(
-        serial_number=model + "-0000",
-        version=0,
-        system=dict(namespace=""),
-        platform=dict(drivetrain=dict(control=control)),
-        sensors=dict(
-            lidar2d=[
-                dict(
-                    model="hokuyo_ust",
-                    parent="default_mount",
-                    xyz=[0.0, 0.0, 0.04],
-                    rpy=[0.0, 0.0, 0.0],
-                )
-            ]
-        ),
-    )
-    (setup / "robot.yaml").write_text(yaml.safe_dump(robot, sort_keys=False))
-    DescriptionGenerator(str(setup)).generate()
-    description = setup / "robot.urdf.xacro"
-    xml = ET.parse(description)
-    module = xml.getroot().find("{http://www.ros.org/wiki/xacro}hokuyo_ust")
-    # Package one explicit UST configuration, rather than the generator's
-    # generic 360-degree defaults. These are the vendor sensor macro defaults.
-    module.attrib.update(
-        ang_res="0.25",
-        min_ang="-2.35619",
-        max_ang="2.35619",
-        min_range="0.06",
-        max_range="30.0",
-        update_rate="40",
-    )
-    ET.register_namespace("xacro", "http://www.ros.org/wiki/xacro")
-    xml.write(description, encoding="unicode")
-    source = (
-        Path(lookup("clearpath_control"))
-        / "config"
-        / model
-        / "control"
-        / (control + ".yaml")
-    )
-    controls = yaml.safe_load(source.read_text())
-    drive = controls["platform_velocity_controller"]["ros__parameters"]
-    drive.update(use_sim_time=True, base_frame_id="base_footprint", enable_odom_tf=True)
-    controls["controller_manager"]["ros__parameters"]["use_sim_time"] = True
-    controller_file = directory / "controllers.yaml"
-    controller_file.write_text(yaml.safe_dump(controls, sort_keys=False))
-    plant = ET.fromstring(
-        xacro.process_file(
-            str(description),
-            mappings=dict(
-                is_sim="true", namespace="", gazebo_controllers=str(controller_file)
-            ),
-        ).toxml()
-    )
-    ensure_footprint(plant)
-    replace_controller_file(plant, controller_file)
-    sensor_interfaces(plant, bridge, "lidar2d_0")
-    remap_controller(plant, "platform_velocity_controller")
-    generated["controllers"] = [
-        "joint_state_broadcaster",
-        "platform_velocity_controller",
-    ]
-    generated["command_topic"] = "/platform_velocity_controller/" + (
-        "reference" if control.startswith("omni") else "cmd_vel"
-    )
-    generated["odometry_provenance"] = (
-        "Native Clearpath closed-loop wheel controller feedback"
-    )
-    generated["vendor_setup"] = str(setup)
     save_description(plant, directory, generated)
 
 

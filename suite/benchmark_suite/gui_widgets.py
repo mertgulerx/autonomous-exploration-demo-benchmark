@@ -1703,29 +1703,35 @@ TOAST_ICONS = {
 
 
 class Toast(Themed):
-    """One message (HANDOFF §7.14): card fill, radius 8, padding 10 14, state icon, 13 px body text."""
+    """One message (HANDOFF §7.14): card fill, radius 8, padding 10 10 10 14, state icon, 13 px body text and a
+    dismiss button."""
 
     dismissed = QtCore.Signal(object)
 
-    def __init__(self, themes: ThemeManager, text: str, kind: ToastKind, persistent: bool) -> None:
+    def __init__(self, themes: ThemeManager, text: str, kind: ToastKind) -> None:
         super().__init__(themes)
-        self.text, self.kind, self.persistent = text, kind, persistent
+        self.text, self.kind = text, kind
+        self.timer = QtCore.QTimer(self)
+        self.timer.setSingleShot(True)
+        self.timer.timeout.connect(lambda: self.dismissed.emit(self))
         row = QtWidgets.QHBoxLayout(self)
-        row.setContentsMargins(14 + 16 + 10, 10, 10 if persistent else 14, 10)
+        row.setContentsMargins(14 + 16 + 10, 10, 10, 10)
         row.setSpacing(8)
         self.label = QtWidgets.QLabel(text)
         self.label.setWordWrap(True)
         self.label.setFont(font(13))
-        self.label.setMaximumWidth(480 - 14 - 16 - 10 - (10 + 28 + 8 if persistent else 14))
+        self.label.setMaximumWidth(480 - 14 - 16 - 10 - (10 + 28 + 8))
         row.addWidget(self.label, 1)
-        if persistent:
-            close = Button(themes, icon="x", variant="ghost", small=True)
-            close.setToolTip("Dismiss")
-            close.setAccessibleName("Dismiss message")
-            close.clicked.connect(lambda: self.dismissed.emit(self))
-            row.addWidget(close, 0, QtCore.Qt.AlignmentFlag.AlignTop)
+        close = Button(themes, icon="x", variant="ghost", small=True)
+        close.setToolTip("Dismiss")
+        close.setAccessibleName("Dismiss message")
+        close.clicked.connect(lambda: self.dismissed.emit(self))
+        row.addWidget(close, 0, QtCore.Qt.AlignmentFlag.AlignTop)
         self.setAccessibleName(text)
         self.restyle()
+
+    def restart(self, timeout_ms: int) -> None:
+        self.timer.start(timeout_ms)
 
     def restyle(self, *_: object) -> None:
         self.label.setStyleSheet(f"color: {self.theme.qss('text.body')}; background: transparent;")
@@ -1744,15 +1750,20 @@ class Toast(Themed):
 
 
 class ToastArea(Themed):
-    """Bottom-right stack of toasts, 24 px from the window edges, 8 px apart, with the popup shadow; errors stay
-    until dismissed. The area itself lets clicks through; only its toasts take them."""
+    """Top-right stack of toasts, newest first: 24 px from the window's right edge, ``top`` px from its top (under
+    the top bar), 8 px apart. Every toast fades after its timeout (errors after ``ERROR_MS``) and has a
+    dismiss button; a repeated message restarts the shown one instead of stacking a copy. The area only paints
+    the toasts' popup shadows and lets clicks through; the toasts are the window's children, so they take
+    clicks."""
 
     LIMIT = 5
+    ERROR_MS = 5000
 
-    def __init__(self, themes: ThemeManager, window: QtWidgets.QWidget) -> None:
+    def __init__(self, themes: ThemeManager, window: QtWidgets.QWidget, *, top: int = 24) -> None:
         super().__init__(themes, window)
         self.window_widget = window
-        self.toasts: list[Toast] = []
+        self.top = top
+        self.toasts: list[Toast] = []  # newest first
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_NoSystemBackground)
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         window.installEventFilter(self)
@@ -1765,7 +1776,7 @@ class ToastArea(Themed):
         painter = QtGui.QPainter(self)
         for toast in self.toasts:
             if toast.isVisible():
-                paint_popup_shadow(painter, toast.geometry(), 8, self.theme)
+                paint_popup_shadow(painter, toast.geometry().translated(-self.pos()), 8, self.theme)
 
     def restyle(self, *_: object) -> None:
         self._layout()
@@ -1776,16 +1787,24 @@ class ToastArea(Themed):
             self._layout()
         return False
 
-    def show_message(self, text: str, kind: ToastKind = "neutral", timeout_ms: int = 6000) -> Toast:
-        persistent = kind == "bad"
-        toast = Toast(self.themes, text, kind, persistent)
-        toast.setParent(self)
+    def show_message(self, text: str, kind: ToastKind = "neutral", timeout_ms: int = 5000) -> Toast:
+        timeout = self.ERROR_MS if kind == "bad" else timeout_ms
+        shown = next((t for t in self.toasts if t.text == text and t.kind == kind), None)
+        if (
+            shown is not None
+        ):  # the same message again: keep one, newest first, with a fresh timeout
+            self.toasts.remove(shown)
+            self.toasts.insert(0, shown)
+            shown.restart(timeout)
+            self._layout()
+            return shown
+        toast = Toast(self.themes, text, kind)
+        toast.setParent(self.window_widget)
         toast.dismissed.connect(self.dismiss)
-        self.toasts.append(toast)
+        self.toasts.insert(0, toast)
         while len(self.toasts) > self.LIMIT:
-            self.dismiss(self.toasts[0])
-        if not persistent:
-            QtCore.QTimer.singleShot(timeout_ms, toast, lambda: self.dismiss(toast))
+            self.dismiss(self.toasts[-1])
+        toast.restart(timeout)
         toast.show()
         self._layout()
         return toast
@@ -1793,6 +1812,7 @@ class ToastArea(Themed):
     def dismiss(self, toast: object) -> None:
         if isinstance(toast, Toast) and toast in self.toasts:
             self.toasts.remove(toast)
+            toast.timer.stop()
             toast.hide()
             toast.deleteLater()
             self._layout()
@@ -1820,19 +1840,16 @@ class ToastArea(Themed):
         height = sum(size.height() for size in sizes) + 8 * (len(sizes) - 1)
         window = self.window_widget.rect()
         margin = self.margin()
-        self.setGeometry(
-            window.right() - 24 - width + 1 - margin,
-            window.bottom() - 24 - height + 1 - margin,
-            width + 2 * margin,
-            height + 2 * margin,
-        )
-        y = margin + height
-        for toast, size in zip(reversed(self.toasts), reversed(sizes), strict=True):
-            y -= size.height()
-            toast.setGeometry(margin + width - size.width(), y, size.width(), size.height())
-            y -= 8
+        left = window.right() - 24 - width + 1
+        self.setGeometry(left - margin, self.top - margin, width + 2 * margin, height + 2 * margin)
         self.show()
         self.raise_()
+        y = self.top
+        for toast, size in zip(self.toasts, sizes, strict=True):
+            toast.setGeometry(left + width - size.width(), y, size.width(), size.height())
+            toast.raise_()
+            y += size.height() + 8
+        self.update()
         for ring in self.window_widget.findChildren(FocusRing):
             ring.raise_()
 

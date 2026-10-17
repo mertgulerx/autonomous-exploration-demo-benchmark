@@ -5,7 +5,7 @@ robots:
     id: mogi
     label: MOGI
     family: mogi
-    version: 1
+    version: 2
     adapter: mogi
     model: mogi_bot
     packages:
@@ -14,7 +14,8 @@ robots:
     - bookstore
     - corridor
     - warehouse
-    max_linear_speed: 0.8
+    max_linear_speed: 1.0
+    native_max_linear_speed: 0.8
     max_angular_speed: 1.0
     max_lateral_speed: 0.0
     linear_acceleration: 1.0
@@ -48,7 +49,7 @@ robots:
     id: tb3_burger
     label: TurtleBot3 Burger
     family: turtlebot3
-    version: 3
+    version: 4
     adapter: turtlebot3
     model: turtlebot3_burger
     packages:
@@ -64,14 +65,14 @@ robots:
     linear_acceleration: 1.0
     angular_acceleration: 3.2
     footprint:
-    - - -0.105
-      - -0.105
-    - - -0.105
-      - 0.105
-    - - 0.105
-      - 0.105
-    - - 0.105
-      - -0.105
+    - - -0.107
+      - -0.094
+    - - -0.107
+      - 0.094
+    - - 0.043
+      - 0.094
+    - - 0.043
+      - -0.094
     spawn_z: 0.01
     spawn_z_by_world:
       bookstore: 0.04
@@ -91,11 +92,13 @@ robots:
     limits_source: Native Gazebo DiffDrive linear acceleration (1 m/s^2); official
       Jazzy navigation angular limits and manufacturer linear speed bound. Native
       simulation physics step (1 ms) preserves the 200 Hz IMU.
+    footprint_source: Native zero-joint collision envelope plus 5 mm planar margin;
+      config/collision_envelopes.json
   tb3_waffle_pi:
     id: tb3_waffle_pi
     label: TurtleBot3 Waffle Pi
     family: turtlebot3
-    version: 3
+    version: 4
     adapter: turtlebot3
     model: turtlebot3_waffle_pi
     packages:
@@ -111,14 +114,14 @@ robots:
     linear_acceleration: 1.0
     angular_acceleration: 3.2
     footprint:
-    - - -0.17
-      - -0.16
-    - - -0.17
-      - 0.16
-    - - 0.17
-      - 0.16
-    - - 0.17
-      - -0.16
+    - - -0.2015
+      - -0.158
+    - - -0.2015
+      - 0.158
+    - - 0.0735
+      - 0.158
+    - - 0.0735
+      - -0.158
     spawn_z: 0.01
     spawn_z_by_world:
       bookstore: 0.04
@@ -138,6 +141,8 @@ robots:
     limits_source: Native Gazebo DiffDrive linear acceleration (1 m/s^2); official
       Jazzy navigation angular limits and manufacturer linear speed bound. Native
       simulation physics step (1 ms) preserves the 200 Hz IMU.
+    footprint_source: Native zero-joint collision envelope plus 5 mm planar margin;
+      config/collision_envelopes.json
   tb4_standard:
     id: tb4_standard
     label: TurtleBot4 Standard
@@ -187,7 +192,7 @@ robots:
       config/collision_envelopes.json
   rosbot_pro:
     id: rosbot_pro
-    label: ROSbot 3 PRO
+    label: Husarion ROSbot 3 PRO
     family: rosbot
     version: 2
     adapter: rosbot
@@ -244,65 +249,6 @@ robots:
       min_z: -0.01
       max_z: 0.2065
     measurement_odom_topic: /robot/wheel_odom
-  rosbot_xl:
-    id: rosbot_xl
-    label: ROSbot XL
-    family: rosbot
-    version: 2
-    adapter: rosbot
-    model: rosbot_xl
-    packages:
-    - rosbot_description
-    - rosbot_controller
-    - rosbot_gazebo
-    - husarion_components_description
-    - laser_filters
-    worlds:
-    - bookstore
-    - corridor
-    - warehouse
-    max_linear_speed: 1.1
-    max_angular_speed: 3.14
-    max_lateral_speed: 1.0
-    linear_acceleration: 0.6
-    angular_acceleration: 3.0
-    footprint:
-    - - -0.178
-      - -0.165
-    - - -0.178
-      - 0.165
-    - - 0.166
-      - 0.165
-    - - 0.166
-      - -0.165
-    spawn_z: 0.01
-    physics_step: 0.01
-    kinematics: omnidirectional
-    required_streams:
-    - clock
-    - scan
-    - odom
-    - imu
-    lidar:
-      label: RPLIDAR S3
-      range_min: 0.05
-      range_max: 40.0
-    limits_source: Pinned rosbot_controller/config/rosbot_xl/controllers.yaml closed-loop
-      mecanum_drive_controller
-    configuration: autonomy
-    angular_deceleration: 3.0
-    lateral_acceleration: 0.4
-    lateral_deceleration: 0.8
-    linear_deceleration: 1.0
-    footprint_source: Native zero-joint collision envelope plus 5 mm planar margin;
-      config/collision_envelopes.json
-    self_filter:
-      min_x: -0.178
-      max_x: 0.166
-      min_y: -0.165
-      max_y: 0.165
-      min_z: -0.01
-      max_z: 0.2643
   lynx:
     id: lynx
     label: Husarion Lynx
@@ -360,54 +306,3 @@ robots:
     startup_trigger_service: /hardware/e_stop_reset
     readiness_boolean_topic: /hardware/e_stop
     readiness_boolean_expected: false
-  j100:
-    id: j100
-    label: Jackal J100
-    family: clearpath
-    version: 1
-    adapter: clearpath
-    model: j100
-    packages:
-    - clearpath_gz
-    - clearpath_generator_gz
-    - clearpath_platform_description
-    - clearpath_sensors_description
-    - clearpath_control
-    - clearpath_generator_common
-    worlds:
-    - bookstore
-    - corridor
-    - warehouse
-    max_linear_speed: 2.0
-    max_angular_speed: 4.0
-    max_lateral_speed: 0.0
-    linear_acceleration: 2.0
-    angular_acceleration: 4.0
-    footprint:
-    - - -0.234
-      - -0.2128
-    - - -0.234
-      - 0.2128
-    - - 0.234
-      - 0.2128
-    - - 0.234
-      - -0.2128
-    spawn_z: 0.0735
-    physics_step: 0.01
-    kinematics: differential
-    required_streams:
-    - clock
-    - scan
-    - odom
-    - imu
-    lidar:
-      label: Hokuyo UST (manufacturer-supported module)
-      range_min: 0.06
-      range_max: 30.0
-    limits_source: clearpath_control/config/j100/control/diff_4wd.yaml native controller
-      envelope
-    native_drive: diff_4wd
-    linear_deceleration: 4.0
-    angular_deceleration: 4.0
-    footprint_source: Native zero-joint collision envelope plus 5 mm planar margin;
-      config/collision_envelopes.json

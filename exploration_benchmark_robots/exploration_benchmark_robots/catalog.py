@@ -36,6 +36,9 @@ def resolve_physical_settings(profile, overrides=None):
     defaults = dict(movement_speed=profile["max_linear_speed"],
                     turning_speed=profile["max_angular_speed"],
                     lidar_range=profile["lidar"]["range_max"])
+    # The course model's own values; only settings that differ from them change its files.
+    native = dict(defaults,
+                  movement_speed=profile.get("native_max_linear_speed", profile["max_linear_speed"]))
     requested = {}
     for name, value in overrides.items():
         if name not in defaults:
@@ -47,8 +50,10 @@ def resolve_physical_settings(profile, overrides=None):
         requested[name] = float(value)
     if profile["id"] == "mogi":
         effective = dict(defaults, **requested)
-        profile["benchmark_settings"] = dict(defaults=defaults, requested=requested, effective=effective)
-        profile["benchmark_overrides"] = {k: v for k, v in requested.items() if v != defaults[k]}
+        profile["benchmark_settings"] = dict(
+            defaults=defaults, requested=requested, effective=effective, native=native
+        )
+        profile["benchmark_overrides"] = {k: v for k, v in effective.items() if v != native[k]}
         profile["max_linear_speed"] = effective["movement_speed"]
         profile["max_angular_speed"] = effective["turning_speed"]
         profile["lidar"]["range_max"] = effective["lidar_range"]

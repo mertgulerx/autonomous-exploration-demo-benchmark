@@ -33,7 +33,7 @@ from . import gui_icons
 from .contracts import next_spawn_name
 from .gui_cells import PaintedColumn, PaintedTable
 from .gui_controls import KeySelect
-from .gui_maps import WALL, Placement, WorldMap, paint_spawn, paint_spawn_label
+from .gui_maps import FREE, WALL, Placement, WorldMap, paint_spawn, paint_spawn_label
 from .gui_mapview import LiveMap, MapControls
 from .gui_menus import Menu
 from .gui_style import fixed
@@ -380,7 +380,7 @@ class HeadingDial(Themed):
         painter.drawEllipse(QtCore.QRectF(0.5, 0.5, 55, 55))
         angle = math.radians(self.degrees)
         c, s = math.cos(angle), -math.sin(angle)
-        accent = self.color("accent.primary")
+        accent = self.color("data.path")  # the edited pose's colour on the map
         painter.setPen(QtGui.QPen(accent, 2))
         painter.drawLine(QtCore.QPointF(28, 28), QtCore.QPointF(28 + 22 * c, 28 + 22 * s))
         painter.setPen(QtCore.Qt.PenStyle.NoPen)
@@ -515,6 +515,15 @@ class SpawnMap(LiveMap):
         self._moved = False
         self._turning = False
 
+    def set_world(self, world: WorldMap | None) -> None:
+        """Free cells read as the Monitor shows them fully explored (``data.coverage`` at the explored
+        opacity over the free colour)."""
+        super().set_world(world)
+        self.layers.explored = (
+            None if world is None else np.where(world.pixels == FREE, 255, 0).astype(np.uint8)
+        )
+        self._base = None
+
     def set_scene(
         self,
         poses: list[Pose],
@@ -629,7 +638,7 @@ class SpawnMap(LiveMap):
             if pose.key == self.current_key and self.pose is not None:
                 continue
             point = placement.point(pose.x, pose.y)
-            paint_spawn(painter, point, placement.heading(pose.yaw), theme)
+            paint_spawn(painter, point, placement.heading(pose.yaw), theme, picked=True)
             paint_spawn_label(painter, placement, point, pose.name, theme, size=11, bold=False)
         self._paint_pose(painter, placement)
         painter.restore()
@@ -681,13 +690,13 @@ class SpawnMap(LiveMap):
                 draw_text(painter, x, y - 6, text, TICK, color)
 
     def _paint_pose(self, painter: QtGui.QPainter, placement: Placement) -> None:
-        """The edited pose: the footprint (``accent.primary`` at 18 % with a 1.5 px outline), the heading
-        line (34 px, 2 px) and the handle (r 5, card fill), and its name centred above."""
+        """The edited pose in the Monitor's robot colour (``data.path``): the footprint (18 % fill, 1.5 px
+        outline), the heading line (34 px, 2 px) and the handle (r 5, card fill), and its name centred above."""
         if self.pose is None:
             return
         x, y, yaw = self.pose
         theme = self.theme
-        accent = theme.color("accent.primary")
+        accent = theme.color("data.path")
         centre = placement.point(x, y)
         painter.save()
         painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
@@ -746,7 +755,7 @@ class LegendLine(Themed):
         painter.fillRect(QtCore.QRect(0, 0, self.width(), 1), theme.color("border.line"))
         top = 1 + (39 - 18) / 2
         secondary = theme.color("text.secondary")
-        accent = theme.color("accent.primary")
+        accent = theme.color("data.path")  # the edited pose's colour
         painter.save()
         painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
         y = round(1 + (39 - 14) / 2)
@@ -765,10 +774,10 @@ class LegendLine(Themed):
         x += draw_text(painter, x, top, self.selected, HINT, secondary) + 22
         painter.save()
         painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
-        outline = QtGui.QPen(theme.color("text.ink"), 1.3)
+        outline = QtGui.QPen(theme.color("data.path"), 1.3)  # as ``paint_spawn`` draws saved poses
         outline.setJoinStyle(QtCore.Qt.PenJoinStyle.RoundJoin)
         painter.setPen(outline)
-        painter.setBrush(theme.map_color("free"))
+        painter.setBrush(theme.color("data.path"))
         painter.drawPolygon(
             QtGui.QPolygonF(
                 [

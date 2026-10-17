@@ -274,6 +274,41 @@ def paint_robot(
     painter.restore()
 
 
+def paint_footprint(
+    painter: QtGui.QPainter,
+    placement: "Placement",
+    pose: tuple[float, float, float],
+    footprint: Sequence[tuple[float, float]],
+    theme: Theme,
+    size: float,
+) -> None:
+    """The robot to scale: its footprint at the pose (``data.path`` at 18 % with a 1.5 px outline, as the
+    Spawns editor draws the edited pose) and the robot arrow inside it (at most ``size``; left out while the
+    footprint is too small on screen to hold a 4 px arrow)."""
+    x, y, yaw = pose
+    c, s = math.cos(yaw), math.sin(yaw)
+    corners = [placement.point(x + px * c - py * s, y + px * s + py * c) for px, py in footprint]
+    centre = placement.point(x, y)
+    unit = placement.point(x + c, y + s)  # one metre ahead, for the screen scale
+    scale = math.hypot(unit.x() - centre.x(), unit.y() - centre.y())
+    front = max((px for px, _ in footprint), default=0.0) * scale
+    color = theme.color("data.path")
+    fill = QtGui.QColor(color)
+    fill.setAlphaF(0.18)
+    painter.save()
+    painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+    painter.setPen(QtGui.QPen(color, 1.5))
+    painter.setBrush(fill)
+    painter.drawPolygon(QtGui.QPolygonF(corners))
+    if 0.8 * front >= 4:
+        outline = QtGui.QPen(css_color(gui_tokens.ROBOT_ARROW_OUTLINE), 1.6)
+        outline.setJoinStyle(QtCore.Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(outline)
+        painter.setBrush(color)
+        painter.drawPolygon(arrow_polygon(centre, placement.heading(yaw), min(size, 0.8 * front)))
+    painter.restore()
+
+
 def paint_spawn(
     painter: QtGui.QPainter,
     point: QtCore.QPointF,
@@ -283,9 +318,10 @@ def paint_spawn(
     picked: bool = False,
     selected: bool = False,
 ) -> None:
-    """Spawn arrow: 6 px (7.5 when selected), ``map.free`` fill (ink when picked or selected), 1.4 px ink
-    outline; a selected pose also gets a dashed circle (r 11, ink 1 px, 3/2 dashes, ink at 8 %)."""
-    ink = theme.color("text.ink")
+    """Spawn arrow in the robot colour (``data.path``): 6 px (7.5 when selected), ``map.free`` fill (solid when
+    picked or selected), 1.4 px outline; a selected pose also gets a dashed circle (r 11, 1 px, 3/2 dashes, the
+    colour at 8 %)."""
+    ink = theme.color("data.path")
     painter.save()
     painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
     if selected:
@@ -406,6 +442,9 @@ class LiveLayers:
     spawn: tuple[float, float, float] | None = (
         None  # tiles: the accepted spawn, while there is no path
     )
+    # The robot's footprint (robot frame, metres; the catalog's): drawn to scale at the pose. Empty: the
+    # fixed robot mark.
+    footprint: tuple[tuple[float, float], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -744,7 +783,9 @@ def paint_live(
     paint_markers(painter, layers.path.markers, placement, theme)
     if layers.goal is not None:
         paint_goal(painter, placement.point(*layers.goal), theme)
-    if layers.pose is not None:
+    if layers.pose is not None and layers.footprint:
+        paint_footprint(painter, placement, layers.pose, layers.footprint, theme, robot_size)
+    elif layers.pose is not None:
         x, y, yaw = layers.pose
         paint_robot(painter, placement.point(x, y), placement.heading(yaw), theme, robot_size)
 
@@ -836,7 +877,7 @@ class MiniMap(Themed):
 
 @dataclass(frozen=True, slots=True)
 class SpawnMark:
-    """A starting pose on a ``MapStage``: chosen poses (``picked``) are ink arrows with labels in 600, the
+    """A starting pose on a ``MapStage``: chosen poses (``picked``) are solid arrows with labels in 600, the
     inspected one (``selected``) is larger with a dashed circle."""
 
     name: str
