@@ -15,9 +15,10 @@
 """The Profiles page (13): robots, that robot's profiles with Default pinned, and the selected profile
 compared with Default parameter by parameter.
 
-The list shows every saved revision of the robot (oldest first, as the wizard lists them), read in pages of
-250 and re-read every 2 s while the page is shown. Change counts come from each revision's snapshot
-(``profiles.get``), fetched once per revision because revisions are immutable.
+The list shows every saved profile of the robot (oldest first, as the wizard lists them), read in pages of
+250 and re-read every 2 s while the page is shown. Change counts come from each profile's snapshot
+(``profiles.get``), fetched once per ID: an edit saves the profile under a new ID, so an ID's content never
+changes, and the current and selected rows follow the profile's stable ``family_id``.
 """
 
 from collections import OrderedDict
@@ -32,7 +33,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from . import gui_icons
 from .contracts import PROFILE_DELETION_LIMIT
 from .gui_cells import PAINTED_HEADER, PaintedColumn, PaintedTable
-from .gui_controls import BadgeLook, KeySelect, SearchField, Switch, UnderlineTabs, paint_badge
+from .gui_controls import KeySelect, SearchField, Switch, UnderlineTabs
 from .gui_dialogs import Consequences, ListRow, Run
 from .gui_profile_editor import Mode
 from .gui_profile_preview import (
@@ -76,31 +77,27 @@ META = TextStyle(12, 400, 18, tabular=True)
 TITLE = TextStyle(18, 600, 24)
 SECTION = TextStyle(12, 600, 18)
 CHANGE = TextStyle(13, 400, 18, tabular=True)
-LIST_PAGE, LIST_LIMIT = 250, 2000  # revisions per request; at most this many listed per robot
-SNAPSHOTS = 64  # profile snapshots kept for the comparison (revisions are immutable)
+LIST_PAGE, LIST_LIMIT = 250, 2000  # profiles per request; at most this many listed per robot
+SNAPSHOTS = 64  # profile snapshots kept for the comparison (a saved ID's content never changes)
 DEFAULT = "default"  # the current-row key of the robot's Default
-UNCOUNTABLE = -1  # a revision whose snapshot could not be compared (shown as "—", not read again)
+UNCOUNTABLE = -1  # a profile whose snapshot could not be compared (shown as "—", not read again)
 
 
 DELETION_FOOTNOTE = (
     "Submitted campaigns, their results and reports keep the exact parameters they recorded. "
-    "Campaign YAML files that name a deleted revision ID will no longer validate."
+    "Campaign YAML files that name a deleted profile's ID will no longer validate."
 )
 
 
 def deletion_question(count: int) -> str:
-    """The confirmation's question for deleting whole profiles (every revision of each)."""
-    return (
-        f"Delete {count} profile{'s' if count != 1 else ''} and all "
-        f"{'their' if count != 1 else 'its'} saved revisions? This cannot be undone."
-    )
+    """The confirmation's question for deleting saved profiles."""
+    return f"Delete {count} profile{'s' if count != 1 else ''}? This cannot be undone."
 
 
 def created_text(row: dict[str, Any]) -> str:
-    """ "r2 · 15 Oct 2026 · 22:43"."""
+    """When the profile was created: "15 Oct 2026 · 22:43"."""
     created = row.get("created_ns")
-    when = cell_text("created_ns", created) if isinstance(created, int) else "—"
-    return f"r{row.get('revision', '—')} · {when}"
+    return cell_text("created_ns", created) if isinstance(created, int) else "—"
 
 
 # ---------- robots ----------
@@ -161,7 +158,7 @@ def paint_thumbnail(
 
 class RobotsCard(Card):
     """``.robots`` (13): "Robots" with "Profiles" at the right, then one 40 px row per robot: thumbnail, name
-    (600 when chosen), the number of its profiles (saved revisions and Default). The chosen robot has the
+    (600 when chosen), the number of its profiles (saved profiles and Default). The chosen robot has the
     selected fill and the ink bar."""
 
     chosen = QtCore.Signal(str)
@@ -258,8 +255,8 @@ class RobotsCard(Card):
 
 class ProfilesCard(Card):
     """``.plist`` (13): "<robot> profiles" with a search button (it opens a search field in the head), Default
-    pinned first ("Robot-aware baseline", lock, a ``border.strong`` rule) and the saved revisions, oldest
-    first: name (600 when current), "r2 · 15 Oct 2026 · 22:43" and the change count. Rows are 52 px; when
+    pinned first ("Robot-aware baseline", lock, a ``border.strong`` rule) and the saved profiles, oldest
+    first: name (600 when current), when it was created ("15 Oct 2026 · 22:43") and the change count. Rows are 52 px; when
     they nearly fit (at least 50 px each) they share the card's height, otherwise the saved rows scroll under
     Default. A click selects one row; Ctrl toggles a row and Shift selects a range (the rows Delete acts on)."""
 
@@ -298,9 +295,27 @@ class ProfilesCard(Card):
         self.head.title.setText(title)
 
     def set_rows(self, rows: list[dict[str, Any]]) -> None:
-        self.rows = rows
         identities = {row["id"] for row in rows}
-        self.selected &= identities
+        # An edit saves the profile under a new ID: the current and selected rows follow its family.
+        families: dict[str, str] = {
+            row["family_id"]: str(row["id"])
+            for row in rows
+            if isinstance(row.get("family_id"), str)
+        }
+        previous = {row["id"]: row.get("family_id") for row in self.rows}
+
+        def follow(identity: str) -> str:
+            family = previous.get(identity)
+            if identity in identities or not isinstance(family, str):
+                return identity
+            return families.get(family, identity)
+
+        self.rows = rows
+        self.selected = {follow(identity) for identity in self.selected} & identities
+        self.anchor = follow(self.anchor)
+        if self.current != DEFAULT and follow(self.current) != self.current:
+            self.current = follow(self.current)
+            self.current_changed.emit()
         if self.current != DEFAULT and self.current not in identities:
             self.current = DEFAULT
             self.current_changed.emit()
@@ -684,13 +699,13 @@ class ComparisonTable(PaintedTable):
 
 
 class ComparisonCard(Card):
-    """``.cmp`` (13): the profile's name (18/24 600) with its revision chip and description, Edit, Export
+    """``.cmp`` (13): the profile's name (18/24 600) and description, Edit, Export
     profile and Delete…; the group tabs ("All parameters", then the editor's groups with change pills)
     and "Changed only"; the comparison table."""
 
     def __init__(self, themes: ThemeManager, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(themes, parent)
-        self.name, self.revision, self.description = "", "", ""
+        self.name, self.description = "", ""
         self.empty = ""
         self.groups: list[str] = []
         self.parameters: list[ComparedParameter] = []
@@ -716,7 +731,6 @@ class ComparisonCard(Card):
     def show_profile(
         self,
         name: str,
-        revision: str,
         description: str,
         robot_label: str,
         groups: list[str],
@@ -725,7 +739,7 @@ class ComparisonCard(Card):
     ) -> None:
         """Show a profile; ``empty`` replaces the table while its parameters are unknown (loading or failed)."""
         self.empty = empty
-        self.name, self.revision, self.description = name, revision, description
+        self.name, self.description = name, description
         self.robot_label = robot_label
         if groups != self.groups:
             self.groups = groups
@@ -809,12 +823,8 @@ class ComparisonCard(Card):
         painter.fillRect(QtCore.QRect(1, 88, self.width() - 2, 1), line)
         painter.fillRect(QtCore.QRect(1, 127, self.width() - 2, 1), line)
         right = self.edit.x() - 8
-        chip = BadgeLook(self.revision) if self.revision else None
-        room = right - 21 - (10 + chip.width if chip else 0)
-        name = TITLE.elide(self.name, room)
-        x = 21 + draw_text(painter, 21, 21, name, TITLE, theme.color("text.ink"))
-        if chip is not None:
-            paint_badge(painter, x + 10, 22, chip, theme)
+        name = TITLE.elide(self.name, right - 21)
+        draw_text(painter, 21, 21, name, TITLE, theme.color("text.ink"))
         description = BODY.elide(self.description, right - 21)
         draw_text(painter, 21, 51, description, BODY, theme.color("text.body"))
 
@@ -847,7 +857,7 @@ class ProfilesPage(QtWidgets.QWidget):
         )
         self.stale = False
         self.snapshots: OrderedDict[str, dict[str, Any]] = OrderedDict()
-        self.counting = ""  # the revision whose snapshot is being read for its count
+        self.counting = ""  # the profile whose snapshot is being read for its count
         self.detail_tag = ""
         self.export_path = ""
 
@@ -908,19 +918,9 @@ class ProfilesPage(QtWidgets.QWidget):
         self.show_current()
 
     def set_library(self, robot_id: str, rows: list[dict[str, Any]], total: int) -> None:
-        """The window's ``library-<robot>`` reply: the robot's count is its saved revisions and Default."""
+        """The window's ``library-<robot>`` reply: the robot's count is its saved profiles and Default."""
         self.library[robot_id] = rows
         self.robots.set_count(robot_id, total + 1)
-
-    def next_revision(self, profile: dict[str, Any]) -> int:
-        """The revision an edit of ``profile`` saves (the engine numbers it; this is the button's text)."""
-        family = profile.get("family_id")
-        if not family:
-            return 1
-        known = [*self.loaded, *(row for rows in self.library.values() for row in rows)]
-        numbers = [row["revision"] for row in known if row.get("family_id") == family]
-        numbers.append(profile.get("revision") or 0)
-        return int(max(numbers)) + 1
 
     # the list
 
@@ -971,7 +971,7 @@ class ProfilesPage(QtWidgets.QWidget):
         if not rows and search:
             message = "No matching profiles"
         elif total > len(rows):
-            message = f"First {len(rows):,} of {total:,} revisions listed; search to find others"
+            message = f"First {len(rows):,} of {total:,} profiles listed; search to find others"
         if [row["id"] for row in rows] != [
             row["id"] for row in self.loaded
         ] or message != self.profiles.message:
@@ -982,7 +982,7 @@ class ProfilesPage(QtWidgets.QWidget):
         self._count_next()
 
     def _count_next(self) -> None:
-        """Read one revision's snapshot whose change count is unknown (one request at a time)."""
+        """Read one profile's snapshot whose change count is unknown (one request at a time)."""
         if self.counting:
             return
         missing = next(
@@ -996,7 +996,7 @@ class ProfilesPage(QtWidgets.QWidget):
             self._count_next()
             return
         self.counting = missing
-        self.transport.submit("profile-count:" + missing, "profiles.get", {"revision_id": missing})
+        self.transport.submit("profile-count:" + missing, "profiles.get", {"id": missing})
 
     def _count(self, snapshot: dict[str, Any]) -> None:
         robot = next(
@@ -1027,17 +1027,14 @@ class ProfilesPage(QtWidgets.QWidget):
         row = self.profiles.current_row()
         if row is None:
             parameters = compared_parameters(robot, self.catalog["parameters"], None)
-            self.comparison.show_profile(
-                "Default", "", BASELINE, robot["label"], groups, parameters
-            )
+            self.comparison.show_profile("Default", BASELINE, robot["label"], groups, parameters)
         else:
             snapshot = self.snapshots.get(row["id"])
             if snapshot is None:
                 self.detail_tag = "profile-detail-" + uuid.uuid4().hex
-                self.transport.submit(self.detail_tag, "profiles.get", {"revision_id": row["id"]})
+                self.transport.submit(self.detail_tag, "profiles.get", {"id": row["id"]})
                 self.comparison.show_profile(
                     row["name"],
-                    f"r{row.get('revision', '—')}",
                     "",
                     robot["label"],
                     groups,
@@ -1049,7 +1046,6 @@ class ProfilesPage(QtWidgets.QWidget):
                 description = str(snapshot.get("description") or "")
                 self.comparison.show_profile(
                     snapshot["name"],
-                    f"r{snapshot.get('revision', '—')}",
                     description,
                     robot["label"],
                     groups,
@@ -1081,7 +1077,7 @@ class ProfilesPage(QtWidgets.QWidget):
         records = self.profiles.selected_rows()
         if not records:
             return
-        # One entry per profile (revision family); the last selected revision names it.
+        # Deleted by their stable keys (``family_id``), one entry per profile.
         families = {record["family_id"]: record for record in records}
         if len(families) > PROFILE_DELETION_LIMIT:
             self.notify.emit(
@@ -1097,11 +1093,7 @@ class ProfilesPage(QtWidgets.QWidget):
         dialog.add_sentence([Run(deletion_question(count))], 6)
         dialog.add_items(
             [
-                ListRow(
-                    row["name"],
-                    f"r{row.get('revision', '—')}",
-                    robots.get(row["owner"], row["owner"]),
-                )
+                ListRow(row["name"], str(row["id"])[:8], robots.get(row["owner"], row["owner"]))
                 for row in families.values()
             ]
         )
@@ -1132,22 +1124,22 @@ class ProfilesPage(QtWidgets.QWidget):
         if path:
             self.export_path = path
             self.transport.submit(
-                "profile-export", "profiles.export", {"revision_id": row["id"], "format": "suite"}
+                "profile-export", "profiles.export", {"id": row["id"], "format": "suite"}
             )
 
     def open_request(self, operation: str) -> Mode | None:
-        """Ask for what the editor opens with: Default's values for New (``editor-default``), the revision
-        for Edit (``profile-open``). Returns the editor's mode (None: Default is not editable)."""
+        """Ask for what the editor opens with: Default's values for New (``editor-default``), the saved
+        profile for Edit (``profile-open``). Returns the editor's mode (None: Default is not editable)."""
         if operation == "new":
             self.transport.submit("editor-default", "parameters.resolve", {"robot_id": self.robot})
             return "new"
-        revision = self.current_revision()
-        if revision is None:
+        identity = self.current_id()
+        if identity is None:
             return None
-        self.transport.submit("profile-open", "profiles.get", {"revision_id": revision})
+        self.transport.submit("profile-open", "profiles.get", {"id": identity})
         return "edit"
 
-    def current_revision(self) -> str | None:
+    def current_id(self) -> str | None:
         row = self.profiles.current_row()
         return None if row is None else str(row["id"])
 
@@ -1179,9 +1171,8 @@ class ProfilesPage(QtWidgets.QWidget):
             self.deleted.emit(result)
             count = len(result["family_ids"])
             self.notify.emit(
-                f"Deleted {count} profile{'s' if count != 1 else ''} "
-                f"({result['deleted_revisions']} revisions); {result['referenced_campaigns']} "
-                "campaigns keep their recorded parameters",
+                f"Deleted {count} profile{'s' if count != 1 else ''}; "
+                f"{result['referenced_campaigns']} campaigns keep their recorded parameters",
                 "ok",
                 10000,
             )

@@ -1,4 +1,4 @@
 # Suite engine image version. Raise it by one with every change to code or files that go into the suite image
 # (engine, worker, recording, reports, runner and robot Python, docker/Dockerfile.suite, the engine lock).
 # ./suite_launch.sh rebuilds the image when the installed one carries an older version.
-11
+13

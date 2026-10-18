@@ -15,8 +15,9 @@
 """New campaign step 1 (03, 04; HANDOFF §8.3-§8.4): the robot cards and the profiles popup.
 
 ``RobotSelector`` keeps the selection rules: the last ticked available robot cannot be cleared, each ticked
-robot keeps at least one profile, the popup lists the first 250 saved revisions (a footer row says so when the
-library has more) and Edit opens the profile editor.
+robot keeps at least one profile, the popup lists the first 250 saved profiles (a footer row says so when the
+library has more) and Edit opens the profile editor. A saved profile gets a new ID with each edit; the selection
+follows it through the profile's stable ``family_id``.
 """
 
 from copy import deepcopy
@@ -75,9 +76,8 @@ PILL = TextStyle(12, 600, 18, tabular=True)
 REASON = TextStyle(12.5, 400, 18)
 BAR_TEXT = TextStyle(12, 500, 18)
 CURRENT_NAME = TextStyle(13, 600, 18)
-REVISION = TextStyle(13, 400, 18, tabular=True)
 UNAVAILABLE = BadgeLook("Unavailable")
-MORE_NOTE = "First 250 revisions shown. Reference older revision IDs in an imported campaign YAML."
+MORE_NOTE = "First 250 saved profiles shown. Reference others by ID in an imported campaign YAML."
 LAST_PROFILE = "At least one profile is required. Select another profile first."
 LAST_ROBOT = "Select another robot before deselecting this one."
 
@@ -96,7 +96,7 @@ def _label(robot_id: str, reference: Reference) -> str:
 
 
 def _created(row: dict[str, Any]) -> tuple[bool, int]:
-    """Sort key: oldest revision first; rows without a creation time last."""
+    """Sort key: oldest profile first; rows without a creation time last."""
     created = row.get("created_ns")
     return (False, created) if isinstance(created, int) else (True, 0)
 
@@ -457,31 +457,21 @@ class RobotCard(ToggleCard):
 
 @dataclass(frozen=True, slots=True)
 class ProfileEntry:
-    """A profile a robot can run: its Default, a library revision, or a campaign's inline snapshot."""
+    """A profile a robot can run: its Default, a saved profile, or a campaign's inline snapshot."""
 
     reference: Reference
     key: str
     name: str
     origin: Literal["default", "library", "snapshot"]
-    revision: int | None = None  # library revisions the library numbers
 
     @property
     def detail(self) -> str:
-        """What the profile is, as searched: "Robot-aware baseline", "Revision 2", "Campaign snapshot"."""
+        """What the profile is, as searched: "Robot-aware baseline", "Saved profile", "Campaign snapshot"."""
         if self.origin == "default":
             return BASELINE
         if self.origin == "snapshot":
             return "Campaign snapshot"
-        return f"Revision {self.revision}" if self.revision is not None else "Saved profile"
-
-    @property
-    def label(self) -> str:
-        """The name with its revision ("Low Threshold r2"), as the summary and review show it."""
-        return f"{self.name} r{self.revision}" if self.revision is not None else self.name
-
-    @property
-    def revision_text(self) -> str:
-        return "—" if self.revision is None else str(self.revision)
+        return "Saved profile"
 
     @property
     def search(self) -> str:
@@ -489,8 +479,8 @@ class ProfileEntry:
 
 
 class ProfileList(Themed):
-    """``.pp-list`` (04): the sunken header bar (the check of the shown rows, "Profile", "Rev.") over 40 px
-    rows: check, name (Default adds "baseline"), revision at the right. The inspected row has the selected
+    """``.pp-list`` (04): the sunken header bar (the check of the shown rows, "Profile") over 40 px rows:
+    check and name (Default adds "baseline"). The inspected row has the selected
     fill, a 2 px ink bar, its name in 600 and Edit (ghost, 26 px). Hovering or the arrow keys inspect a row; a
     click or Space toggles it; the rows scroll under the bar."""
 
@@ -597,10 +587,8 @@ class ProfileList(Themed):
         if y < self.BAR or y + 26 > self.height():
             self.edit.hide()
             return
-        revision = self.entries[self.current].revision_text
         width = self.edit.natural_width()
-        x = self.width() - 20 - REVISION.advance(revision) - 10 - width
-        place(self.edit, x, y, width, 26)
+        place(self.edit, self.width() - 20 - width, y, width, 26)
         self.edit.show()
 
     def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
@@ -698,9 +686,6 @@ class ProfileList(Themed):
             painter, QtCore.QRectF(20, (self.BAR - 1 - 16) / 2, 16, 16), theme, self.header_mark()
         )
         draw_text(painter, 46, bar_top, "Profile", BAR_TEXT, secondary)
-        draw_text(
-            painter, width - 20 - BAR_TEXT.advance("Rev."), bar_top, "Rev.", BAR_TEXT, secondary
-        )
         painter.setClipRect(QtCore.QRect(0, self.BAR, width, self.height() - self.BAR))
         if not self.shown:
             draw_text(painter, 20, self.BAR + 10.5, "No matching profiles", BODY, secondary)
@@ -728,13 +713,8 @@ class ProfileList(Themed):
         mark: Mark = "on" if entry.key in self.checked else "off"
         paint_check(painter, QtCore.QRectF(20, top + (content - 16) / 2, 16, 16), theme, mark)
         line_top = top + (content - 18) / 2
-        revision = entry.revision_text
-        revision_x = width - 20 - REVISION.advance(revision)
-        token = "text.tertiary" if entry.revision is None else "text.secondary"
-        draw_text(painter, revision_x, line_top, revision, REVISION, theme.color(token))
-        right = (
-            self.edit.x() + self.edit.shift if current and self.edit.isVisible() else revision_x
-        ) - 10
+        edit_shown = current and self.edit.isVisible()
+        right = (self.edit.x() + self.edit.shift - 10) if edit_shown else width - 20.0
         style = CURRENT_NAME if current else BODY
         baseline = entry.origin == "default"
         extra = BODY.advance("baseline") + 10 if baseline else 0.0
@@ -746,7 +726,7 @@ class ProfileList(Themed):
 
 class ProfilesPopup(PopupCard):
     """``.pp`` (04): the head (title, search, "Done · N selected"), the profile list (320 px) and the preview
-    of the inspected profile; under a rule, a 38 px footer row notes the 250-revision limit when the library
+    of the inspected profile; under a rule, a 38 px footer row notes the 250-profile limit when the library
     has more."""
 
     changed = QtCore.Signal(object)
@@ -1016,12 +996,31 @@ class RobotSelector(QtWidgets.QWidget):
             if isinstance(reference, str)
             and reference not in ("Default", "default", "default-" + robot_id)
         }
+        # An edit saves the profile under a new ID and deletes the old row: the selection follows its family.
+        families = {
+            row["family_id"]: identity
+            for identity, row in current.items()
+            if isinstance(row.get("family_id"), str)
+        }
+        references = self._references.get(robot_id, [])
+        followed = False
+        for position, reference in enumerate(references):
+            if not isinstance(reference, str) or reference not in selected_ids - set(current):
+                continue
+            family = previous.get(reference, {}).get("family_id")
+            replacement = families.get(family) if isinstance(family, str) else None
+            if replacement is not None and replacement not in references:
+                references[position] = replacement
+                selected_ids.discard(reference)
+                followed = True
         for identity in selected_ids.difference(current):
             if identity in previous:
                 current[identity] = deepcopy(previous[identity])
         self._saved[robot_id] = current
         self._has_more[robot_id] = has_more
         self._sync_card(robot_id)
+        if followed:
+            self.changed.emit()
 
     def add_profile(self, robot_id: str, reference: Reference, name: str) -> None:
         profile_reference = deepcopy(reference)
@@ -1039,24 +1038,20 @@ class RobotSelector(QtWidgets.QWidget):
                 key = identity.removeprefix("profile:")
                 self._saved.setdefault(robot_id, {}).setdefault(
                     key,
-                    {
-                        "id": key,
-                        "name": name or profile_reference.get("name", "Campaign snapshot"),
-                        "revision": profile_reference.get("revision"),
-                    },
+                    {"id": key, "name": name or profile_reference.get("name", "Campaign snapshot")},
                 )
         self._selected[robot_id] = True
         self._append_reference(robot_id, profile_reference)
         self._sync_card(robot_id)
         self.changed.emit()
 
-    def forget_profiles(self, robot_id: str, revision_ids: set[str]) -> None:
-        """Drop deleted library revisions from this robot's selection and saved rows."""
+    def forget_profiles(self, robot_id: str, profile_ids: set[str]) -> None:
+        """Drop deleted saved profiles from this robot's selection and saved rows."""
         references = self._references.get(robot_id, [])
-        kept = [r for r in references if not (isinstance(r, str) and r in revision_ids)]
+        kept = [r for r in references if not (isinstance(r, str) and r in profile_ids)]
         saved = self._saved.get(robot_id, {})
-        removed = len(kept) != len(references) or bool(revision_ids & set(saved))
-        for identity in revision_ids:
+        removed = len(kept) != len(references) or bool(profile_ids & set(saved))
+        for identity in profile_ids:
             saved.pop(identity, None)
         if not removed:
             return
@@ -1081,7 +1076,8 @@ class RobotSelector(QtWidgets.QWidget):
                 {
                     "id": profile_id,
                     "name": profile_name,
-                    "revision": profile.get("revision"),
+                    "family_id": profile.get("family_id"),
+                    "created_ns": profile.get("created_ns"),
                 },
             )
             self.add_profile(robot_id, profile_id, profile_name)
@@ -1089,10 +1085,10 @@ class RobotSelector(QtWidgets.QWidget):
             self.add_profile(robot_id, deepcopy(profile), profile_name)
 
     def profile_label(self, robot_id: str, reference: Reference) -> str:
-        """The profile's name with its revision ("Low Threshold r2"), as the summary and review show it."""
+        """The profile's name as the summary and review show it."""
         key = _key(robot_id, reference)
         entry = next((e for e in self._profile_entries(robot_id) if e.key == key), None)
-        return entry.label if entry is not None else _label(robot_id, reference)
+        return entry.name if entry is not None else _label(robot_id, reference)
 
     def profile_names(self, robot_id: str) -> str:
         """The selected profiles' names as the card's footer lists them ("Default, Low Threshold")."""
@@ -1103,16 +1099,14 @@ class RobotSelector(QtWidgets.QWidget):
         )
 
     def profile_options(self) -> list[tuple[str, str, Reference, str]]:
-        """Every robot's profiles for the Results filter: robot ID and label, reference, and a label with the
-        revision ("Low Threshold · r2") or "· campaign snapshot"."""
+        """Every robot's profiles for the Results filter: robot ID and label, reference, and a label (a
+        campaign's inline snapshot adds "· campaign snapshot")."""
         options: list[tuple[str, str, Reference, str]] = []
         for robot in self._catalog:
             identity = str(robot["id"])
             for entry in self._profile_entries(identity):
                 label = entry.name
-                if entry.revision is not None:
-                    label += f" · r{entry.revision}"
-                elif entry.origin == "snapshot" and not label.endswith(" · campaign snapshot"):
+                if entry.origin == "snapshot" and not label.endswith(" · campaign snapshot"):
                     label += " · campaign snapshot"
                 options.append((identity, str(robot["label"]), deepcopy(entry.reference), label))
         return options
@@ -1179,19 +1173,17 @@ class RobotSelector(QtWidgets.QWidget):
             references.append(deepcopy(reference))
 
     def _profile_entries(self, robot_id: str) -> list[ProfileEntry]:
-        """Default, the library's revisions, then selected profiles the library does not list (campaign
-        snapshots, revisions past the first 250)."""
+        """Default, the saved profiles, then selected profiles the library does not list (campaign
+        snapshots, saved profiles past the first 250)."""
         entries = [ProfileEntry("Default", "default", "Default", "default")]
         saved = self._saved.get(robot_id, {})
-        # The engine lists revisions newest first; the design lists them oldest first (04, 13).
+        # The engine lists profiles newest first; the design lists them oldest first (04, 13).
         for identity, row in sorted(saved.items(), key=lambda item: _created(item[1])):
             key = _key(robot_id, identity)
             if key == "default":
                 continue
-            revision = row.get("revision")
-            revision = revision if isinstance(revision, int) else None
             name = str(row.get("name") or identity)
-            entries.append(ProfileEntry(identity, key, name, "library", revision))
+            entries.append(ProfileEntry(identity, key, name, "library"))
         known = {entry.key for entry in entries}
         for reference in self._references.get(robot_id, []):
             key = _key(robot_id, reference)

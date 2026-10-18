@@ -309,7 +309,7 @@ class ProfilePreview(Themed):
                     tag, "parameters.resolve", dict(self.reference, robot_id=self.robot["id"])
                 )
             else:
-                self.transport.submit(tag, "profiles.get", {"revision_id": self.reference})
+                self.transport.submit(tag, "profiles.get", {"id": self.reference})
 
     def _show(self, profile: dict[str, Any]) -> None:
         if not self.robot.get("defaults"):
@@ -333,7 +333,7 @@ class ProfilePreview(Themed):
             and result.get("id") != reference
         ):
             if key == self._key:
-                self._error("The profile response does not match this robot or revision.")
+                self._error("The profile response does not match this robot or profile.")
             else:
                 self._load()
             return
@@ -409,7 +409,7 @@ class ProfilePreview(Themed):
         paint_scroll_handle(painter, self, self.rows_top(), visible, self.offset, total)
 
     def _paint_bar(self, painter: QtGui.QPainter) -> None:
-        """The sunken bar: the name and, at the right, when the revision was made."""
+        """The sunken bar: the name and, at the right, when the profile was created."""
         theme, width = self.theme, self.width()
         left, right = 20.0, width - 20.0
         painter.fillRect(QtCore.QRect(0, 0, width, self.BAR), theme.color("surface.sunken"))

@@ -229,6 +229,7 @@ class Window(QtWidgets.QMainWindow):
         layout = self.page("Worlds & Spawns", "worlds")
         self.worlds_page = WorldsPage(self.themes, self.transport)
         self.worlds_page.changed.connect(self.refresh_libraries)
+        self.worlds_page.deleted.connect(self.forget_deleted_spawns)
         self.worlds_page.notify.connect(self.page_notice)
         layout.addWidget(self.worlds_page, 1)
 
@@ -339,7 +340,7 @@ class Window(QtWidgets.QMainWindow):
             self.campaigns.refresh()
             self.go("campaigns")
         elif tag.startswith("library-"):
-            self.fill_revisions(tag, result)
+            self.fill_library(tag, result)
         elif tag == "editor-default":
             self.show_editor(result, "new")
         elif tag == "profile-open":
@@ -494,7 +495,7 @@ class Window(QtWidgets.QMainWindow):
                 {"world_id": owner, "limit": 250},
             )
 
-    def fill_revisions(self, tag: str, result: Any) -> None:
+    def fill_library(self, tag: str, result: Any) -> None:
         owner = tag[8:]
         if any(robot["id"] == owner for robot in self.catalog.get("robots", [])):
             self.builder.robot_selector.set_profiles(
@@ -626,7 +627,6 @@ class Window(QtWidgets.QMainWindow):
             self.catalog,
             profile,
             mode=mode,
-            next_revision=self.profiles_page.next_revision(profile) if mode == "edit" else 1,
         )
         editor.saved.connect(self.refresh_libraries)
         editor.notify.connect(self.page_notice)
@@ -635,10 +635,17 @@ class Window(QtWidgets.QMainWindow):
 
     def forget_deleted_profiles(self, result: dict[str, Any]) -> None:
         deleted: dict[str, set[str]] = {}
-        for revision in result["revisions"]:
-            deleted.setdefault(revision["owner"], set()).add(revision["id"])
-        for owner, revisions in deleted.items():
-            self.builder.robot_selector.forget_profiles(owner, revisions)
+        for row in result["deleted"]:
+            deleted.setdefault(row["owner"], set()).add(row["id"])
+        for owner, identities in deleted.items():
+            self.builder.robot_selector.forget_profiles(owner, identities)
+
+    def forget_deleted_spawns(self, result: dict[str, Any]) -> None:
+        deleted: dict[str, set[str]] = {}
+        for row in result["deleted"]:
+            deleted.setdefault(row["owner"], set()).add(row["id"])
+        for world, identities in deleted.items():
+            self.builder.world_selector.forget_spawns(world, identities)
 
     def edit_builder_profile(self, robot: str, reference: Any) -> None:
         self.builder_profile_context = robot, reference
@@ -650,9 +657,7 @@ class Window(QtWidgets.QMainWindow):
                 self.builder_profile_tag, "parameters.resolve", {"robot_id": robot}
             )
         else:
-            self.transport.submit(
-                self.builder_profile_tag, "profiles.get", {"revision_id": reference}
-            )
+            self.transport.submit(self.builder_profile_tag, "profiles.get", {"id": reference})
 
     def accept_builder_profile(self, robot: str, reference: Any, profile: dict[str, Any]) -> None:
         self.builder.robot_selector.replace_profile(robot, reference, profile)

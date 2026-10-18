@@ -282,30 +282,30 @@ def paint_footprint(
     theme: Theme,
     size: float,
 ) -> None:
-    """The robot to scale: its footprint at the pose (``data.path`` at 18 % with a 1.5 px outline, as the
-    Spawns editor draws the edited pose) and the robot arrow inside it (at most ``size``; left out while the
-    footprint is too small on screen to hold a 4 px arrow)."""
+    """The robot to scale as the round robot mark: a disc at the footprint's centre with half its longer side
+    as radius (at least 4 px), in the mark's orange halo, and the robot arrow inside it (at most ``size``; left
+    out while the disc is too small to hold a 3.5 px arrow)."""
     x, y, yaw = pose
+    xs, ys = [px for px, _ in footprint], [py for _, py in footprint]
+    cx, cy = (min(xs) + max(xs)) / 2, (min(ys) + max(ys)) / 2  # footprint centre, robot frame
     c, s = math.cos(yaw), math.sin(yaw)
-    corners = [placement.point(x + px * c - py * s, y + px * s + py * c) for px, py in footprint]
-    centre = placement.point(x, y)
+    centre = placement.point(x + cx * c - cy * s, y + cx * s + cy * c)
+    origin = placement.point(x, y)
     unit = placement.point(x + c, y + s)  # one metre ahead, for the screen scale
-    scale = math.hypot(unit.x() - centre.x(), unit.y() - centre.y())
-    front = max((px for px, _ in footprint), default=0.0) * scale
-    color = theme.color("data.path")
-    fill = QtGui.QColor(color)
-    fill.setAlphaF(0.18)
+    scale = math.hypot(unit.x() - origin.x(), unit.y() - origin.y())
+    radius = max(4.0, max(max(xs) - min(xs), max(ys) - min(ys)) / 2 * scale)
     painter.save()
     painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
-    painter.setPen(QtGui.QPen(color, 1.5))
-    painter.setBrush(fill)
-    painter.drawPolygon(QtGui.QPolygonF(corners))
-    if 0.8 * front >= 4:
+    painter.setPen(QtGui.QPen(css_color(gui_tokens.ROBOT_HALO_STROKE), 1))
+    painter.setBrush(css_color(gui_tokens.ROBOT_HALO))
+    painter.drawEllipse(centre, radius, radius)
+    arrow = min(size, 0.85 * radius)
+    if arrow >= 3.5:
         outline = QtGui.QPen(css_color(gui_tokens.ROBOT_ARROW_OUTLINE), 1.6)
         outline.setJoinStyle(QtCore.Qt.PenJoinStyle.RoundJoin)
         painter.setPen(outline)
-        painter.setBrush(color)
-        painter.drawPolygon(arrow_polygon(centre, placement.heading(yaw), min(size, 0.8 * front)))
+        painter.setBrush(theme.color("data.path"))
+        painter.drawPolygon(arrow_polygon(centre, placement.heading(yaw), arrow))
     painter.restore()
 
 

@@ -17,7 +17,8 @@
 ``WorldSelector`` keeps the selection rules: Bookstore starts ticked (else the first world), the selection is never
 empty (the last ticked world cannot be cleared), each ticked world keeps at
 least one starting pose, every ticked world has a time limit (simulation seconds from the first movement; 0 is
-unlimited), and the popup lists the first 250 saved spawn revisions (a footer row says so when there are more).
+unlimited), and the popup lists the first 250 saved spawns (a footer row says so when there are more). A saved
+spawn gets a new ID with each edit; the selection follows it through the spawn's stable ``family_id``.
 """
 
 from copy import deepcopy
@@ -71,7 +72,7 @@ from .gui_wizard import (
 
 NAME = TextStyle(15, 600, 18)
 AREA = TextStyle(12, 400, 18)
-MORE_NOTE = "First 250 revisions shown. The Worlds & Spawns page lists all saved spawns."
+MORE_NOTE = "First 250 saved spawns shown. The Worlds & Spawns page lists all of them."
 LAST_WORLD = "Select another world before deselecting this one."
 LAST_SPAWN = "At least one starting position is required. Select another first."
 LIMIT_TIP = "Simulation time from the first movement; 0 means no limit."
@@ -294,7 +295,6 @@ class SpawnEntry:
     reference: Reference
     key: str
     name: str
-    revision: str  # "—" for the world file's default
     pose: dict[str, Any] | None
     detail: str  # "· world file" after the default's name
     search: str
@@ -303,7 +303,7 @@ class SpawnEntry:
 class SpawnModel(QtCore.QAbstractTableModel):
     """The poses shown in the popup (after the search), with their check states."""
 
-    HEADERS = ("", "Starting pose", "X · m", "Y · m", "Heading", "Rev.")
+    HEADERS = ("", "Starting pose", "X · m", "Y · m", "Heading")
 
     def __init__(self) -> None:
         super().__init__()
@@ -359,13 +359,8 @@ class SpawnModel(QtCore.QAbstractTableModel):
         if column in (2, 3):
             value = pose.get("x" if column == 2 else "y") if pose else None
             return Cell(signed(float(value), 2) if value is not None else "—", "number")
-        if column == 4:
-            yaw = pose.get("yaw") if pose else None
-            return Cell(
-                signed(math.degrees(float(yaw)), 1) + "°" if yaw is not None else "—", "number"
-            )
-        # 06 draws the default's "—" in the body colour: ``.tbl td`` outranks its ``.faint``.
-        return Cell(entry.revision, "number")
+        yaw = pose.get("yaw") if pose else None
+        return Cell(signed(math.degrees(float(yaw)), 1) + "°" if yaw is not None else "—", "number")
 
     def data(
         self,
@@ -406,17 +401,16 @@ SPAWN_LOOK = TableLook(
         ColumnStyle("text"),
         ColumnStyle("number", width=80),
         ColumnStyle("number", width=80),
-        ColumnStyle("number", width=92),
-        ColumnStyle("number", padding_right=20, width=64),
+        ColumnStyle("number", padding_right=20, width=100),
     ],
 )
 
 
 class SpawnsPopup(PopupCard):
     """``.pp`` (06): the head (56 px: title, search, "Done · N selected"), the poses table (580 px: check,
-    name, X, Y, heading, revision; 40 px rows) and the map with every pose (chosen ones ink, the hovered one
-    larger, labels for both); under a rule, a 38 px footer row notes the 250-revision limit when the library
-    has more (D2)."""
+    name, X, Y, heading; 40 px rows) and the map with every pose (chosen ones ink, the hovered one larger,
+    labels for both); under a rule, a 38 px footer row notes the 250-spawn limit when the library has more
+    (D2)."""
 
     changed = QtCore.Signal(object)
     finished = QtCore.Signal()
@@ -745,13 +739,32 @@ class WorldSelector(QtWidgets.QWidget):
             pose = row.get("snapshot", row)
             if all(field in pose for field in ("x", "y", "yaw")):
                 self._poses[world, key] = deepcopy(pose)
-        for ref in self._references.get(world, []):
+        # An edit saves the spawn under a new ID and deletes the old row: the selection follows its family.
+        families = {
+            row["family_id"]: key
+            for key, row in current.items()
+            if isinstance(row.get("family_id"), str)
+        }
+        references = self._references.get(world, [])
+        followed = False
+        for position, ref in enumerate(references):
+            key = spawn_key(world, ref)
+            if not isinstance(ref, str) or key in current:
+                continue
+            family = previous.get(key, {}).get("family_id")
+            replacement = families.get(family) if isinstance(family, str) else None
+            if replacement is not None and replacement not in references:
+                references[position] = replacement
+                followed = True
+        for ref in references:
             key = spawn_key(world, ref)
             if key not in current and key in previous:
                 current[key] = previous[key]
         self._saved[world] = current
         self._has_more[world] = has_more
         self._sync(world)
+        if followed:
+            self.changed.emit()
 
     def world_map(self, world: str) -> WorldMap | None:
         return self._maps.get(world)
@@ -770,18 +783,27 @@ class WorldSelector(QtWidgets.QWidget):
         return str(row.get("name") or str(reference)[:8])
 
     def spawn_options(self) -> list[tuple[str, str, Reference, str]]:
-        """Every world's poses for the Results filter: world ID and label, reference, and the name with its
-        revision ("Centre · r1")."""
+        """Every world's poses for the Results filter: world ID and label, reference, and name."""
         return [
-            (
-                world,
-                info["label"],
-                deepcopy(entry.reference),
-                entry.name + (f" · r{entry.revision}" if entry.revision != "—" else ""),
-            )
+            (world, info["label"], deepcopy(entry.reference), entry.name)
             for world, info in self._worlds.items()
             for entry in self._rows(world)
         ]
+
+    def forget_spawns(self, world: str, spawn_ids: set[str]) -> None:
+        """Drop deleted saved spawns from this world's selection and saved rows."""
+        references = self._references.get(world, [])
+        kept = [r for r in references if not (isinstance(r, str) and r in spawn_ids)]
+        saved = self._saved.get(world, {})
+        removed = len(kept) != len(references) or bool(spawn_ids & set(saved))
+        for identity in spawn_ids:
+            saved.pop(identity, None)
+        if not removed:
+            return
+        self._references[world] = kept or ["Default"]
+        if world in self._worlds:
+            self._sync(world)
+        self.changed.emit()
 
     def select_world(self, world: str, checked: bool) -> None:
         if world not in self._worlds:
@@ -826,11 +848,7 @@ class WorldSelector(QtWidgets.QWidget):
         rows = []
         for ref in self._references_of(world):
             key = spawn_key(world, ref)
-            saved = self._saved.get(world, {}).get(key, {})
             default = key == "default-" + world
-            revision = saved.get("revision")
-            if isinstance(ref, dict) and ref.get("revision") is not None:
-                revision = ref["revision"]
             name = self.spawn_label(world, ref)
             detail = "· world file" if default else ""
             rows.append(
@@ -838,7 +856,6 @@ class WorldSelector(QtWidgets.QWidget):
                     deepcopy(ref),
                     key,
                     name,
-                    "—" if default or revision is None else str(revision),
                     self._pose(world, ref),
                     detail,
                     (name + " " + detail).casefold(),
@@ -846,15 +863,16 @@ class WorldSelector(QtWidgets.QWidget):
             )
         return rows
 
-    def _request(self, world: str, revision: str | None = None) -> None:
-        if (world, revision) in self._pending.values():
+    def _request(self, world: str, identity: str | None = None) -> None:
+        """Ask for a saved spawn's pose (``identity``) or, without one, the world's map."""
+        if (world, identity) in self._pending.values():
             return
         tag = "world-selection-" + uuid.uuid4().hex
-        self._pending[tag] = (world, revision)
+        self._pending[tag] = (world, identity)
         self.transport.submit(
             tag,
-            "spawns.get" if revision else "spawns.map",
-            {"revision_id": revision} if revision else {"world_id": world},
+            "spawns.get" if identity else "spawns.map",
+            {"id": identity} if identity else {"world_id": world},
         )
 
     def _sync(self, world: str, refresh_popup: bool = True) -> None:
@@ -894,7 +912,7 @@ class WorldSelector(QtWidgets.QWidget):
     def _popup_rect(self, world: str, host: PopupHost, has_more: bool) -> QtCore.QRect:
         """HANDOFF §8.6: two columns from the clicked card's column (ending at it when it is the last one).
         With its footer row the popup ends 5 px into the card's Starting poses row, above the Spawns button
-        (06); without it (D2: the row only carries the 250-revision note) it keeps that top edge."""
+        (06); without it (D2: the row only carries the 250-spawn note) it keeps that top edge."""
         index = list(self._worlds).index(world)
         row, column = self.grid.cell(index)
         span = min(2, self.grid.columns)
@@ -956,14 +974,14 @@ class WorldSelector(QtWidgets.QWidget):
         pending = self._pending.pop(tag, None)
         if pending is None:
             return
-        world, revision = pending
+        world, identity = pending
         if world not in self._worlds or result.get("world_id") != world:
             return
         card = self._cards[world]
-        if revision:
-            if result.get("id") != revision:
+        if identity:
+            if result.get("id") != identity:
                 return
-            self._poses[world, revision] = deepcopy(result)
+            self._poses[world, identity] = deepcopy(result)
             card.pose_error = ""
             self._sync(world)
             return

@@ -277,10 +277,8 @@ def is_default_profile(robot_id: str, profile: dict[str, Any]) -> bool:
 
 
 def profile_title(profile: dict[str, Any]) -> str:
-    """The accepted profile's name and revision: "Low Threshold r2"."""
-    name = str(profile.get("name") or "Profile")
-    revision = profile.get("revision")
-    return f"{name} r{revision}" if isinstance(revision, int) else name
+    """The accepted profile's name ("Low Threshold")."""
+    return str(profile.get("name") or "Profile")
 
 
 def change_blocks(
@@ -555,12 +553,16 @@ def limit_text(limit: Any) -> str:
 
 class AcceptedCard(Card):
     """``.acc`` (08): after a successful ``campaign.preview``, the success band, the campaign's name and
-    description, Execution and Timing retry, then "Worlds & starting poses" with a 168×132 map and the poses
-    and time limit of each world. Before that a muted line says what to do; a failed validation shows its
-    error in the band, in the bad colours."""
+    description, Execution and Timing retry, then "Worlds & starting poses": one tile per world (a 168×132
+    map, its time limit and poses to the right) in a grid from the top, as many columns as fit, rows ruled
+    apart. Before that a muted line says what to do; a failed validation shows its error in the band, in the
+    bad colours."""
 
-    BAND, KV_ROW, MAP_W, MAP_H, WORLD_MIN = 44, 40, 168, 132, 150
+    BAND, KV_ROW, MAP_W, MAP_H = 44, 40, 168, 132
     MAP_GAP = 18  # ``.wr``: the map, then the world's facts 18 px to its right
+    TILE_PAD = 14  # above and below the map in a grid row
+    TILE_GAP = 24  # between the grid's columns
+    FACTS_MIN = 180  # a tile's narrowest facts column
     WORLD_HEAD = 1 + 30 + 4  # the section's top rule, its 30 px heading and the list's 4 px padding
 
     def __init__(self, themes: ThemeManager, parent: QtWidgets.QWidget | None = None) -> None:
@@ -571,7 +573,7 @@ class AcceptedCard(Card):
         self.message = VALIDATE_ACCEPTED
         self.maps: dict[str, WorldMap | None] = {}
         self.stages: list[MapStage] = []
-        self.offset = 0.0  # the world list scrolls when its rows would be shorter than WORLD_MIN
+        self.offset = 0.0  # the world grid scrolls when its rows do not fit the card
         self.setAttribute(QtCore.Qt.WidgetAttribute.WA_Hover)
 
     # state
@@ -653,30 +655,49 @@ class AcceptedCard(Card):
         """Where the world rows start, under the section's rule and heading."""
         return self.sections()[3] + self.WORLD_HEAD
 
-    def world_rows(self) -> list[tuple[float, float]]:
-        """Top and height (above its rule) of each world row, scrolled."""
+    def row_height(self) -> float:
+        return float(self.MAP_H + 2 * self.TILE_PAD)
+
+    def columns(self) -> int:
+        """Grid columns: as many minimum-width tiles as the inner width holds, at most one per world."""
+        count = len(self.facts.worlds) if self.facts else 0
+        inner = css_rect(self).width() - 42
+        tile = self.MAP_W + self.MAP_GAP + self.FACTS_MIN
+        return max(1, min(count, int((inner + self.TILE_GAP) // (tile + self.TILE_GAP))))
+
+    def world_tiles(self) -> list[QtCore.QRectF]:
+        """Each world's tile (left, top, width and row height), in grid order, scrolled."""
         if self.facts is None or not self.facts.worlds:
             return []
-        rows_top, count = self.rows_top(), len(self.facts.worlds)
-        bottom = css_rect(self).bottom() - 1
-        each = max(float(self.WORLD_MIN), (bottom - rows_top - (count - 1)) / count)
-        return [(rows_top + index * (each + 1) - self.offset, each) for index in range(count)]
+        box = css_rect(self)
+        columns, rows_top, each = self.columns(), self.rows_top(), self.row_height()
+        inner = box.width() - 42
+        width = (inner - (columns - 1) * self.TILE_GAP) / columns
+        return [
+            QtCore.QRectF(
+                box.x() + 21 + (index % columns) * (width + self.TILE_GAP),
+                rows_top + (index // columns) * (each + 1) - self.offset,
+                width,
+                each,
+            )
+            for index in range(len(self.facts.worlds))
+        ]
 
     def list_height(self) -> tuple[float, float]:
-        """The world list's visible and total height."""
+        """The world grid's visible and total height."""
         if self.facts is None:
             return 0.0, 0.0
-        rows = self.world_rows()
-        total = sum(each for _, each in rows) + max(0, len(rows) - 1)
+        rows = math.ceil(len(self.facts.worlds) / self.columns())
+        total = rows * self.row_height() + max(0, rows - 1)
         return css_rect(self).bottom() - 1 - self.rows_top(), total
 
     def _layout(self) -> None:
         box = css_rect(self)
         self.head.setGeometry(1, 1, self.width() - 2, 52)
         rows_top = self.rows_top() if self.facts else 0.0
-        for stage, (row_top, each) in zip(self.stages, self.world_rows(), strict=False):
-            y = row_top + (each - self.MAP_H) / 2
-            place(stage, box.x() + 21, y, self.MAP_W, self.MAP_H)
+        for stage, tile in zip(self.stages, self.world_tiles(), strict=False):
+            y = tile.y() + self.TILE_PAD
+            place(stage, tile.x(), y, self.MAP_W, self.MAP_H)
             # A stage scrolled partly out of the list is hidden (widgets do not clip to the list).
             stage.setVisible(y >= rows_top - 1 and y + self.MAP_H <= box.bottom())
 
@@ -749,12 +770,16 @@ class AcceptedCard(Card):
         painter.setClipRect(
             QtCore.QRectF(left + 1, rows_top, width - 2, box.bottom() - 1 - rows_top)
         )
-        rows = self.world_rows()
-        facts_x = x + self.MAP_W + self.MAP_GAP
-        for index, ((row_top, each), world) in enumerate(zip(rows, facts.worlds, strict=True)):
-            if index < len(rows) - 1:
-                painter.fillRect(QtCore.QRectF(x, row_top + each, inner, 1), line)
-            self._paint_world(painter, world, facts_x, row_top, each, x + inner - facts_x)
+        tiles, columns = self.world_tiles(), self.columns()
+        for index, (tile, world) in enumerate(zip(tiles, facts.worlds, strict=True)):
+            if index % columns == 0 and index + columns < len(
+                tiles
+            ):  # a rule under each full grid row
+                painter.fillRect(QtCore.QRectF(x, tile.bottom(), inner, 1), line)
+            facts_x = tile.x() + self.MAP_W + self.MAP_GAP
+            self._paint_world(
+                painter, world, facts_x, tile.y(), tile.height(), tile.right() - facts_x
+            )
         painter.setClipping(False)
         visible, total = self.list_height()
         paint_scroll_handle(painter, self, rows_top, visible, self.offset, total)

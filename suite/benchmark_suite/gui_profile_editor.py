@@ -15,8 +15,9 @@
 """The profile editor (14): an overlay modal on the window's ``ModalHost``.
 
 It keeps the rules of the earlier dialog: managed parameters and hidden groups are not shown (their requested
-values are kept), integer and float fields validate as before, MOGI adds its physical settings, an edit saves
-a new revision of the family while New starts a family, explorer YAML imports through
+values are kept), integer and float fields validate as before, MOGI adds its physical settings, an edit
+replaces the saved profile (the engine gives it a new ID under the same ``family_id``) while New saves another
+one, explorer YAML imports through
 ``parameters.resolve`` and exports the resolved values, and errors stay in the editor.
 """
 
@@ -284,7 +285,7 @@ class ProfileEditor(ModalCard):
     """``.dialog.modal`` (14), 1040×640: title, Robot (locked), Name and Description; the editor's group tabs
     with change pills and "Changed only"; the column header (Parameter, "<robot> Default", Value); the rows;
     an error line when something failed; the footer with Import YAML, Export YAML, Reset to Default, the
-    change count, Close and "Save revision N"."""
+    change count, Close and "Save changes" (Edit) or "Save profile" (New)."""
 
     saved = QtCore.Signal()
     accepted = QtCore.Signal(object)
@@ -300,7 +301,6 @@ class ProfileEditor(ModalCard):
         profile: dict[str, Any],
         *,
         mode: Mode = "edit",
-        next_revision: int = 1,
     ) -> None:
         super().__init__(themes)
         self.setFixedSize(WIDTH, HEIGHT)
@@ -367,7 +367,10 @@ class ProfileEditor(ModalCard):
         close = Button(themes, "Close")
         close.clicked.connect(lambda: self.finish(False))
         self.save_button = Button(
-            themes, f"Save revision {next_revision}", icon="check", variant="primary"
+            themes,
+            "Save changes" if mode == "edit" else "Save profile",
+            icon="check",
+            variant="primary",
         )
         self.save_button.clicked.connect(self.save)
         for widget in (self.import_button, self.export_button, reset):
@@ -591,9 +594,7 @@ class ProfileEditor(ModalCard):
         if operation == "save":
             self.accepted.emit(result)
             self.saved.emit()
-            self.notify.emit(
-                f"Saved “{result.get('name', '')}” revision {result.get('revision', '')}", "ok", 0
-            )
+            self.notify.emit(f"Saved “{result.get('name', '')}”", "ok", 0)
             self.finish(True)
         elif operation == "import":
             self.transport.submit(

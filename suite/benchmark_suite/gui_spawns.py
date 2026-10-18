@@ -35,9 +35,10 @@ from .gui_cells import PaintedColumn, PaintedTable
 from .gui_controls import KeySelect
 from .gui_maps import FREE, WALL, Placement, WorldMap, paint_spawn, paint_spawn_label
 from .gui_mapview import LiveMap, MapControls
+from .gui_dialogs import Consequences, ListRow, Run
 from .gui_menus import Menu
 from .gui_style import fixed
-from .gui_support import Transport
+from .gui_support import Transport, stale_engine_message
 from .gui_theme import ThemeManager, font, snap
 from .gui_widgets import (
     BODY,
@@ -52,6 +53,7 @@ from .gui_widgets import (
     CardSplit,
     CssBox,
     FlexRow,
+    ModalHost,
     PopupHost,
     Rule,
     TextLine,
@@ -63,6 +65,10 @@ from .gui_widgets import (
     shadow_margin,
 )
 
+SPAWN_DELETION_FOOTNOTE = (
+    "Submitted campaigns, their results and reports keep the exact poses they recorded. "
+    "Campaign YAML files that name its ID will no longer validate."
+)
 NAME_SCAN_PAGES = 40  # bound on the spawn-name scan per pass (250 names per page)
 LIST_PAGE, LIST_LIMIT = 250, 2000
 WORLD_TAG = TextStyle(11.5, 400, 18)
@@ -77,14 +83,14 @@ DEFAULT_KEY = "default"
 
 @dataclass(frozen=True, slots=True)
 class Pose:
-    """A starting position in the list: the world's Default or a saved spawn revision."""
+    """A starting position in the list: the world's Default or a saved spawn."""
 
-    key: str  # DEFAULT_KEY or the revision ID
+    key: str  # DEFAULT_KEY or the saved spawn's ID
     name: str
     x: float
     y: float
     yaw: float  # radians, counter-clockwise from east
-    revision: int | None = None  # None for the Default
+    family: str = ""  # the saved spawn's stable key (``family_id``); empty for the Default
 
     @property
     def default(self) -> bool:
@@ -154,8 +160,8 @@ def footprint_size(footprint: Sequence[Sequence[float]]) -> str:
 
 
 class PositionsTable(PaintedTable):
-    """``.saved .tbl``: Name, X · m, Y · m, Heading, Rev.; the Default row dimmed with "world" after its name
-    and a lock for its revision; the template row selected (fill and ink bar)."""
+    """``.saved .tbl``: Name, X · m, Y · m, Heading; the Default row dimmed with "world" and a lock after its
+    name; the template row selected (fill and ink bar)."""
 
     chosen = QtCore.Signal(int)
 
@@ -166,8 +172,7 @@ class PositionsTable(PaintedTable):
                 PaintedColumn("Name", None, padding=20, padding_right=10),
                 PaintedColumn("X · m", 62, padding=10, padding_right=10, right=True),
                 PaintedColumn("Y · m", 62, padding=10, padding_right=10, right=True),
-                PaintedColumn("Heading", 74, padding=10, padding_right=10, right=True),
-                PaintedColumn("Rev.", 44, padding=10, padding_right=20, right=True),
+                PaintedColumn("Heading", 84, padding=10, padding_right=20, right=True),
             ],
             parent,
             header_height=36,
@@ -235,7 +240,9 @@ class PositionsTable(PaintedTable):
             x = 20 + draw_text(
                 painter, 20, line_top, "Default", BODY_MEDIUM, theme.color("text.secondary")
             )
-            draw_text(painter, x + 6, line_top, "world", WORLD_TAG, tertiary)
+            x += 6 + draw_text(painter, x + 6, line_top, "world", WORLD_TAG, tertiary)
+            origin = QtCore.QPointF(x + 6, snap(rect.top() + (content - 14) / 2))
+            gui_icons.draw(painter, "lock", tertiary, origin, 14)
         else:
             name = BODY_MEDIUM.elide(pose.name, room)
             draw_text(painter, 20, line_top, name, BODY_MEDIUM, theme.color("text.ink"))
@@ -246,24 +253,20 @@ class PositionsTable(PaintedTable):
         )
         for column, text in zip((1, 2, 3), values, strict=True):
             left, width = spans[column]
-            x = left + width - 10 - BODY_TABULAR.advance(text)
-            draw_text(painter, x, line_top, text, BODY_TABULAR, number)
-        left, width = spans[4]
-        if pose.default:
-            origin = QtCore.QPointF(left + width - 20 - 14, snap(rect.top() + (content - 14) / 2))
-            gui_icons.draw(painter, "lock", tertiary, origin, 14)
-        else:
-            text = "—" if pose.revision is None else str(pose.revision)
-            x = left + width - 20 - BODY_TABULAR.advance(text)
+            x = left + width - self.columns[column].padding_right - BODY_TABULAR.advance(text)
             draw_text(painter, x, line_top, text, BODY_TABULAR, number)
 
 
 class PositionsCard(Card):
-    """``.saved``: "Starting positions" with the ⋯ menu (Import YAML, Export YAML; D1) over the table."""
+    """``.saved``: "Starting positions" with Delete… (the selected saved spawn) and the ⋯ menu (Import YAML,
+    Export YAML; D1) over the table."""
 
     def __init__(self, themes: ThemeManager, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(themes, parent)
         self.head = CardHead(themes, "Starting positions", self)
+        self.delete = Button(themes, "Delete…", icon="trash", variant="danger", small=True)
+        self.delete.setEnabled(False)
+        self.head.add(self.delete)
         self.more = Button(themes, icon="more", small=True, icon_size=14)
         self.more.setToolTip("Import YAML, Export YAML")
         self.more.setAccessibleName("Spawn YAML")
@@ -885,6 +888,7 @@ class WorldsPage(QtWidgets.QWidget):
     window that the spawn library changed."""
 
     changed = QtCore.Signal()
+    deleted = QtCore.Signal(object)  # the spawns.delete reply
     notify = QtCore.Signal(str, str, int)
 
     def __init__(
@@ -926,6 +930,7 @@ class WorldsPage(QtWidgets.QWidget):
         self.positions = PositionsCard(themes, self)
         self.positions.table.chosen.connect(self.choose)
         self.positions.more.clicked.connect(self.open_menu)
+        self.positions.delete.clicked.connect(self.delete_spawn)
         self.form = PoseForm(themes, self)
         for field in (self.form.x_field, self.form.y_field, self.form.heading_field):
             field.textChanged.connect(self.update_pose)
@@ -1037,7 +1042,6 @@ class WorldsPage(QtWidgets.QWidget):
                 x, y, yaw = (float(snapshot[key]) for key in ("x", "y", "yaw"))
             except (KeyError, TypeError, ValueError):
                 continue
-            revision = row.get("revision")
             saved.append(
                 Pose(
                     str(row["id"]),
@@ -1045,18 +1049,17 @@ class WorldsPage(QtWidgets.QWidget):
                     x,
                     y,
                     yaw,
-                    revision if isinstance(revision, int) else None,
+                    str(row.get("family_id") or ""),
                 )
             )
-        saved.sort(
-            key=lambda pose: (pose.name.casefold(), pose.revision or 0)
-        )  # by name, as 06 and 15
+        saved.sort(key=lambda pose: (pose.name.casefold(), pose.key))  # by name, as 06 and 15
         poses = self.poses[:1] + saved
         if [p.key for p in poses] != [p.key for p in self.poses]:
             key = self.poses[self.template].key if self.template < len(self.poses) else DEFAULT_KEY
             self.poses = poses
             self.template = next((i for i, p in enumerate(poses) if p.key == key), 0)
             self.positions.table.set_poses(poses, self.template)
+            self.update_delete()
             self._layout()
             self._update_map()
 
@@ -1074,6 +1077,7 @@ class WorldsPage(QtWidgets.QWidget):
         self.form.heading_field.set_value(heading_degrees(pose.yaw))
         self.exact_yaw = (self.form.heading_field.text(), pose.yaw)
         self.update_pose()
+        self.update_delete()
 
     # the pose
 
@@ -1226,6 +1230,33 @@ class WorldsPage(QtWidgets.QWidget):
         )
         menu.popup(host, self.positions.more)
 
+    def selected_saved(self) -> Pose | None:
+        """The selected row when it is a saved spawn (the Default cannot be deleted)."""
+        pose = self.poses[self.template] if self.template < len(self.poses) else None
+        return None if pose is None or pose.default or not pose.family else pose
+
+    def update_delete(self) -> None:
+        pose = self.selected_saved()
+        self.positions.delete.setEnabled(pose is not None)
+        self.positions.delete.setToolTip(
+            "" if pose else "Select a saved spawn; the world's Default cannot be deleted"
+        )
+
+    def delete_spawn(self) -> None:
+        pose = self.selected_saved()
+        host = self.window().findChild(ModalHost)
+        if pose is None or host is None:
+            return
+        world = self.world_info()
+        dialog = Consequences(self.themes, "Delete spawn")
+        dialog.add_sentence([Run(f"Delete “{pose.name}”? This cannot be undone.")], 6)
+        dialog.add_items([ListRow(pose.name, pose.key[:8], str(world["label"]) if world else "")])
+        dialog.add_footnote(SPAWN_DELETION_FOOTNOTE, ruled=False)
+        dialog.add_button("Cancel", False, default=True)
+        dialog.add_button("Delete spawn", True, variant="danger-solid", icon="trash")
+        if host.exec_card(dialog):
+            self.transport.submit("spawn-delete", "spawns.delete", {"family_ids": [pose.family]})
+
     def import_spawn(self) -> None:
         path, _ = QtWidgets.QFileDialog.getOpenFileName(
             self, "Import spawn", "", "YAML (*.yaml *.yml)"
@@ -1242,7 +1273,7 @@ class WorldsPage(QtWidgets.QWidget):
         )
         if path:
             self.export_path = path
-            self.transport.submit("spawn-edit:export", "spawns.export", {"revision_id": pose.key})
+            self.transport.submit("spawn-edit:export", "spawns.export", {"id": pose.key})
 
     # replies
 
@@ -1290,6 +1321,17 @@ class WorldsPage(QtWidgets.QWidget):
                 self.suggest_name(world)
         elif tag == "spawn-edit:written":
             self.notify.emit("Spawn YAML exported", "ok", 5000)
+        elif tag == "spawn-delete":
+            self.deleted.emit(result)
+            names = sorted({str(r["name"]) for r in result.get("deleted", [])})
+            self.notify.emit(
+                f"Deleted {', '.join(f'“{n}”' for n in names)}; "
+                f"{result.get('referenced_campaigns', 0)} submitted campaigns keep their poses",
+                "ok",
+                8000,
+            )
+            self.changed.emit()
+            self.refresh()
         else:
             return tag == "spawn-map"  # a map reply for another world
         return True
@@ -1312,6 +1354,10 @@ class WorldsPage(QtWidgets.QWidget):
             self.update_pose()
         elif tag.startswith("spawn-edit:"):
             self.notify.emit(message, "bad", 0)
+        elif tag == "spawn-delete":
+            stale = stale_engine_message(message, "Unsupported library operation", "spawn deletion")
+            self.notify.emit(stale or message, "bad", 0)
+            self.refresh()
         elif tag == "spawn-map":
             self.map_card.map.set_message("Map unavailable: " + message)
         else:

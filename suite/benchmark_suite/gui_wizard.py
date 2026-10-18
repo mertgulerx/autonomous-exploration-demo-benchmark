@@ -52,7 +52,7 @@ from .gui_widgets import (
 )
 
 StepState = Literal["current", "done", "future"]
-# A profile or spawn as a campaign names it: "Default", a library revision ID, or an inline snapshot.
+# A profile or spawn as a campaign names it: "Default", a saved ID, or an inline snapshot.
 Reference = str | dict[str, Any]
 
 WIZARD_TITLE = TextStyle(22, 600, 28)  # the wizard's h1 has no page-head letter spacing

@@ -59,11 +59,11 @@ PROFILE_FIELDS = {
     "metadata_hash",
     "hash",
     "family_id",
-    "revision",
     "created_ns",
 }
-# Retired keys accepted from recorded snapshots and earlier YAML, then ignored (tags, 16 October 2026).
-LEGACY_PROFILE_FIELDS = frozenset({"tags"})
+# Retired keys accepted from recorded snapshots and earlier YAML, then ignored (tags, 16 October 2026;
+# library revision numbers, 18 October 2026).
+LEGACY_PROFILE_FIELDS = frozenset({"tags", "revision"})
 
 
 def load_yaml(source: str) -> dict[str, Any]:
@@ -129,7 +129,7 @@ class Library:
         ):
             raise ContractError(
                 "profile",
-                "Stored profile uses different defaults or metadata; import its explorer YAML to create an explicit revision",
+                "Stored profile uses different defaults or metadata; import its explorer YAML to save it as a new profile",
             )
         requested = mapping(value.get("requested", value.get("overrides", {})), "overrides")
         physical = mapping(value.get("robot_overrides", {}), "robot_overrides")
@@ -164,9 +164,8 @@ class Library:
             raise ContractError("description", "Use a description up to 4096 characters")
         if "family_id" in value:
             result["family_id"] = text(value["family_id"], "family_id")
-        for key in ("revision", "created_ns"):
-            if key in value:
-                result[key] = integer(value[key], key, 1, 2**63 - 1)
+        if "created_ns" in value:
+            result["created_ns"] = integer(value["created_ns"], "created_ns", 1, 2**63 - 1)
         result["hash"] = content_hash(result)
         result["id"] = text(
             value.get(
@@ -233,17 +232,21 @@ class Library:
             "defaults": {"concurrency": 1},
         }
 
-    def _revision(self, identity: str, kind: str) -> dict[str, Any]:
+    def _saved(self, identity: str, kind: str) -> dict[str, Any]:
+        """A saved profile or spawn by its ID. Rows saved before revisions were removed (18 October 2026)
+        carry a ``revision`` number in their snapshot; it is dropped so new campaigns never record it."""
         if self.store is None:
             raise RuntimeError("Library is not attached to the engine")
         row = self.store.one("SELECT * FROM library WHERE id=? AND kind=?", (identity, kind))
         if not row:
             raise ContractError(
-                "revision_id",
-                f"Library revision {identity} does not exist; it may have been deleted",
+                "id",
+                f"Saved {kind} {identity} does not exist; it may have been edited or deleted",
                 "not_found",
             )
-        return mapping(json.loads(row["snapshot"]), "snapshot")
+        snapshot = mapping(json.loads(row["snapshot"]), "snapshot")
+        snapshot.pop("revision", None)
+        return snapshot
 
     def resolve_campaign(self, raw: dict[str, Any]) -> CampaignSpec:
         allowed = {
@@ -270,7 +273,7 @@ class Library:
                     if item in ("Default", "default", "default-" + robot_id):
                         item = {"name": "Default", "id": "default-" + robot_id}
                     else:
-                        item = self._revision(item, "profile")
+                        item = self._saved(item, "profile")
                         if item["robot_id"] != robot_id:
                             raise ContractError("profiles", "Profile belongs to another robot")
                 value = mapping(item, "profile")
@@ -294,7 +297,7 @@ class Library:
                             "yaw": yaw,
                         }
                     else:
-                        item = self._revision(item, "spawn")
+                        item = self._saved(item, "spawn")
                         if item["world_id"] != world_id:
                             raise ContractError("spawns", "Spawn belongs to another world")
                         item = {
@@ -336,45 +339,50 @@ class Library:
     def _save(
         self, store: Store, kind: str, owner: str, value: dict[str, Any], family_id: str | None
     ) -> dict[str, Any]:
+        """Save a profile or spawn under a new ID. ``family_id`` is a saved item's stable key: an edit
+        names it, and the new row replaces the item's previous one, so the library holds one row per item
+        while accepted campaigns keep their own copies. The item keeps its creation time."""
         if family_id is not None:
             family_id = text(family_id, "family_id")
         family = family_id or str(uuid.uuid4())
-        previous = store.one(
-            "SELECT * FROM library WHERE family_id=? ORDER BY revision DESC LIMIT 1", (family,)
+        previous = store.rows(
+            "SELECT id,kind,owner,created_ns FROM library WHERE family_id=?", (family,)
         )
         if family_id and not previous:
             raise ContractError(
-                "family_id",
-                "This profile was deleted; save it as a new profile",
-                "not_found",
+                "family_id", f"This {kind} was deleted; save it as a new {kind}", "not_found"
             )
-        if family_id and previous and (previous["owner"] != owner or previous["kind"] != kind):
-            raise ContractError("family_id", "Revision family does not match this library")
-        revision = previous["revision"] + 1 if previous else 1
-        result = dict(
-            value,
-            id=str(uuid.uuid4()),
-            family_id=family,
-            revision=revision,
-            created_ns=time.time_ns(),
-        )
+        if any(row["owner"] != owner or row["kind"] != kind for row in previous):
+            owner_kind = "robot" if kind == "profile" else "world"
+            raise ContractError("family_id", f"This {kind} belongs to another {owner_kind}")
+        created = min((row["created_ns"] for row in previous), default=time.time_ns())
+        result = dict(value, id=str(uuid.uuid4()), family_id=family, created_ns=created)
         result.pop("hash", None)
         result["hash"] = content_hash(result)
+        store.db.execute("DELETE FROM library WHERE family_id=?", (family,))
+        # The schema's revision column predates the removal of revisions; every row now holds 1.
         store.db.execute(
-            "INSERT INTO library(id,kind,owner,name,family_id,revision,snapshot,hash,created_ns) VALUES(?,?,?,?,?,?,?,?,?)",
+            "INSERT INTO library(id,kind,owner,name,family_id,revision,snapshot,hash,created_ns) VALUES(?,?,?,?,?,1,?,?,?)",
             (
                 result["id"],
                 kind,
                 owner,
                 result["name"],
                 family,
-                revision,
                 canonical(result),
                 result["hash"],
                 result["created_ns"],
             ),
         )
-        store.event("library.saved", {"kind": kind, "id": result["id"], "revision": revision})
+        store.event(
+            "library.saved",
+            {
+                "kind": kind,
+                "id": result["id"],
+                "family_id": family,
+                "replaced": [row["id"] for row in previous],
+            },
+        )
         return result
 
     def handle(self, method: str, params: dict[str, Any], store: Store) -> Any:
@@ -383,8 +391,8 @@ class Library:
             robot = text(params.get("robot_id", "mogi"), "robot_id")
             return self.resolve_profile(robot, params)
         if method in ("profiles.get", "spawns.get"):
-            return self._revision(
-                text(params.get("revision_id"), "revision_id"),
+            return self._saved(
+                text(params.get("id"), "id"),
                 "profile" if method.startswith("profiles") else "spawn",
             )
         if method in ("profiles.list", "spawns.list"):
@@ -401,17 +409,14 @@ class Library:
                 filters["owner"] = params[field]
             if params.get("tag"):
                 raise ContractError("tag", "Tag filtering was removed; search by profile name")
-            if not params.get("search"):
-                return store.query(
-                    "library",
-                    filters,
-                    params.get("offset", 0),
-                    params.get("limit", 100),
-                    summary=params.get("summary", False),
-                )
             offset = integer(params.get("offset", 0), "offset", 0, 2**63 - 1)
             limit = integer(params.get("limit", 100), "limit", 1, 250)
-            clauses, arguments = ["kind=?"], [kind]
+            # One row per item: a family saved before revisions were removed may still hold older rows.
+            latest = (
+                "NOT EXISTS(SELECT 1 FROM library newer WHERE newer.family_id=library.family_id "
+                "AND newer.revision>library.revision)"
+            )
+            clauses, arguments = ["kind=?", latest], [kind]
             if "archived" in filters:
                 clauses.append("archived=?")
                 arguments.append(filters["archived"])
@@ -425,8 +430,8 @@ class Library:
             summary = params.get("summary", False)
             if type(summary) is not bool:
                 raise ContractError("summary", "Expected boolean")
-            selection = (
-                "id,kind,owner,name,family_id,revision,hash,archived,created_ns" if summary else "*"
+            selection = "id,kind,owner,name,family_id,hash,archived,created_ns" + (
+                "" if summary else ",snapshot"
             )
             rows = store.rows(
                 "SELECT "
@@ -442,6 +447,7 @@ class Library:
             for row in rows:
                 if "snapshot" in row:
                     row["snapshot"] = json.loads(row["snapshot"])
+                    row["snapshot"].pop("revision", None)
             return {
                 "rows": rows,
                 "total": total,
@@ -453,7 +459,7 @@ class Library:
             value = self.resolve_profile(robot, params)
             return self._save(store, "profile", robot, value, params.get("family_id"))
         if method == "profiles.export":
-            value = self._revision(text(params.get("revision_id"), "revision_id"), "profile")
+            value = self._saved(text(params.get("id"), "id"), "profile")
             if params.get("format", "explorer") == "explorer":
                 return {"yaml": self.schema.yaml(value["effective"])}
             if params["format"] != "suite":
@@ -490,7 +496,7 @@ class Library:
             return self._save(store, "profile", robot, self.resolve_profile(robot, value), None)
         if method in ("spawns.export", "spawns.import"):
             if method.endswith("export"):
-                value = self._revision(text(params.get("revision_id"), "revision_id"), "spawn")
+                value = self._saved(text(params.get("id"), "id"), "spawn")
                 return {
                     "yaml": yaml.safe_dump(
                         {
@@ -538,56 +544,58 @@ class Library:
         if method == "spawns.map":
             return self._map(text(params.get("world_id"), "world_id"))
         if method == "profiles.delete":
-            return self._delete_profiles(params, store)
+            return self._delete_family(params, store, "profile")
+        if method == "spawns.delete":
+            return self._delete_family(params, store, "spawn")
         raise ContractError("method", "Unsupported library operation")
 
-    def _delete_profiles(self, params: dict[str, Any], store: Store) -> dict[str, Any]:
-        """Delete whole profiles (every revision), all or nothing; campaigns keep their own copies."""
+    def _delete_family(self, params: dict[str, Any], store: Store, kind: str) -> dict[str, Any]:
+        """Delete saved profiles or spawns by their stable keys, all or nothing; campaigns keep their own
+        copies. A world's Default spawn is not a saved spawn and cannot be deleted."""
         known_keys(params, {"family_ids"}, "params")
         identities = params.get("family_ids")
+        noun = kind + "s"
         if not isinstance(identities, list) or not 1 <= len(identities) <= PROFILE_DELETION_LIMIT:
-            raise ContractError("family_ids", f"Choose 1–{PROFILE_DELETION_LIMIT} profiles")
+            raise ContractError("family_ids", f"Choose 1–{PROFILE_DELETION_LIMIT} {noun}")
         identities = [text(identity, "family_ids") for identity in identities]
         if len(set(identities)) != len(identities):
-            raise ContractError("family_ids", "Each profile may appear once")
+            raise ContractError("family_ids", f"Each {kind} may appear once")
+        # A family saved before revisions were removed may still hold older rows; they go too.
         rows = store.rows(
-            "SELECT id,owner,name,family_id,revision,hash FROM library WHERE kind='profile' "
-            "AND family_id IN (SELECT value FROM json_each(?)) ORDER BY family_id,revision",
-            (canonical(identities),),
+            "SELECT id,owner,name,family_id,hash FROM library WHERE kind=? "
+            "AND family_id IN (SELECT value FROM json_each(?)) ORDER BY family_id,created_ns",
+            (kind, canonical(identities)),
         )
         missing = sorted(set(identities) - {row["family_id"] for row in rows})
         if missing:
             raise ContractError(
                 "family_ids",
-                "Profile does not exist or was already deleted: " + ", ".join(missing),
+                f"{kind.capitalize()} does not exist or was already deleted: " + ", ".join(missing),
                 "not_found",
             )
+        column = "profile_id" if kind == "profile" else "spawn_id"
         used = store.one(
-            "SELECT COUNT(DISTINCT campaign_id) n FROM experiments "
-            "WHERE profile_id IN (SELECT value FROM json_each(?))",
+            f"SELECT COUNT(DISTINCT campaign_id) n FROM experiments "
+            f"WHERE {column} IN (SELECT value FROM json_each(?))",
             (canonical([row["id"] for row in rows]),),
         )
         referenced = used["n"] if used else 0
         store.db.execute(
-            "DELETE FROM library WHERE kind='profile' AND family_id IN (SELECT value FROM json_each(?))",
-            (canonical(identities),),
+            "DELETE FROM library WHERE kind=? AND family_id IN (SELECT value FROM json_each(?))",
+            (kind, canonical(identities)),
         )
         store.event(
             "library.deleted",
             {
-                "kind": "profile",
+                "kind": kind,
                 "family_ids": identities,
-                "revisions": rows,
+                "rows": rows,
                 "referenced_campaigns": referenced,
             },
         )
         return {
             "family_ids": identities,
-            "revisions": [
-                {k: row[k] for k in ("id", "family_id", "owner", "name", "revision")}
-                for row in rows
-            ],
-            "deleted_revisions": len(rows),
+            "deleted": [{k: row[k] for k in ("id", "family_id", "owner", "name")} for row in rows],
             "referenced_campaigns": referenced,
         }
 
