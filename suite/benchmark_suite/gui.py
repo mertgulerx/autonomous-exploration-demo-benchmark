@@ -210,6 +210,7 @@ class Window(QtWidgets.QMainWindow):
         self.builder = CampaignBuilder(self.transport, self.themes)
         self.builder.message.connect(self.builder_message)
         self.builder.return_requested.connect(lambda: self.go("campaigns"))
+        self.builder.tuning_started.connect(self.open_tuning_run)
         self.builder.edit_profile.connect(self.edit_builder_profile)
         layout.addWidget(self.builder, 1)
 
@@ -240,8 +241,8 @@ class Window(QtWidgets.QMainWindow):
         self.monitor.notify.connect(self.page_notice)
         layout.addWidget(self.monitor, 1)
 
-    def page_notice(self, text: str, kind: str, timeout_ms: int) -> None:
-        """A page's message as a toast (``ok``, ``warn``, ``bad`` or ``neutral``; 0 ms: the default)."""
+    def page_notice(self, text: str, kind: str) -> None:
+        """A page's message as a toast (``ok``, ``warn``, ``bad`` or ``neutral``)."""
         tone: ToastKind = (
             "ok"
             if kind == "ok"
@@ -251,7 +252,7 @@ class Window(QtWidgets.QMainWindow):
             if kind == "bad"
             else "neutral"
         )
-        self.notify(text, tone, timeout_ms or 5000)
+        self.notify(text, tone)
 
     def open_worker(self, attempt_id: str) -> None:
         """A Live on the map tile: the Monitor with that run selected."""
@@ -289,12 +290,17 @@ class Window(QtWidgets.QMainWindow):
         self.poll_errors[tag] = error
         return True
 
+    def open_tuning_run(self) -> None:
+        """A started tuning run: Monitor follows it as the sole active run once the status shows it."""
+        self.navigate("monitor")
+        self.refresh_status()
+
     def navigate(self, key: str) -> None:
         self.go(self._campaign_page if key == "campaigns" else key)
 
-    def notify(self, text: str, kind: ToastKind = "neutral", timeout_ms: int = 5000) -> None:
-        """A toast (the design has no status bar); errors (``bad``) fade after 5 s; all are dismissible."""
-        self.toasts.show_message(text, kind, timeout_ms)
+    def notify(self, text: str, kind: ToastKind = "neutral") -> None:
+        """A toast (the design has no status bar); every toast fades after 3 s and is dismissible."""
+        self.toasts.show_message(text, kind)
 
     def refresh_status(self) -> None:
         if not self.status_pending:
@@ -383,7 +389,7 @@ class Window(QtWidgets.QMainWindow):
             self.campaigns.refresh()
             count = len(result["deleted"])
             self.notify(
-                f"Deleted {count} campaign{'s' if count != 1 else ''}; removing files…", "ok", 10000
+                f"Deleted {count} campaign{'s' if count != 1 else ''}; removing files…", "ok"
             )
             self.update_delete_button()
         elif tag.startswith("campaign-restart:"):
@@ -396,7 +402,6 @@ class Window(QtWidgets.QMainWindow):
                 if result["state"] == "RUNNING"
                 else f"Queued “{result['name']}”; it runs after the current campaign",
                 "ok",
-                10000,
             )
             self.campaigns.refresh()
         elif tag == "campaign-status":
@@ -552,9 +557,7 @@ class Window(QtWidgets.QMainWindow):
             return
         if len(identities) > CAMPAIGN_DELETION_LIMIT:
             self.notify(
-                f"Select at most {CAMPAIGN_DELETION_LIMIT} campaigns to delete at once",
-                "warn",
-                8000,
+                f"Select at most {CAMPAIGN_DELETION_LIMIT} campaigns to delete at once", "warn"
             )
             return
         self.deletion_pending = True
@@ -579,7 +582,7 @@ class Window(QtWidgets.QMainWindow):
         message = " ".join(parts)
         if message != self.deletion_message:
             self.deletion_message = message
-            self.notify(message, "bad" if deletions["failed"] else "neutral", 10000)
+            self.notify(message, "bad" if deletions["failed"] else "neutral")
 
     def clear_campaign(self) -> None:
         self.campaign_id = None

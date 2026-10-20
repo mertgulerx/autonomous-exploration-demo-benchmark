@@ -840,7 +840,7 @@ class ProfilesPage(QtWidgets.QWidget):
     open_requested = QtCore.Signal(str)  # "new" or "edit"
     library_changed = QtCore.Signal()
     deleted = QtCore.Signal(object)  # the profiles.delete reply
-    notify = QtCore.Signal(str, str, int)  # text, kind, timeout (ms)
+    notify = QtCore.Signal(str, str)  # text, kind
 
     def __init__(
         self, themes: ThemeManager, transport: Transport, parent: QtWidgets.QWidget | None = None
@@ -1081,7 +1081,7 @@ class ProfilesPage(QtWidgets.QWidget):
         families = {record["family_id"]: record for record in records}
         if len(families) > PROFILE_DELETION_LIMIT:
             self.notify.emit(
-                f"Select at most {PROFILE_DELETION_LIMIT} profiles to delete at once", "warn", 8000
+                f"Select at most {PROFILE_DELETION_LIMIT} profiles to delete at once", "warn"
             )
             return
         host = self.window().findChild(ModalHost)
@@ -1174,7 +1174,6 @@ class ProfilesPage(QtWidgets.QWidget):
                 f"Deleted {count} profile{'s' if count != 1 else ''}; "
                 f"{result['referenced_campaigns']} campaigns keep their recorded parameters",
                 "ok",
-                10000,
             )
             self.library_changed.emit()
             return True
@@ -1185,7 +1184,7 @@ class ProfilesPage(QtWidgets.QWidget):
             return True
         if tag == "profile-import":
             self.library_changed.emit()
-            self.notify.emit("Library saved", "ok", 6000)
+            self.notify.emit("Library saved", "ok")
             return True
         if tag == "profile-export":
             self.transport.submit(
@@ -1193,7 +1192,7 @@ class ProfilesPage(QtWidgets.QWidget):
             )
             return True
         if tag == "file-saved":
-            self.notify.emit("Export saved", "ok", 5000)
+            self.notify.emit("Export saved", "ok")
             return True
         return False
 

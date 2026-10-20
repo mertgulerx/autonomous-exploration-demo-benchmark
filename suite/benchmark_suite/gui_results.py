@@ -1128,7 +1128,7 @@ class ResultsPage(QtWidgets.QWidget):
     # The selected run's attempt and directory: the Monitor's Logs view reads it until a live run is chosen
     # there (as before the redesign).
     attempt_selected = QtCore.Signal(str, object)
-    notify = QtCore.Signal(str, str, int)
+    notify = QtCore.Signal(str, str)  # text, kind
 
     def __init__(
         self, themes: ThemeManager, transport: Transport, parent: QtWidgets.QWidget | None = None
@@ -1464,7 +1464,7 @@ class ResultsPage(QtWidgets.QWidget):
             return True
         if tag.startswith("report-generate:") and tag == self.report_browser.generation_tag:
             self.generate.setEnabled(bool(self.campaign_id))
-            self.notify.emit("Report queued", "ok", 6000)
+            self.notify.emit("Report queued", "ok")
             return False  # the report browser refreshes its list too
         if tag.startswith("result-count:"):
             _, generation, outcome = tag.split(":", 2)

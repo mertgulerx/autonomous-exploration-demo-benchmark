@@ -897,6 +897,7 @@ class RobotSelector(QtWidgets.QWidget):
         self._has_more: dict[str, bool] = {}
         self._initialized = False
         self._open_popups: dict[str, ProfilesPopup] = {}
+        self._single = False  # a tuning run: one robot with one profile
         outer = QtWidgets.QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         self.grid = CardGrid(robot_columns, 330)
@@ -973,6 +974,29 @@ class RobotSelector(QtWidgets.QWidget):
             self._sync_card(identity)
         if left_out:
             self.notice.emit(self._left_out_text(left_out))
+
+    def set_single(self, single: bool) -> None:
+        """A tuning run allows one robot with one profile: the first selected robot and profile stay."""
+        self._single = single
+        if not single:
+            return
+        kept = next(
+            (str(r["id"]) for r in self._catalog if self._selected.get(str(r["id"]), False)), None
+        )
+        changed = False
+        for robot in self._catalog:
+            identity = str(robot["id"])
+            if self._selected.get(identity, False) and identity != kept:
+                self._selected[identity] = False
+                self._close_popup(identity)
+                changed = True
+            references = self._references.get(identity, ["Default"])
+            if len(references) > 1:
+                self._references[identity] = references[:1]
+                changed = True
+            self._sync_card(identity)
+        if changed:
+            self.changed.emit()
 
     @staticmethod
     def _left_out_text(labels: list[str]) -> str:
@@ -1128,6 +1152,12 @@ class RobotSelector(QtWidgets.QWidget):
             self._sync_card(robot_id)
             return
         self._selected[robot_id] = checked
+        if checked and self._single:  # a tuning run: choosing a robot deselects the others
+            for other, selected in tuple(self._selected.items()):
+                if selected and other != robot_id:
+                    self._selected[other] = False
+                    self._close_popup(other)
+                    self._sync_card(other)
         if checked and not self._references.get(robot_id):
             self._references[robot_id] = ["Default"]
         self._sync_card(robot_id)
@@ -1167,6 +1197,9 @@ class RobotSelector(QtWidgets.QWidget):
                 )
 
     def _append_reference(self, robot_id: str, reference: Reference) -> None:
+        if self._single:  # a tuning run: the added profile replaces the selected one
+            self._references[robot_id] = [deepcopy(reference)]
+            return
         references = self._references.setdefault(robot_id, ["Default"])
         identity = _key(robot_id, reference)
         if all(_key(robot_id, existing) != identity for existing in references):
@@ -1263,6 +1296,13 @@ class RobotSelector(QtWidgets.QWidget):
 
     def _set_profiles(self, robot_id: str, references: list[Reference]) -> None:
         if not references:
+            return
+        if self._single and len(references) > 1:  # a tuning run: the newly ticked profile only
+            before = {_key(robot_id, r) for r in self._references.get(robot_id, [])}
+            added = [r for r in references if _key(robot_id, r) not in before]
+            self._references[robot_id] = [deepcopy((added or references)[-1])]
+            self._sync_card(robot_id)
+            self.changed.emit()
             return
         self._references[robot_id] = deepcopy(references)
         self._sync_card(robot_id, refresh_popup=False)

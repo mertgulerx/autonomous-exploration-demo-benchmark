@@ -224,6 +224,9 @@ class CampaignSpec:
     world_time_limits: tuple[tuple[str, float], ...]
     exclusions: tuple[tuple[str, str, str], ...]
     source_campaign_id: str | None = None
+    # A tuning run: set only by tuning.start (submitted specifications reject the key); hidden from lists
+    # and replaced by the next tuning run.
+    tuning: bool = False
 
     @classmethod
     def accepted(cls, value: dict[str, Any]) -> "CampaignSpec":
@@ -320,4 +323,5 @@ class CampaignSpec:
             "world_time_limits": dict(self.world_time_limits),
             "exclusions": [list(e) for e in self.exclusions],
             **({"source_campaign_id": self.source_campaign_id} if self.source_campaign_id else {}),
+            **({"tuning": True} if self.tuning else {}),
         }

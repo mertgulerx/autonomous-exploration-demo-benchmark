@@ -80,6 +80,7 @@ class CampaignBuilder(QtWidgets.QWidget):
     toasts (``message``: text and kind, D8)."""
 
     return_requested = QtCore.Signal()
+    tuning_started = QtCore.Signal()  # the window opens Monitor, which follows the sole active run
     edit_profile = QtCore.Signal(str, object)
     message = QtCore.Signal(str, str)
 
@@ -98,6 +99,7 @@ class CampaignBuilder(QtWidgets.QWidget):
         self.submission_tag = ""
         self.import_tag = ""
         self.export_tag = ""
+        self.tuning_tag = ""
         self.step = 0
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -156,6 +158,9 @@ class CampaignBuilder(QtWidgets.QWidget):
         self.footer.validate_button.clicked.connect(lambda: self.submit_design(False))
         self.submit_button = self.footer.submit_button
         self.submit_button.clicked.connect(lambda: self.submit_design(True))
+        self.tuning_box = self.footer.tuning_box
+        self.tuning_box.toggled.connect(self.set_tuning)
+        self.footer.start_button.clicked.connect(self.start_tuning)
         self.robot_selector.changed.connect(self.invalidate)
         self.world_selector.changed.connect(self.invalidate)
         for field in (self.name, self.description):
@@ -218,6 +223,7 @@ class CampaignBuilder(QtWidgets.QWidget):
             self.validated is not None and self.validated_design is not None and not self.import_tag
         )
         self.submit_button.setEnabled(self.validated is not None and not self.submission_tag)
+        self.footer.start_button.setEnabled(not self.tuning_tag and not self.import_tag)
         self.export_button.setEnabled(exportable)
         self.export_button.setToolTip(
             "Save the accepted campaign as YAML" if exportable else "Available after validation"
@@ -243,12 +249,16 @@ class CampaignBuilder(QtWidgets.QWidget):
                     (robot, world, self.spawn_identity(world, s)) not in self.excluded
                     for s in spawns
                 )
-        count *= self.repetitions.value()
+        repetitions = self.repetitions.value()
+        if self.tuning_box.isChecked():  # one run, whatever Execution and Review hold
+            repetitions, count = 1, int(bool(robots and worlds))
+        else:
+            count *= repetitions
         self.footer.totals.set_counts(
             len(robots),
             sum(map(len, robots.values())),
             len(worlds),
-            self.repetitions.value(),
+            repetitions,
             count,
         )
         self.summary.set_facts(self.draft_facts())
@@ -321,12 +331,26 @@ class CampaignBuilder(QtWidgets.QWidget):
             else str(reference)
         )
 
+    def set_tuning(self, tuning: bool) -> None:
+        """A tuning run: one robot, profile, world and starting pose; Execution and Review are skipped and
+        Start run on the worlds step starts it (plans/SUITE_TUNING_RUN.md)."""
+        self.robot_selector.set_single(tuning)
+        self.world_selector.set_single(tuning)
+        for button in self.head.steps.buttons[2:]:
+            button.setEnabled(not tuning)
+        self.show_step(self.step)
+
     def show_step(self, index: int) -> None:
-        self.step = max(0, min(index, 3))
+        tuning = self.tuning_box.isChecked()
+        self.step = max(0, min(index, 1 if tuning else 3))
         self.stack.setCurrentIndex(self.step)
         self.head.steps.set_step(self.step, range(self.step))
         self.back_button.setEnabled(self.step > 0)
-        self.next_button.setVisible(self.step < 3)
+        self.next_button.setVisible(self.step < (1 if tuning else 3))
+        self.footer.start_button.setVisible(tuning and self.step == 1)
+        self.tuning_box.setVisible(self.step <= 1)
+        self.footer.import_button.setVisible(not tuning)
+        self.export_button.setVisible(not tuning)
         self.footer.validate_button.setVisible(self.step == 3)
         self.submit_button.setVisible(self.step == 3)
         self.sync_actions()
@@ -336,7 +360,7 @@ class CampaignBuilder(QtWidgets.QWidget):
         self.footer.relayout()
 
     def set_message(self, text: str, kind: str = "error") -> None:
-        """A toast (D8): errors fade after 5 s, as other messages by default; all are dismissible."""
+        """A toast (D8): it fades after 3 s and is dismissible."""
         self.message.emit(text, {"error": "bad", "success": "ok"}.get(kind, "neutral"))
 
     def next_step(self) -> None:
@@ -353,6 +377,36 @@ class CampaignBuilder(QtWidgets.QWidget):
                 )
                 return
         self.show_step(self.step + 1)
+
+    def start_tuning(self) -> None:
+        """Start run: send the form as one tuning run; the window opens Monitor once it starts."""
+        if self.tuning_tag or self.import_tag:
+            return
+        robots, worlds = self.robot_selector.selections(), self.world_selector.selections()
+        if not robots or not worlds:
+            self.set_message("Select a robot and a world for the tuning run.")
+            return
+        try:
+            limits = self.world_selector.time_limits()
+        except ValueError as exc:
+            self.set_message(str(exc))
+            return
+        self.tuning_tag = "builder-tuning-" + uuid.uuid4().hex
+        self.sync_actions()
+        self.transport.submit(
+            self.tuning_tag,
+            "tuning.start",
+            {
+                "specification": {
+                    "name": "Tuning run",  # required by the contract; the engine names every tuning run so
+                    "robots": robots,
+                    "worlds": worlds,
+                    "repetitions": 1,
+                    "concurrency": 1,
+                    "world_time_limits": limits,
+                }
+            },
+        )
 
     def combination_rows(self) -> list[Combination]:
         """Every robot, world and starting pose of the form; robot and profiles once per robot (08)."""
@@ -430,6 +484,7 @@ class CampaignBuilder(QtWidgets.QWidget):
             )
 
     def apply_design(self, value: dict[str, Any]) -> None:
+        self.tuning_box.setChecked(False)  # an imported or repeated campaign is never a tuning run
         self.source_campaign_id = value.get("source_campaign_id")
         self.name.setText(value["name"])
         self.description.setText(value.get("description", ""))
@@ -529,8 +584,18 @@ class CampaignBuilder(QtWidgets.QWidget):
         elif tag == self.export_tag:
             self.export_tag = ""
             self.set_message(f"Validated campaign saved to {result['path']}", "success")
+        elif tag == self.tuning_tag:
+            self.tuning_tag = ""
+            self.sync_actions()
+            self.set_message("Tuning run started.", "success")
+            self.tuning_started.emit()
 
     def failed(self, tag: str, error: str) -> None:
+        if tag == self.tuning_tag:
+            self.tuning_tag = ""
+            self.sync_actions()
+            self.set_message(error)
+            return
         if tag == self.export_tag:
             self.export_tag = ""
             self.set_message(error)

@@ -651,6 +651,7 @@ class WorldSelector(QtWidgets.QWidget):
         self._pending: dict[str, tuple[str, str | None]] = {}
         self._popups: dict[str, SpawnsPopup] = {}
         self._has_more: dict[str, bool] = {}
+        self._single = False  # a tuning run: one world with one starting pose
         outer = QtWidgets.QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         self.grid = CardGrid(world_columns, 520)
@@ -710,6 +711,27 @@ class WorldSelector(QtWidgets.QWidget):
             self._references[world] = deepcopy(selected[world]) or ["Default"]
         for world in self._worlds:
             self._sync(world)
+
+    def set_single(self, single: bool) -> None:
+        """A tuning run allows one world with one starting pose: the first selected world and pose
+        stay."""
+        self._single = single
+        if not single:
+            return
+        kept = next((world for world in self._worlds if world in self._selected), None)
+        changed = False
+        for world in self._worlds:
+            if world in self._selected and world != kept:
+                self._selected.discard(world)
+                self._close_popup(world)
+                changed = True
+            references = self._references.get(world, ["Default"])
+            if len(references) > 1:
+                self._references[world] = references[:1]
+                changed = True
+            self._sync(world)
+        if changed:
+            self.changed.emit()
 
     def time_limits(self) -> dict[str, float]:
         limits = {}
@@ -812,6 +834,11 @@ class WorldSelector(QtWidgets.QWidget):
             self._sync(world)
             return
         if checked:
+            if self._single:  # a tuning run: choosing a world deselects the others
+                for other in tuple(self._selected):
+                    self._selected.discard(other)
+                    self._close_popup(other)
+                    self._sync(other)
             self._selected.add(world)
         else:
             self._selected.discard(world)
@@ -965,6 +992,13 @@ class WorldSelector(QtWidgets.QWidget):
 
     def _set_spawns(self, world: str, references: list[Reference]) -> None:
         if not references:
+            return
+        if self._single and len(references) > 1:  # a tuning run: the newly ticked pose only
+            before = {spawn_key(world, r) for r in self._references.get(world, [])}
+            added = [r for r in references if spawn_key(world, r) not in before]
+            self._references[world] = [deepcopy((added or references)[-1])]
+            self._sync(world)
+            self.changed.emit()
             return
         self._references[world] = deepcopy(references)
         self._sync(world, refresh_popup=False)  # the popup holds this selection already

@@ -1751,13 +1751,13 @@ class Toast(Themed):
 
 class ToastArea(Themed):
     """Top-right stack of toasts, newest first: 24 px from the window's right edge, ``top`` px from its top (under
-    the top bar), 8 px apart. Every toast fades after its timeout (errors after ``ERROR_MS``) and has a
+    the top bar), 8 px apart. Every toast, errors included, fades after ``TIMEOUT_MS`` and has a
     dismiss button; a repeated message restarts the shown one instead of stacking a copy. The area only paints
     the toasts' popup shadows and lets clicks through; the toasts are the window's children, so they take
     clicks."""
 
     LIMIT = 5
-    ERROR_MS = 5000
+    TIMEOUT_MS = 3000  # maintainer, 20 October 2026
 
     def __init__(self, themes: ThemeManager, window: QtWidgets.QWidget, *, top: int = 24) -> None:
         super().__init__(themes, window)
@@ -1787,15 +1787,14 @@ class ToastArea(Themed):
             self._layout()
         return False
 
-    def show_message(self, text: str, kind: ToastKind = "neutral", timeout_ms: int = 5000) -> Toast:
-        timeout = self.ERROR_MS if kind == "bad" else timeout_ms
+    def show_message(self, text: str, kind: ToastKind = "neutral") -> Toast:
         shown = next((t for t in self.toasts if t.text == text and t.kind == kind), None)
         if (
             shown is not None
         ):  # the same message again: keep one, newest first, with a fresh timeout
             self.toasts.remove(shown)
             self.toasts.insert(0, shown)
-            shown.restart(timeout)
+            shown.restart(self.TIMEOUT_MS)
             self._layout()
             return shown
         toast = Toast(self.themes, text, kind)
@@ -1804,7 +1803,7 @@ class ToastArea(Themed):
         self.toasts.insert(0, toast)
         while len(self.toasts) > self.LIMIT:
             self.dismiss(self.toasts[-1])
-        toast.restart(timeout)
+        toast.restart(self.TIMEOUT_MS)
         toast.show()
         self._layout()
         return toast

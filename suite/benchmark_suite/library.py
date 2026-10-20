@@ -42,7 +42,7 @@ from .contracts import (
 )
 from .monitoring import png, reference_pixels
 from .storage import file_hash
-from .store import Store
+from .store import TUNING_CAMPAIGN, Store
 
 PROFILE_FIELDS = {
     "id",
@@ -576,7 +576,8 @@ class Library:
         column = "profile_id" if kind == "profile" else "spawn_id"
         used = store.one(
             f"SELECT COUNT(DISTINCT campaign_id) n FROM experiments "
-            f"WHERE {column} IN (SELECT value FROM json_each(?))",
+            f"WHERE {column} IN (SELECT value FROM json_each(?)) "
+            f"AND campaign_id NOT IN (SELECT id FROM campaigns WHERE {TUNING_CAMPAIGN})",
             (canonical([row["id"] for row in rows]),),
         )
         referenced = used["n"] if used else 0

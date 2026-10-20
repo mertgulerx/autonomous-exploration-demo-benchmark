@@ -30,7 +30,7 @@ from typing import Any, Literal
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import gui_icons
-from .gui_controls import SearchField, SpinBox
+from .gui_controls import CheckBox, SearchField, SpinBox
 from .gui_theme import ThemeManager, border_width, snap
 from .gui_widgets import (
     BODY,
@@ -147,6 +147,8 @@ class StepButton(QtWidgets.QAbstractButton, CssBox):
     def paintEvent(self, event: QtGui.QPaintEvent) -> None:
         painter = QtGui.QPainter(self)
         painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+        if not self.isEnabled():  # a step a tuning run skips
+            painter.setOpacity(0.4)
         theme = self.themes.current
         circle = self.painted_rect()
         ink = theme.color("text.ink")
@@ -305,13 +307,18 @@ class Totals(Themed, CssBox):
 
 
 class WizardFooter(Card):
-    """``.wiz-foot`` (56 px card, padding 0 16): Import YAML and Export YAML, the totals (12 px further,
-    after a rule), then the step buttons at the right."""
+    """``.wiz-foot`` (56 px card, padding 0 16): the Tuning run box, Import YAML and Export YAML, the totals
+    (12 px further, after a rule), then the step buttons at the right; Start run replaces Continue on the
+    worlds step of a tuning run."""
 
     def __init__(self, themes: ThemeManager, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(themes, parent)
         self.setFixedHeight(56)
         self.row = FlexRow(self, gap=8, left=16, right=16)
+        self.tuning_box = CheckBox(themes, "Tuning run")
+        self.tuning_box.setToolTip(
+            "One run of one robot, profile, world and starting pose, opened in Monitor and not kept"
+        )
         self.import_button = Button(themes, "Import YAML", icon="upload")
         self.export_button = Button(themes, "Export YAML", icon="download")
         self.totals = Totals(themes)
@@ -321,6 +328,8 @@ class WizardFooter(Card):
             themes, "Continue", icon="aright", variant="primary", trailing=True
         )
         self.submit_button = Button(themes, "Add to queue", icon="queue", variant="primary")
+        self.start_button = Button(themes, "Start run", icon="play", variant="primary")
+        self.row.add(self.tuning_box, gap=8 + 8)
         self.row.add(self.import_button)
         self.row.add(self.export_button)
         self.row.add(self.totals, gap=8 + 12)
@@ -330,6 +339,7 @@ class WizardFooter(Card):
             self.validate_button,
             self.next_button,
             self.submit_button,
+            self.start_button,
         ):
             self.row.add(button)
 

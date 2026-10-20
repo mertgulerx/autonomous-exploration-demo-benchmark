@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Callable
+from dataclasses import replace
 import json
 from pathlib import Path
 import queue
@@ -41,7 +42,7 @@ from .monitoring import MONITOR_LAYERS
 from .protocol import PendingRequest, Server
 from .run_map import RunMaps
 from .storage import atomic_json, file_hash, sync_directory
-from .store import Store
+from .store import TUNING_CAMPAIGN, Store
 from .timing import TimingPolicy
 
 READ_METHODS = frozenset(
@@ -75,6 +76,11 @@ READ_METHODS = READ_METHODS | {
 }
 ACTIVE_STATES = ("RUNNING", "RETRYING", "PAUSING", "PAUSED", "STOPPING", "BLOCKED", "REPORTING")
 COPY_SUFFIX = re.compile(r" \(copy (\d+)\)$")
+
+
+def is_tuning(specification: dict[str, Any]) -> bool:
+    """Whether a stored campaign specification is a tuning run (``CampaignSpec.tuning``)."""
+    return specification.get("tuning") is True
 
 
 class Engine:
@@ -230,10 +236,10 @@ class Engine:
                     )
                     self._record_artifacts(attempt, manifest)
         for campaign in self.store.rows(
-            "SELECT id,state FROM campaigns WHERE state IN "
+            "SELECT id,state,specification FROM campaigns WHERE state IN "
             "('RUNNING','RETRYING','PAUSING','PAUSED','STOPPING','BLOCKED','REPORTING')"
         ):
-            if campaign["state"] == "STOPPING":
+            if campaign["state"] == "STOPPING" or is_tuning(json.loads(campaign["specification"])):
                 self.store.set_state(campaign["id"], "STOPPED")
             else:
                 self.store.set_state(
@@ -335,6 +341,8 @@ class Engine:
             if campaign["state"] != "FINISHED":
                 raise ContractError("campaign_id", "Choose a finished campaign", "conflict")
             specification = json.loads(campaign["specification"])
+            if is_tuning(specification):
+                raise ContractError("campaign_id", "A tuning run cannot be repeated", "conflict")
             specification.update(name=specification["name"] + " copy", source_campaign_id=identity)
             return {"specification": specification, "source_campaign_id": identity}
         if method == "campaign.submit":
@@ -403,6 +411,8 @@ class Engine:
                     "Reports require finished execution and an idle engine",
                     "conflict",
                 )
+            if is_tuning(json.loads(campaign["specification"])):
+                raise ContractError("campaign_id", "A tuning run has no report", "conflict")
             settings = DetectorSettings.accept(params.get("detectors"))
             report_id, token = str(uuid.uuid4()), uuid.uuid4().hex
             self.store.db.execute(
@@ -468,6 +478,8 @@ class Engine:
         if method in ("campaign.start", "campaign.resume"):
             identity = text(params.get("campaign_id"), "campaign_id")
             campaign = self.store.campaign(identity)
+            if is_tuning(json.loads(campaign["specification"])):
+                raise ContractError("campaign_id", "Start a new tuning run instead", "conflict")
             if self.current and self.current != identity:
                 raise ContractError("campaign_id", "Another campaign owns execution", "conflict")
             allowed = (
@@ -489,9 +501,14 @@ class Engine:
             )
             self.store.set_state(identity, "RUNNING")
             return {"operation_id": operation_id, "accepted": True, "state": "RUNNING"}
+        if method == "tuning.start":
+            return self._start_tuning(params, operation_id)
         if method == "campaign.pause":
             identity = text(params.get("campaign_id"), "campaign_id")
-            state = self.store.campaign(identity)["state"]
+            campaign = self.store.campaign(identity)
+            if is_tuning(json.loads(campaign["specification"])):
+                raise ContractError("campaign_id", "A tuning run cannot be paused", "conflict")
+            state = campaign["state"]
             if self.current != identity or state not in ("RUNNING", "RETRYING"):
                 raise ContractError("campaign_id", "Pause requires active execution", "conflict")
             self.queue_enabled = False
@@ -528,6 +545,8 @@ class Engine:
             identity = text(params.get("campaign_id"), "campaign_id")
             source = self.store.campaign(identity)
             specification = json.loads(source["specification"])
+            if is_tuning(specification):
+                raise ContractError("campaign_id", "A tuning run cannot be restarted", "conflict")
             if self.library:
                 catalog = self.library.catalog()
                 missing = sorted(
@@ -1173,6 +1192,15 @@ class Engine:
             if not self.current:
                 return
         campaign = self.store.campaign(self.current)
+        if (
+            campaign["state"] == "BLOCKED"
+            and not self.active
+            and is_tuning(json.loads(campaign["specification"]))
+        ):
+            # A tuning run is never resumed: one that cannot continue releases execution.
+            self.store.set_state(self.current, "STOPPED", campaign["detail"])
+            self.current = None
+            return
         if campaign["state"] in ("PAUSING", "STOPPING"):
             if not self.active:
                 self.store.set_state(
@@ -1221,7 +1249,8 @@ class Engine:
                 "UPDATE campaigns SET execution_finished_ns=?,report_state='NOT_REQUESTED' WHERE id=?",
                 (time.time_ns(), self.current),
             )
-            if self.backend.synthetic:
+            if self.backend.synthetic or is_tuning(spec):
+                # A tuning run keeps its attempt directory as recorded until the next tuning run.
                 self.store.set_state(self.current, "FINISHED")
                 self.current = None
             else:
@@ -1231,9 +1260,61 @@ class Engine:
                 "SELECT COUNT(*) count FROM experiments WHERE campaign_id=? AND held=1",
                 (self.current,),
             )
-            if held and held["count"]:
+            if held and held["count"] and is_tuning(spec):
+                self.store.set_state(self.current, "STOPPED", "Tuning run ended without finishing")
+                self.current = None
+            elif held and held["count"]:
                 self.queue_enabled = False
                 self.store.set_state(self.current, "PAUSED", "Not done experiments await Resume")
+
+    def _start_tuning(self, params: dict[str, Any], operation_id: str) -> dict[str, Any]:
+        """tuning.start: one run that starts at once, is hidden from lists and replaces the previous one
+        (plans/SUITE_TUNING_RUN.md). Refused while anything owns execution or the queue runs."""
+        if self.current or self.active or self.job or self.report_import or self.queue_enabled:
+            raise ContractError(
+                "specification",
+                "A campaign is running; a tuning run can start when the engine is idle",
+                "conflict",
+            )
+        spec = self.resolve(mapping(params.get("specification"), "specification"))
+        single = (
+            len(spec.robots) == 1
+            and len(spec.robots[0][1]) == 1
+            and len(spec.worlds) == 1
+            and len(spec.worlds[0][1]) == 1
+        )
+        if not single or spec.repetitions != 1 or spec.concurrency != 1 or spec.exclusions:
+            raise ContractError(
+                "specification",
+                "A tuning run is one robot, one profile, one world and one start pose",
+            )
+        spec = replace(spec, name="Tuning run", tuning=True)
+        previous = [
+            row["id"]
+            for row in self.store.rows(
+                f"SELECT id FROM campaigns WHERE {TUNING_CAMPAIGN} ORDER BY created_ns"
+            )
+        ]
+        entries = plan(self.store, previous, self.current)
+        blocked = [entry for entry in entries if not entry["deletable"]]
+        if blocked:
+            raise ContractError(
+                "specification",
+                f"The previous tuning run cannot be removed yet: {blocked[0]['reason']}",
+                "conflict",
+            )
+        self.backend.preflight()
+        delete_rows(self.store, entries, operation_id)
+        identity = self.store.submit(spec)
+        self.current = identity
+        self.store.set_state(identity, "RUNNING")
+        return {
+            "operation_id": operation_id,
+            "accepted": True,
+            "campaign_id": identity,
+            "replaced": previous,
+            "state": "RUNNING",
+        }
 
     def _begin_finalization(self, campaign_id: str) -> None:
         identity, token = str(uuid.uuid4()), uuid.uuid4().hex

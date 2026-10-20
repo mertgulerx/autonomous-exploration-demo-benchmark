@@ -889,7 +889,7 @@ class WorldsPage(QtWidgets.QWidget):
 
     changed = QtCore.Signal()
     deleted = QtCore.Signal(object)  # the spawns.delete reply
-    notify = QtCore.Signal(str, str, int)
+    notify = QtCore.Signal(str, str)  # text, kind
 
     def __init__(
         self, themes: ThemeManager, transport: Transport, parent: QtWidgets.QWidget | None = None
@@ -1032,9 +1032,7 @@ class WorldsPage(QtWidgets.QWidget):
             self._request(world, int(following))
             return
         if following is not None:
-            self.notify.emit(
-                f"First {len(self._page):,} saved spawns of this world listed", "warn", 8000
-            )
+            self.notify.emit(f"First {len(self._page):,} saved spawns of this world listed", "warn")
         saved = []
         for row in self._page:
             snapshot = row.get("snapshot") or {}
@@ -1203,7 +1201,7 @@ class WorldsPage(QtWidgets.QWidget):
             return
         if more is not None:
             self.notify.emit(
-                "Not every saved spawn name was read; check the name before saving.", "warn", 8000
+                "Not every saved spawn name was read; check the name before saving.", "warn"
             )
         if not archived:
             self.name_scan, self.scan_pages = (world, token, True), 0
@@ -1308,7 +1306,6 @@ class WorldsPage(QtWidgets.QWidget):
             self.notify.emit(
                 f"Saved “{result['name']}” as a new spawn; submitted campaigns keep their poses",
                 "ok",
-                8000,
             )
             self.changed.emit()
             self.refresh()
@@ -1320,7 +1317,7 @@ class WorldsPage(QtWidgets.QWidget):
                     self.form.name.setModified(False)
                 self.suggest_name(world)
         elif tag == "spawn-edit:written":
-            self.notify.emit("Spawn YAML exported", "ok", 5000)
+            self.notify.emit("Spawn YAML exported", "ok")
         elif tag == "spawn-delete":
             self.deleted.emit(result)
             names = sorted({str(r["name"]) for r in result.get("deleted", [])})
@@ -1328,7 +1325,6 @@ class WorldsPage(QtWidgets.QWidget):
                 f"Deleted {', '.join(f'“{n}”' for n in names)}; "
                 f"{result.get('referenced_campaigns', 0)} submitted campaigns keep their poses",
                 "ok",
-                8000,
             )
             self.changed.emit()
             self.refresh()
@@ -1345,18 +1341,16 @@ class WorldsPage(QtWidgets.QWidget):
         elif self.name_scan and tag == "spawn-names:" + self.name_scan[1]:
             self.name_scan = None
             self.notify.emit(
-                f"Could not read saved spawn names: {message}. Check the name before saving.",
-                "bad",
-                0,
+                f"Could not read saved spawn names: {message}. Check the name before saving.", "bad"
             )
         elif tag == "spawn-edit:save":
             self.engine_problem = message
             self.update_pose()
         elif tag.startswith("spawn-edit:"):
-            self.notify.emit(message, "bad", 0)
+            self.notify.emit(message, "bad")
         elif tag == "spawn-delete":
             stale = stale_engine_message(message, "Unsupported library operation", "spawn deletion")
-            self.notify.emit(stale or message, "bad", 0)
+            self.notify.emit(stale or message, "bad")
             self.refresh()
         elif tag == "spawn-map":
             self.map_card.map.set_message("Map unavailable: " + message)

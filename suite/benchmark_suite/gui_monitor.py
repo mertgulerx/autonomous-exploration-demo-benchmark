@@ -839,7 +839,7 @@ class MonitorPage(QtWidgets.QWidget):
     and the transport replies with ``received`` and ``failed`` (False: not this page's)."""
 
     open_campaign = QtCore.Signal(str, str)
-    notify = QtCore.Signal(str, str, int)
+    notify = QtCore.Signal(str, str)  # text, kind
 
     def __init__(
         self, themes: ThemeManager, transport: Transport, parent: QtWidgets.QWidget | None = None
@@ -863,6 +863,7 @@ class MonitorPage(QtWidgets.QWidget):
         self.stop_requested_runs: set[str] = set()
         self.coverage: CoverageHistory | None = None
         self.campaign_names: dict[str, str] = {}
+        self.tuning_campaigns: set[str] = set()  # tuning runs have no Open campaign link
         self.campaign_requests: set[str] = set()
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -990,7 +991,7 @@ class MonitorPage(QtWidgets.QWidget):
                 "monitor-campaign:" + campaign, "campaign.status", {"campaign_id": campaign}
             )
         self.context.setText(name)
-        self.open_link.setVisible(campaign is not None)
+        self.open_link.setVisible(campaign is not None and campaign not in self.tuning_campaigns)
         self.head.relayout()
         self.events.set_campaign(campaign)
         self.slots.set_campaign(campaign)
@@ -1095,7 +1096,7 @@ class MonitorPage(QtWidgets.QWidget):
         title = "Run · " + self.stop_context(active) + " - " + TITLES[kind]
         self.viewers.launch(kind, active["attempt"], robot, title)
         self.update_stop_button()
-        self.notify.emit(f"Starting {TITLES[kind]}…", "neutral", 4000)
+        self.notify.emit(f"Starting {TITLES[kind]}…", "neutral")
 
     def _viewer_done(self, kind: str, attempt_id: str, error: str) -> None:
         self.viewers.finished(cast(Kind, kind), attempt_id, error)
@@ -1103,7 +1104,7 @@ class MonitorPage(QtWidgets.QWidget):
             self.viewers.stop(attempt_id)  # the run ended while the viewer started
         self.update_stop_button()
         if error:
-            self.notify.emit(error, "bad", 0)
+            self.notify.emit(error, "bad")
 
     def stop_context(self, active: Mapping[str, Any]) -> str:
         experiment, attempt = active["experiment"], active["attempt"]
@@ -1331,6 +1332,9 @@ class MonitorPage(QtWidgets.QWidget):
             campaign = result.get("campaign") if isinstance(result, dict) else None
             if isinstance(campaign, dict) and campaign.get("id"):
                 self.campaign_names[campaign["id"]] = campaign.get("name", "")
+                specification = campaign.get("specification")
+                if isinstance(specification, dict) and specification.get("tuning") is True:
+                    self.tuning_campaigns.add(campaign["id"])  # not on Campaigns or Results
                 self._update_head()
             return True
         if tag.startswith("stop-run:"):
@@ -1340,7 +1344,6 @@ class MonitorPage(QtWidgets.QWidget):
                 if result.get("already_requested")
                 else "Stop requested; the run is finalizing",
                 "neutral",
-                8000,
             )
             return True
         return False
@@ -1391,6 +1394,6 @@ class MonitorPage(QtWidgets.QWidget):
                 if modal is not None:
                     show_stop_unavailable(modal, self.themes, stale)
                 return True
-            self.notify.emit(error, "bad", 0)
+            self.notify.emit(error, "bad")
             return True
         return False

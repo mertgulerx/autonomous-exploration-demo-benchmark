@@ -289,9 +289,7 @@ class ProfileEditor(ModalCard):
 
     saved = QtCore.Signal()
     accepted = QtCore.Signal(object)
-    notify = QtCore.Signal(
-        str, str, int
-    )  # a message for the window's toasts: text, kind, timeout (ms)
+    notify = QtCore.Signal(str, str)  # a message for the window's toasts: text, kind
 
     def __init__(
         self,
@@ -594,7 +592,7 @@ class ProfileEditor(ModalCard):
         if operation == "save":
             self.accepted.emit(result)
             self.saved.emit()
-            self.notify.emit(f"Saved “{result.get('name', '')}”", "ok", 0)
+            self.notify.emit(f"Saved “{result.get('name', '')}”", "ok")
             self.finish(True)
         elif operation == "import":
             self.transport.submit(
@@ -606,7 +604,7 @@ class ProfileEditor(ModalCard):
             self.profile["requested"] = result["requested"]
             self.apply_values(result["effective"])
             self.set_error("")
-            self.notify.emit("Imported values accepted", "ok", 0)
+            self.notify.emit("Imported values accepted", "ok")
         elif operation == "export":
             source = yaml.safe_dump(
                 {"frontier_explorer": {"ros__parameters": result["effective"]}}, sort_keys=False
@@ -615,7 +613,7 @@ class ProfileEditor(ModalCard):
                 self.tag + ":written", "local.write", {"path": self.export_path, "text": source}
             )
         elif operation == "written":
-            self.notify.emit("Export saved", "ok", 0)
+            self.notify.emit("Export saved", "ok")
 
     def failed(self, tag: str, error: str) -> None:
         if tag.startswith(self.tag + ":"):

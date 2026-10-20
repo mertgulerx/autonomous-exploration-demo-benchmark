@@ -27,6 +27,9 @@ from .contracts import CampaignSpec, ContractError, canonical, integer, known_ke
 from .design import ORDERING_VERSION, experiments
 from .storage import put_object, require_local_storage
 
+# A campaign row started by tuning.start (CampaignSpec.tuning; absent from other specifications).
+TUNING_CAMPAIGN = "coalesce(json_extract(specification,'$.tuning'),0)=1"
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS schema_version(version INTEGER NOT NULL);
 INSERT INTO schema_version SELECT 1 WHERE NOT EXISTS(SELECT 1 FROM schema_version);
@@ -396,6 +399,15 @@ class Store:
             else:
                 terms.append(column + "=?")
                 arguments.append(value)
+        # Tuning runs (tuning.start) never appear in lists; reads by ID, and lists filtered by the tuning
+        # run's own campaign ID (Monitor's events), still reach them.
+        if table == "campaigns":
+            terms.append(f"NOT {TUNING_CAMPAIGN}")
+        elif table in ("experiments", "attempts", "reports") and "campaign_id" not in filters:
+            prefix = "a." if table == "attempts" else ""
+            terms.append(
+                f"{prefix}campaign_id NOT IN (SELECT id FROM campaigns WHERE {TUNING_CAMPAIGN})"
+            )
         where = " WHERE " + " AND ".join(terms) if terms else ""
         source = (
             "attempts a JOIN experiments e ON e.id=a.experiment_id"
