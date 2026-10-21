@@ -337,11 +337,26 @@ class LiveMap(Themed):
         else:
             self.unsetCursor()
 
+    # ---------- layer hooks (the Monitor's insight map overrides them) ----------
+
+    def shows(self, layer: str) -> bool:
+        """Whether a run layer (``path``, ``explored``, ``navigation``) is switched on."""
+        return True
+
+    def paint_under(self, painter: QtGui.QPainter, placement: Placement) -> None:
+        """Marks under the run's marks, over the world and explored cells."""
+
+    def paint_marks(self, painter: QtGui.QPainter, placement: Placement) -> None:
+        """Marks over the path, under the goal and the robot."""
+
+    def paint_over(self, painter: QtGui.QPainter, placement: Placement) -> None:
+        """Marks over everything else on the map."""
+
     # ---------- painting ----------
 
     def _base_image(self, box: QtCore.QRectF) -> QtGui.QImage:
         """Stage, hatched box, ring, world and explored cells for the current view."""
-        explored = self.layers.explored
+        explored = self.layers.explored if self.shows("explored") else None
         world = self.world
         if world is not None and explored is not None and explored.shape != world.pixels.shape:
             explored = None
@@ -406,13 +421,26 @@ class LiveMap(Themed):
                 QtCore.QPointF(controls.x() - margin, controls.y() - margin),
                 shadow_image(controls.width(), controls.height(), 6, layers),
             )
+        self.paint_under(painter, placement)
         path = self.layers.path
         complete = True
-        if len(path):
+        show_path = self.shows("path")
+        if show_path and len(path):
             complete = self.path_layers.draw(
                 path, placement, self.size(), self.devicePixelRatioF(), theme
             )
-        paint_live(painter, self.layers, placement, theme, self.path_layers, self.ROBOT)
+        paint_live(
+            painter,
+            self.layers,
+            placement,
+            theme,
+            self.path_layers,
+            self.ROBOT,
+            path=show_path,
+            navigation=self.shows("navigation"),
+            marks=lambda: self.paint_marks(painter, placement),
+        )
+        self.paint_over(painter, placement)
         if self.SCALE_BAR:
             self._paint_scale(painter, placement, theme)
         if not complete:
@@ -514,7 +542,7 @@ class MapLegend(Themed):
             width = swatch + 7 + LEGEND_TEXT.advance(label)
             if x + width + reserve > limit:
                 break
-            self._paint_swatch(painter, kind, x, top, theme)
+            self.paint_swatch(painter, kind, x, top, theme)
             draw_text(painter, x + swatch + 7, top, label, LEGEND_TEXT, secondary)
             x += width + 20
         if not self.status:
@@ -535,7 +563,7 @@ class MapLegend(Themed):
         draw_text(painter, start, top, text, LEGEND_TEXT, secondary)
 
     @staticmethod
-    def _paint_swatch(
+    def paint_swatch(
         painter: QtGui.QPainter, kind: str, x: float, top: float, theme: Theme
     ) -> None:
         painter.save()

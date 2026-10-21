@@ -12,6 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import base64
 from collections import defaultdict
 from collections.abc import Iterator
 from bisect import bisect_right
@@ -621,8 +622,16 @@ def query(workspace: Path, params: dict[str, Any]) -> dict[str, Any]:
             "SELECT * FROM read_parquet(?) WHERE attempt_id=? ORDER BY receipt_monotonic_ns LIMIT ? OFFSET ?",
             (*arguments, limit, offset),
         ).fetch_arrow_table()
+    # JSON replies carry binary columns (chunk states, explored masks) as base64 text.
+    binary = [field.name for field in SCHEMAS[kind] if pa.types.is_binary(field.type)]
+    rows = table.to_pylist()
+    for row in rows:
+        for name in binary:
+            if row[name] is not None:
+                row[name] = base64.b64encode(row[name]).decode()
     return dict(
-        rows=table.to_pylist(),
+        rows=rows,
         total=total,
         next_offset=offset + limit if offset + limit < total else None,
+        binary_columns=dict.fromkeys(binary, "base64"),
     )

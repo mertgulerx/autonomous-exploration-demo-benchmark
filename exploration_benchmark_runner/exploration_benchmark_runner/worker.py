@@ -46,6 +46,7 @@ from rclpy.qos import (
     qos_profile_sensor_data,
 )
 from rclpy.time import Time
+import yaml
 from tf2_ros import Buffer, TransformListener, TransformException
 from action_msgs.srv import CancelGoal
 from geometry_msgs.msg import Twist, PoseStamped
@@ -94,6 +95,9 @@ NAV_NODES = (
 )
 NAV_DISCOVERY_SETTLE_SECONDS = 3.0
 NAV_ACTIVATION_TIMEOUT_SECONDS = 60.0
+# Frontier insight node (suite runs): its output topic and the attempt log it writes.
+INSIGHT_TOPIC = "/benchmark/frontier_insight"
+INSIGHT_LOG = "insight.log"
 
 
 class Worker:
@@ -160,6 +164,8 @@ class Worker:
         self.logged_state = None
         self.simulation_scope = ProcessScope(config["process_token"] + "_simulation")
         self.explorer_scope = ProcessScope(config["process_token"] + "_explorer")
+        self.insight_scope = ProcessScope(config["process_token"] + "_insight")
+        self.insight_subscribed = False
         if self.campaign:
             from benchmark_suite.worker_runtime import WorkerRuntime
 
@@ -202,6 +208,15 @@ class Worker:
                 TFMessage, "/benchmark/ground_truth/pose", self.runtime.receive_ground_truth_pose,
                 qos_profile_sensor_data
             )
+            try:
+                from exploration_benchmark_insight.msg import FrontierInsight
+            except ImportError:
+                self.insight_subscribed = False  # start_insight records why
+            else:
+                self.worker.create_subscription(
+                    FrontierInsight, INSIGHT_TOPIC, self.runtime.receive_insight, 10
+                )
+                self.insight_subscribed = True
         self.worker_executor = SingleThreadedExecutor(context=self.worker_context)
         self.worker_executor.add_node(self.worker)
         self.buffer = Buffer(node=self.worker)
@@ -359,7 +374,7 @@ class Worker:
         return env
 
     def cleanup_initialization(self, error):
-        for name in ("explorer_scope", "simulation_scope"):
+        for name in ("explorer_scope", "insight_scope", "simulation_scope"):
             scope = getattr(self, name, None)
             if scope:
                 scope.stop()
@@ -726,6 +741,8 @@ class Worker:
         )
         if row and self.recorder:
             self.recorder.coverage_sample(row)
+        if self.campaign:
+            self.runtime.explored_snapshot(self.coverage, grid, simulation, final=force)
         if self.recorder:
             self.recorder.coverage_checkpoint(self.coverage)
 
@@ -969,8 +986,56 @@ class Worker:
             simulation=self.start_sim,
             wall_start_unix=self.start_unix,
         )
+        if self.campaign:
+            self.start_insight()
         self.recorder.flush()
         self.publish_state()
+
+    def start_insight(self):
+        """Start the read-only frontier insight node beside the explorer (suite runs).
+
+        A missing package or a failed start is recorded and leaves the run unchanged:
+        the Monitor then shows no explorer analysis for it.
+        """
+        from ament_index_python.packages import PackageNotFoundError, get_package_prefix
+
+        directory = FilePath(self.config["result_directory"])
+        manifest = dict(started=False, topic=INSIGHT_TOPIC, log=INSIGHT_LOG)
+        try:
+            if not self.insight_subscribed:
+                raise PackageNotFoundError("exploration_benchmark_insight messages")
+            get_package_prefix("exploration_benchmark_insight")
+            resolved = yaml.safe_load(FilePath(self.parameter_file).read_text())
+            parameters = dict(
+                resolved["frontier_explorer"]["ros__parameters"], use_sim_time=True
+            )
+            path = directory / "insight_parameters.yaml"
+            document = {"frontier_insight": {"ros__parameters": parameters}}
+            path.write_text(yaml.safe_dump(document, sort_keys=False))
+            command = [
+                "ros2",
+                "run",
+                "exploration_benchmark_insight",
+                "frontier_insight",
+                "--ros-args",
+                "--params-file",
+                str(path),
+            ]
+            self.insight_scope = ProcessScope(self.config["process_token"] + "_insight")
+            self.insight_scope.start(
+                command,
+                self.environment(shared=True),
+                directory / INSIGHT_LOG,
+                self.config["project_root"],
+            )
+            manifest.update(started=True, command=command, parameters_file=path.name)
+        except PackageNotFoundError:
+            manifest["reason"] = "exploration_benchmark_insight is not importable"
+        except (
+            OSError, KeyError, TypeError, ValueError, psutil.Error, yaml.YAMLError
+        ) as error:
+            manifest["reason"] = f"Insight node did not start: {error}"
+        self.recorder.manifest["insight"] = manifest
 
     def native_completed(self, detail):
         if self.phase == "RUNNING":
@@ -1153,10 +1218,14 @@ class Worker:
             self.velocity_pub.publish(Twist())
             time.sleep(0.05)
         self.explorer_scope.stop()
+        # The insight node only reads: stop it after the explorer, never delaying it.
+        self.insight_scope.stop()
         self.simulation_scope.stop()
         self.close_source()
         if recorder:
             recorder.manifest["robot_diagnostics"] = self.robot_diagnostics
+            if self.campaign and "insight" in recorder.manifest:
+                recorder.manifest["insight"].update(self.runtime.insight_manifest())
             snapshot = self.measurements.latest if self.measurements else {}
             try:
                 recorder.finish(
@@ -1166,7 +1235,9 @@ class Worker:
                     self.cache.get("map"),
                     self.path,
                     native_code,
-                    self.simulation_scope.commands + self.explorer_scope.commands,
+                    self.simulation_scope.commands
+                    + self.explorer_scope.commands
+                    + self.insight_scope.commands,
                 )
             except OSError as error:
                 if not self.campaign:
@@ -1394,6 +1465,7 @@ class Worker:
             if self.phase not in ("STOPPING", "FINISHED"):
                 self.stop("manual_stop", "Worker application exit")
             self.explorer_scope.stop()
+            self.insight_scope.stop()
             self.simulation_scope.stop()
             self.close_source()
             if self.runtime:

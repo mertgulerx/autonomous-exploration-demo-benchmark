@@ -27,6 +27,18 @@ import zlib
 import psutil
 
 from .contracts import ContractError, average_speed
+from .insight import (
+    ExploredSnapshots,
+    GoalHistory,
+    InsightSummary,
+    candidate_rows,
+    chunks_layer,
+    convert,
+    decision_row,
+    decisions_layer,
+    stamp_ns,
+    to_world,
+)
 from .monitoring import (
     MONITOR_LAYERS,
     PhysicalPath,
@@ -74,6 +86,11 @@ class WorkerRuntime:
         self.navigation_event_sequence = 0
         self.navigation_lost = 0
         self.resource_previous: dict[str, tuple[float, float]] = {}
+        # Explorer insight: read and written under worker.lock, except the explored snapshots, which
+        # belong to the supervision thread like the coverage calculator.
+        self.insight = InsightSummary()
+        self.goal_history = GoalHistory()
+        self.explored_snapshots = ExploredSnapshots()
 
     def publish_state(self) -> None:
         worker = self.worker
@@ -99,6 +116,13 @@ class WorkerRuntime:
             result["simulation_elapsed"] = None
         result["average_speed_mps"] = average_speed(
             result.get("distance_m"), result.get("simulation_elapsed")
+        )
+        clock_ns = round(worker.clock_value * 1e9)
+        with worker.lock:
+            figures = self.insight.figures(clock_ns, self.goal)
+            recent, run = self.goal_history.switch_rates(clock_ns)
+        result["insight"] = dict(
+            figures, goal_switches_per_minute_60s=recent, goal_switches_per_minute_run=run
         )
         self.metrics = safe(result)
         self.sequence += 1
@@ -379,22 +403,99 @@ class WorkerRuntime:
             )
             if message.goal_valid:
                 row.update(x=p.x, y=p.y, yaw=yaw)
+            stamp = stamp_ns(message.header.stamp)
+            position = None
             if message.event == "initialized":
                 self.goal_sequence = message.goal_sequence
                 alignment = recorder.manifest["coverage"]["alignment"]["world_from_map"]
-                x, y, angle = alignment
-                self.goal = [
-                    x + math.cos(angle) * p.x - math.sin(angle) * p.y,
-                    y + math.sin(angle) * p.x + math.cos(angle) * p.y,
-                ]
+                position = to_world(alignment, p.x, p.y)
             elif message.event == "terminal":
-                self.goal_sequence, self.goal = None, None
+                self.goal_sequence = None
+            self.goal_history.apply(
+                message.event, message.goal_sequence, position, message.terminal_status, stamp
+            )
+            self.goal = list(self.goal_history.current) if self.goal_history.current else None
             recorder.manifest["navigation"] = dict(
                 event_sequence=self.navigation_event_sequence,
                 lost_events=self.navigation_lost,
                 uuid_association="unavailable; native feedback UUID retained separately",
             )
             recorder.observation("navigation", row)
+
+    def receive_insight(self, message: Any) -> None:
+        """One frontier insight tick (executor thread): keep it for the Monitor and record it."""
+        worker, recorder = self.worker, self.worker.recorder
+        with worker.lock:
+            if worker.phase != "RUNNING" or not isinstance(recorder, Recorder):
+                return
+            alignment = (recorder.manifest["coverage"].get("alignment") or {}).get("world_from_map")
+            # The alignment places the SLAM map frame; another analysis frame stays unplaced.
+            in_map = message.header.frame_id.lstrip("/") == "map"
+            tick = convert(message, tuple(alignment) if alignment and in_map else None)
+            self.insight.add(tick)
+            if recorder.frozen:
+                return
+            flags = (
+                ["frame_not_map"]
+                if not in_map
+                else []
+                if alignment
+                else ["world_frame_unavailable"]
+            )
+            row = recorder.row("frontier_insight", tick.simulation_ns, clock_ns=tick.simulation_ns)
+            recorder.observation("decisions", dict(row, **decision_row(tick), quality_flags=flags))
+            for fields in candidate_rows(tick):
+                recorder.observation(
+                    "frontier_candidates", dict(row, **fields, quality_flags=flags)
+                )
+
+    def explored_snapshot(
+        self, coverage: Any, grid: Any, simulation: float, *, final: bool = False
+    ) -> None:
+        """Record the explored cells every 5 simulation s and once at the terminal trigger.
+
+        Runs on the supervision thread, like the coverage calculator it shares.
+        """
+        worker, recorder = self.worker, self.worker.recorder
+        clock_ns = round(simulation * 1e9)
+        snapshots = self.explored_snapshots
+        if (
+            worker.phase != ("STOPPING" if final else "RUNNING")
+            or not isinstance(recorder, Recorder)
+            or recorder.frozen
+            or grid is None
+            or not (snapshots.last_ns != clock_ns if final else snapshots.due(clock_ns))
+        ):
+            return
+        try:
+            free = coverage.calculator.free_cells(grid)
+        except ValueError:
+            return
+        fields = snapshots.take(free, clock_ns)
+        source = stamp_ns(grid.header.stamp)
+        queued = recorder.observation(
+            "explored_cells",
+            dict(
+                recorder.row("slam_map", source, clock_ns=clock_ns),
+                **fields,
+                map_source_ns=source,
+            ),
+        )
+        if not queued:
+            # A lost row would break the chain of changes: the next snapshot is a keyframe.
+            snapshots.restart()
+
+    def insight_manifest(self) -> dict[str, Any]:
+        """Insight counters for the attempt manifest at the end of the run."""
+        with self.worker.lock:
+            latest = self.insight.latest
+            return dict(
+                ticks_received=self.insight.ticks,
+                ticks_lost=self.insight.lost,
+                ticks_skipped=latest.skipped_ticks if latest else None,
+                last_tick=latest.tick if latest else None,
+                goal_updates=self.goal_history.updates,
+            )
 
     def feedback(self, message: Any) -> None:
         worker, recorder = self.worker, self.worker.recorder
@@ -424,10 +525,18 @@ class WorkerRuntime:
         if not isinstance(recorder, Recorder) or recorder.frozen:
             return
         totals: dict[str, list[float]] = {}
-        for process in self.worker.simulation_scope.discover() + [psutil.Process()]:
+        # The insight scope is `ros2 run` plus the node it spawns; a full process scan (about 14 ms) runs
+        # only while `ros2 run` lives and the node is not yet known.
+        insight_scope = self.worker.insight_scope
+        insight = set(insight_scope.live())
+        if len(insight) < 2 and any(root.poll() is None for root in insight_scope.roots):
+            insight = set(insight_scope.discover())
+        for process in self.worker.simulation_scope.discover() + list(insight) + [psutil.Process()]:
             try:
                 command = " ".join(process.cmdline()).lower()
-                if process.pid == os.getpid():
+                if process in insight:
+                    scope = "insight"
+                elif process.pid == os.getpid():
                     scope = "instrumentation_and_recording"
                 elif (
                     "gz sim" in command
@@ -484,6 +593,13 @@ class WorkerRuntime:
             pose, offset, received = self.physical_pose, self.model_to_base, self.ground_truth
             grid, plan, goal = worker.cache.get("map"), worker.cache.get("plan"), self.goal
             goal_sequence = self.goal_sequence
+            tick = self.insight.latest
+            # The goals revision is the reader's update cursor (-1 or absent: from the start).
+            goals = (
+                self.goal_history.page(max(0, revisions.get("goals", 0)))
+                if "goals" in layers
+                else None
+            )
         now = time.monotonic()
         if not worker.config.get("suite_diagnostics", True):
             status, reason = (
@@ -524,6 +640,29 @@ class WorkerRuntime:
                     None
                     if coverage is None or grid is None
                     else partial(self.explored, coverage, grid),
+                )
+            elif name in ("decisions", "chunks"):
+                encode = decisions_layer if name == "decisions" else chunks_layer
+                result[name] = self.layer(
+                    name,
+                    tick.tick if tick else -1,
+                    requested,
+                    None if tick is None else partial(encode, tick),
+                )
+                insight = (
+                    worker.recorder.manifest.get("insight") if worker.recorder else None
+                ) or {}
+                if tick is None and insight.get("started") is False:
+                    # The node never started: say why instead of waiting for a tick.
+                    result[name]["reason"] = str(
+                        insight.get("reason") or "Insight node not started"
+                    )
+            elif name == "goals":
+                # Paged by update cursor, not cached; trim_reply adapts it to other readers.
+                assert goals is not None
+                result[name] = dict(
+                    revision=goals["revision"],
+                    data=None if goals["revision"] == requested else goals,
                 )
             else:
                 plan_stamp = (

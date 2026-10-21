@@ -250,6 +250,27 @@ class NativeWorker:
         return trim_reply(latest, after, revisions)
 
 
+def insight_identity() -> dict[str, str | None] | None:
+    """Hashes of the installed frontier insight node and the explorer analysis source it compiled.
+
+    ``None`` when the package is not installed (an engine outside the suite image).
+    """
+    install = os.environ.get("BENCHMARK_INSIGHT_INSTALL")
+    source = os.environ.get("BENCHMARK_EXPLORER_SOURCE")
+    if not install or not source:
+        return None
+    package = Path(install) / "exploration_benchmark_insight"
+    files = {
+        "executable": package / "lib/exploration_benchmark_insight/frontier_insight",
+        "package_xml": package / "share/exploration_benchmark_insight/package.xml",
+        "message": package / "share/exploration_benchmark_insight/msg/FrontierInsight.msg",
+        "candidate_message": package
+        / "share/exploration_benchmark_insight/msg/FrontierInsightCandidate.msg",
+        "explorer_analysis_source": Path(source) / "src/debug/debug_analyzer.cpp",
+    }
+    return {name: file_hash(path) if path.is_file() else None for name, path in files.items()}
+
+
 class NativeBackend:
     synthetic = False
 
@@ -274,7 +295,7 @@ class NativeBackend:
                 str(path.relative_to(directory)): file_hash(path)
                 for path in directory.rglob("*.py")
             }
-        self.runtime = {
+        self.runtime: dict[str, Any] = {
             "image": os.environ.get("BENCHMARK_IMAGE_ID"),
             "python": sys.version,
             "ros_distro": os.environ.get("ROS_DISTRO"),
@@ -304,6 +325,7 @@ class NativeBackend:
                 ).glob("*.yaml")
             },
         }
+        self.runtime["insight"] = insight_identity()
         for package in (self.root, self.root / "exploration_packages/frontier_exploration_ros2"):
             result = subprocess.run(
                 ["git", "-C", str(package), "rev-parse", "HEAD"],

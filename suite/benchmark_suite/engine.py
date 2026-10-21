@@ -40,6 +40,7 @@ from .contracts import (
 from .deletion import Remover, campaign_ids, delete_rows, plan
 from .monitoring import MONITOR_LAYERS
 from .protocol import PendingRequest, Server
+from .replay import WINDOW_LIMIT_NS, ReplayWindows
 from .run_map import RunMaps
 from .storage import atomic_json, file_hash, sync_directory
 from .store import TUNING_CAMPAIGN, Store
@@ -72,6 +73,7 @@ READ_METHODS = READ_METHODS | {
     "spawns.get",
     "results.get",
     "results.map",
+    "replay.window",
     "campaign.repeat",
 }
 ACTIVE_STATES = ("RUNNING", "RETRYING", "PAUSING", "PAUSED", "STOPPING", "BLOCKED", "REPORTING")
@@ -116,6 +118,7 @@ class Engine:
         # Campaign deletion whose files are being removed: (campaign ID, remover).
         self.removal: tuple[str, Remover] | None = None
         self.run_maps = RunMaps(self.workspace)
+        self.replay_windows = ReplayWindows(self.workspace)
         if library:
             library.bind(self.store)
         self._recover()
@@ -671,6 +674,24 @@ class Engine:
                     reason="Run in progress; its live map is on the Monitor",
                 )
             return self.run_maps.get(identity, after)
+        if method == "replay.window":
+            # What the Monitor showed during one window of a finished run (replay.py), built off the loop.
+            known_keys(params, {"attempt_id", "start_ns", "end_ns"}, "params")
+            identity = text(params.get("attempt_id"), "attempt_id")
+            start = integer(params.get("start_ns"), "start_ns", 0, 2**63 - 1 - WINDOW_LIMIT_NS)
+            end = integer(params.get("end_ns"), "end_ns", start + 1, start + WINDOW_LIMIT_NS)
+            attempt = self.store.attempt(identity)
+            if attempt["discarded"] or not attempt["directory"]:
+                return dict(
+                    attempt_id=identity, state="unavailable", reason="Measurements were discarded"
+                )
+            if identity in self.active or attempt["phase"] != "FINISHED":
+                return dict(
+                    attempt_id=identity,
+                    state="running",
+                    reason="Run in progress; replay opens when it has finished",
+                )
+            return self.replay_windows.get(identity, start, end)
         if method == "measurements.query":
             attempt = self.store.attempt(text(params.get("attempt_id"), "attempt_id"))
             if attempt["discarded"]:
@@ -751,7 +772,15 @@ class Engine:
         if attempt["discarded"]:
             raise ContractError("attempt_id", "Partial measurements were discarded", "discarded")
         component = params.get("component", "worker")
-        if component not in ("worker", "simulation", "robot", "navigation", "slam", "explorer"):
+        if component not in (
+            "worker",
+            "simulation",
+            "robot",
+            "navigation",
+            "slam",
+            "explorer",
+            "insight",
+        ):
             raise ContractError("component", "Choose a recorded component")
         offset = integer(params.get("offset", 0), "offset", 0, 2**63 - 1)
         limit = integer(params.get("limit", 65536), "limit", 1, 262144)
@@ -1607,6 +1636,7 @@ class Engine:
         if self.server:
             self.server.close()
         self.run_maps.close()
+        self.replay_windows.close()
         if self.job is not None:
             self.job.close()
             self.job = None

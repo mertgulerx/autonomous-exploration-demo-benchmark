@@ -27,6 +27,16 @@ RUN /bin/bash -c 'source /opt/ros/jazzy/setup.bash && \
     --base-paths /opt/benchmark-telemetry/source --build-base /opt/benchmark-telemetry/build \
     --install-base /opt/benchmark-telemetry/install --executor sequential \
     --cmake-args -DBUILD_TESTING=OFF -DPython3_EXECUTABLE=/usr/bin/python3'
+# The insight node compiles the explorer's debug analysis from the base image's explorer source, so it
+# analyses with exactly the explorer the workers run (the engine hashes that source for provenance).
+ENV BENCHMARK_EXPLORER_SOURCE=/opt/benchmark_ws/exploration_packages/frontier_exploration_ros2
+COPY exploration_benchmark_insight /opt/benchmark-insight/source/exploration_benchmark_insight
+RUN /bin/bash -c 'source /opt/ros/jazzy/setup.bash && source /opt/benchmark_ws/install/setup.bash && \
+    CMAKE_BUILD_PARALLEL_LEVEL=2 colcon --log-base /opt/benchmark-insight/log build \
+    --base-paths /opt/benchmark-insight/source --build-base /opt/benchmark-insight/build \
+    --install-base /opt/benchmark-insight/install --executor sequential \
+    --cmake-args -DBUILD_TESTING=OFF -DPython3_EXECUTABLE=/usr/bin/python3 \
+    -DFRONTIER_EXPLORATION_SOURCE_DIR="$BENCHMARK_EXPLORER_SOURCE"'
 COPY suite /opt/benchmark-suite/source
 COPY exploration_benchmark_runner/exploration_benchmark_runner /opt/benchmark-suite/plugins/runner/exploration_benchmark_runner
 COPY exploration_benchmark_robots/exploration_benchmark_robots /opt/benchmark-suite/plugins/robots/exploration_benchmark_robots
@@ -39,6 +49,7 @@ RUN /opt/benchmark-suite-env/bin/pip install --no-deps /opt/benchmark-suite/sour
        > /usr/share/glvnd/egl_vendor.d/10_nvidia.json
 COPY docker/suite_entrypoint.sh /opt/benchmark-suite/entrypoint.sh
 ENV BENCHMARK_TELEMETRY_INSTALL=/opt/benchmark-telemetry/install \
+    BENCHMARK_INSIGHT_INSTALL=/opt/benchmark-insight/install \
     GZ_FUEL_CACHE_PATH=/opt/benchmark-fuel \
     BENCHMARK_FUEL_CACHE=/opt/benchmark-fuel \
     OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 NUMEXPR_NUM_THREADS=1 \

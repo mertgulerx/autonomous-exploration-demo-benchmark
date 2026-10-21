@@ -33,6 +33,10 @@ from .schemas import SCHEMAS
 from .storage import atomic_bytes, atomic_json, file_hash, object_store, put_object, sync_directory
 from .timing import TimingPolicy
 
+INSIGHT_KINDS = frozenset({"decisions", "frontier_candidates", "explored_cells"})
+QUEUE_SIZE = 8192
+INSIGHT_QUEUE_LIMIT = QUEUE_SIZE * 7 // 8
+
 
 def safe(value: Any) -> Any:
     if isinstance(value, float) and not math.isfinite(value):
@@ -54,9 +58,12 @@ class Recorder:
         self.configuration = configuration
         self.identity = configuration["suite_identity"]
         self.objects = Path(configuration["suite_workspace"]) / "objects"
-        self.queue: queue.Queue[tuple[str, Any]] = queue.Queue(8192)
+        self.queue: queue.Queue[tuple[str, Any]] = queue.Queue(QUEUE_SIZE)
         self.error: Exception | None = None
         self.dropped = 0
+        # Explorer insight rows are Monitor and replay data: they yield to measurement rows when the queue
+        # runs high and are counted apart, so they never affect eligibility.
+        self.dropped_insight = 0
         self.frozen = False
         self.closed = False
         self.coverage_samples = 0
@@ -117,9 +124,10 @@ class Recorder:
             self.enqueue("object", (name, data))
         self.flush()
 
-    def enqueue(self, kind: str, value: Any) -> None:
+    def enqueue(self, kind: str, value: Any) -> bool:
+        """Queue one item for the writer; return whether it was queued (rows can be dropped)."""
         if self.closed:
-            return
+            return False
         if self.error:
             raise OSError("Recording failed: " + str(self.error)) from self.error
         if kind in ("manifest", "map", "object", "finish"):
@@ -127,11 +135,19 @@ class Recorder:
                 self.queue.put((kind, value), timeout=10)
             except queue.Full as exc:
                 raise OSError("Recording checkpoint queue did not drain") from exc
-        else:
-            try:
-                self.queue.put_nowait((kind, value))
-            except queue.Full:
+            return True
+        insight = kind in INSIGHT_KINDS
+        try:
+            if insight and self.queue.qsize() >= INSIGHT_QUEUE_LIMIT:
+                raise queue.Full
+            self.queue.put_nowait((kind, value))
+        except queue.Full:
+            if insight:
+                self.dropped_insight += 1
+            else:
                 self.dropped += 1
+            return False
+        return True
 
     def row(
         self,
@@ -160,9 +176,9 @@ class Recorder:
             quality_flags=[],
         )
 
-    def observation(self, kind: str, row: dict[str, Any]) -> None:
-        if not self.frozen:
-            self.enqueue(kind, safe(row))
+    def observation(self, kind: str, row: dict[str, Any]) -> bool:
+        """Queue a stream row unless frozen; return whether it was queued."""
+        return not self.frozen and self.enqueue(kind, safe(row))
 
     def event(self, event: str, **details: Any) -> None:
         self.enqueue(
@@ -295,6 +311,7 @@ class Recorder:
             native_result_code=native_code,
             actual_commands=commands,
             recording_dropped=self.dropped,
+            recording_dropped_insight=self.dropped_insight,
             timing_quality=dict(
                 rtf=self.timing.rtf,
                 rejected=self.timing.rejected,
@@ -416,6 +433,7 @@ class Recorder:
                     manifest = value
                     manifest["objects"] = dict(objects)
                     manifest["recording_dropped"] = self.dropped
+                    manifest["recording_dropped_insight"] = self.dropped_insight
                     save_manifest()
                 elif kind == "map":
                     stamp = value.header.stamp

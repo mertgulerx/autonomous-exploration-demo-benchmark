@@ -40,9 +40,22 @@ from .gui_cells import OverlayScrollBar
 from .gui_controls import BadgeLook, StatusBadge, badge_look, paint_badge
 from .gui_dialogs import Consequences, Run, bullet, wrap_text
 from .gui_events import AttemptSlots, EventStream, EventView
+from .gui_decisions import DecisionsColumn
+from .gui_insight import (
+    INSIGHT_ENGINE_LAYERS,
+    ChunkGrid,
+    Decisions,
+    InsightMap,
+    LayerLegend,
+    LayerMenu,
+    disabled_layers,
+    engine_layers,
+    load_visible,
+    save_visible,
+)
 from .gui_logs import LogView
-from .gui_mapview import LiveMap, MapLegend
 from .gui_maps import LiveLayers, WorldMap, apply_monitor_reply
+from .gui_replay import Frame, ReplayBar, ReplayController, ReplayData, clock
 from .gui_marks import (
     CoverageChart,
     CoverageSample,
@@ -60,6 +73,7 @@ from .gui_widgets import (
     CARD_TITLE,
     PAGE_TITLE,
     Button,
+    PopupHost,
     Card,
     CssBox,
     FlexRow,
@@ -75,7 +89,7 @@ from .gui_widgets import (
     place,
     rounded_path,
 )
-from .monitoring import MONITOR_LAYERS, PathCursor
+from .monitoring import PathCursor
 
 IDLE_TEXT = "No active workers. Start a queued campaign to begin monitoring."
 CHOOSE_TEXT = "Select a worker above to monitor its run."
@@ -649,6 +663,10 @@ class RunCard(Card):
     view.
     Without a run it shows only a centred message in ``text.secondary``."""
 
+    view_changed = QtCore.Signal(int)
+
+    MAP, DECISIONS, LOGS, EVENTS = range(4)
+
     def __init__(
         self,
         themes: ThemeManager,
@@ -660,11 +678,20 @@ class RunCard(Card):
         super().__init__(themes, parent)
         self.views = SegmentedControl(
             themes,
-            [("Map & metrics", "map"), ("Logs", "terminal"), ("Events", "list")],
+            [
+                ("Map & metrics", "map"),
+                ("Decisions", "route"),
+                ("Logs", "terminal"),
+                ("Events", "list"),
+            ],
             icon_size=14,
             parent=self,
         )
         self.views.changed.connect(self.show_view)
+        # The bar under the head while a finished run is replayed (screen 20).
+        self.replay = ReplayBar(themes, self)
+        self.replay.hide()
+        self.replaying = False
         self.ended = StatusBadge(themes, None, self)
         self.meta = TextLine(themes, "", RUN_META, "text.secondary", self)
         self.gazebo = Button(themes, "Launch Gazebo", icon="aupright", parent=self)
@@ -678,7 +705,8 @@ class RunCard(Card):
             "End the selected run; its data is kept and campaign reports exclude it"
         )
         self.stop.setEnabled(False)
-        self.bodies = (map_view, logs, events)
+        # Map & metrics and Decisions share the map pane (only its right column changes).
+        self.bodies = (map_view, map_view, logs, events)
         for body in self.bodies:
             body.setParent(self)
         self.message = IDLE_TEXT
@@ -688,13 +716,21 @@ class RunCard(Card):
 
     def set_run_shown(self, shown: bool) -> None:
         self.has_run = shown
-        for widget in (self.views, self.meta, self.gazebo, self.rviz, self.stop):
-            widget.setVisible(shown)
+        self.views.setVisible(shown)
+        self.meta.setVisible(shown)
+        for widget in (self.gazebo, self.rviz, self.stop):
+            widget.setVisible(shown and not self.replaying)
         self.ended.setVisible(shown and self.ended.look is not None)
-        for index, body in enumerate(self.bodies):
-            body.setVisible(shown and index == self.views.index())
+        self.replay.setVisible(shown and self.replaying)
+        self._show_body()
         self.relayout()
         self.update()
+
+    def set_replaying(self, replaying: bool) -> None:
+        """A finished run: the replay bar under the head; "Run ended" takes the actions' place."""
+        if replaying != self.replaying:
+            self.replaying = replaying
+            self.set_run_shown(self.has_run)
 
     def set_message(self, text: str) -> None:
         if text != self.message:
@@ -709,8 +745,13 @@ class RunCard(Card):
 
     def show_view(self, index: int) -> None:
         self.views.set_index(index)
-        for position, body in enumerate(self.bodies):
-            body.setVisible(self.has_run and position == index)
+        self._show_body()
+        self.view_changed.emit(index)
+
+    def _show_body(self) -> None:
+        current = self.bodies[self.views.index()]
+        for body in dict.fromkeys(self.bodies):
+            body.setVisible(self.has_run and body is current)
 
     def css_changed(self) -> None:
         self.relayout()
@@ -725,24 +766,35 @@ class RunCard(Card):
         # ``.run-head``: padding 0 12, gap 16; items centred in the 51 px above the rule.
         seg = self.views.natural_width()
         place(self.views, left + 12, top + (51 - 32) / 2, seg, 32)
-        stop = self.stop.natural_width()
-        place(self.stop, left + width - 12 - stop, top + (51 - 32) / 2, stop, 32)
-        right = left + width - 12 - stop
-        for button in (
-            self.rviz,
-            self.gazebo,
-        ):  # right to left: Launch Gazebo, Launch RViz, Stop run
-            natural = button.natural_width()
-            right -= 8 + natural
-            place(button, right, top + (51 - 32) / 2, natural, 32)
+        right = left + width - 12
+        if self.replaying:
+            # "Run ended" at the right, where the run's actions were.
+            if self.ended.isVisible() and self.ended.look is not None:
+                badge = self.ended.look.width
+                right -= badge
+                place(self.ended, right, top + (51 - 22) / 2, badge, 22)
+        else:
+            stop = self.stop.natural_width()
+            right -= stop
+            place(self.stop, right, top + (51 - 32) / 2, stop, 32)
+            for button in (
+                self.rviz,
+                self.gazebo,
+            ):  # right to left: Launch Gazebo, Launch RViz, Stop run
+                natural = button.natural_width()
+                right -= 8 + natural
+                place(button, right, top + (51 - 32) / 2, natural, 32)
         actions = left + width - 12 - right
         x = left + 12 + seg + 16
-        if self.ended.isVisible() and self.ended.look is not None:
+        if not self.replaying and self.ended.isVisible() and self.ended.look is not None:
             badge = self.ended.look.width
             place(self.ended, x, top + (51 - 22) / 2, badge, 22)
             x += badge + 12
         place(self.meta, x, top + (51 - 18) / 2, max(0.0, left + width - 12 - actions - 16 - x), 18)
         body_top = top + 52
+        if self.replaying:
+            self.replay.setGeometry(round(left), round(body_top), round(width), 48)
+            body_top += 48
         for body in self.bodies:
             body.setGeometry(
                 round(left),
@@ -768,13 +820,21 @@ class RunCard(Card):
 
 
 class MapPane(Themed):
-    """``.run-body``: the map column (stage and legend, right rule) and the measurements column."""
+    """``.run-body``: the map column (stage and legend, right rule) and the right column: the run
+    measurements (Map & metrics) or the explorer decisions (Decisions). The map keeps its view when the column
+    changes."""
 
     def __init__(self, themes: ThemeManager, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(themes, parent)
-        self.map = LiveMap(themes, self)
-        self.legend = MapLegend(themes, self)
+        self.map = InsightMap(themes, self)
+        self.legend = LayerLegend(themes, self)
         self.measurements = Measurements(themes, self)
+        self.decisions = DecisionsColumn(themes, self)
+        self.decisions.hide()
+
+    def show_decisions(self, shown: bool) -> None:
+        self.decisions.setVisible(shown)
+        self.measurements.setVisible(not shown)
 
     def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
         super().resizeEvent(event)
@@ -783,6 +843,7 @@ class MapPane(Themed):
         self.map.setGeometry(0, 0, max(0, column - 1), max(0, height - 40))
         self.legend.setGeometry(0, height - 40, max(0, column - 1), 40)
         self.measurements.setGeometry(column, 0, width - column, height)
+        self.decisions.setGeometry(column, 0, width - column, height)
 
     def paintEvent(self, event: QtGui.QPaintEvent) -> None:
         painter = QtGui.QPainter(self)
@@ -857,6 +918,16 @@ class MonitorPage(QtWidgets.QWidget):
         self.monitor_cursor = PathCursor()
         self.live = LiveLayers()
         self.layer_revisions: dict[str, int] = {}
+        self.visible = load_visible()
+        self.insight_supported = True  # False once the engine rejects the explorer insight layers
+        self.decisions_view = False
+        # Replay of a finished run (screen 20): the run, its final metrics, the Results lookup.
+        self.replayer = ReplayController(transport, self)
+        self.replay_run: dict[str, Any] | None = None
+        self.replay_hold = False  # opened from Results: the sole live worker is not followed
+        self.final_metrics: dict[str, Any] = {}
+        self.pending_replay: str | None = None  # the Results attempt being looked up
+        self.replay_attempt_row: dict[str, Any] = {}
         self.worlds: dict[str, WorldMap] = {}
         self.reference_mismatch = False
         self.stop_pending: set[str] = set()
@@ -887,12 +958,32 @@ class MonitorPage(QtWidgets.QWidget):
         self.live_map = self.map_pane.map
         self.legend = self.map_pane.legend
         self.measurements = self.map_pane.measurements.content
+        self.decisions_column = self.map_pane.decisions
+        self.live_map.set_visible(self.visible)
+        self.legend.set_visible(self.visible)
+        self.live_map.layers_clicked.connect(self.open_layers)
+        self.live_map.hovered.connect(self._marks_changed)
+        self.live_map.pinned.connect(self._marks_changed)
+        self.decisions_column.table.hovered.connect(self.live_map.set_hovered)
+        self.decisions_column.table.pinned.connect(self.live_map.set_pinned)
         self.events = EventStream(transport, self)
         self.slots = AttemptSlots(transport, self)
         self.log_view = LogView(themes, transport)
         self.event_view = EventView(themes, self.events, self.slots)
         self.card = RunCard(themes, self.map_pane, self.log_view, self.event_view)
         self.card.stop.clicked.connect(self.stop_selected_run)
+        self.card.view_changed.connect(self._view_changed)
+        self.card.replay.play.connect(self.replayer.toggle)
+        self.card.replay.step.connect(self.replayer.step)
+        self.card.replay.seek.connect(self.replayer.seek)
+        self.card.replay.speed.connect(self.replayer.set_speed)
+        self.replayer.started.connect(self._replay_started)
+        self.replayer.changed.connect(self.render_replay)
+        self.replayer.playing.connect(self.card.replay.set_playing)
+        self.replayer.note.connect(lambda text: self.set_legend_status(text, False))
+        self.replayer.stale = lambda error: stale_engine_message(
+            error, "Unsupported operation: replay.window", "replay"
+        )
         self.viewers = RunViewers(self)
         self.viewers.done.connect(self._viewer_done)
         self.card.gazebo.clicked.connect(lambda: self.launch_viewer("gazebo"))
@@ -921,6 +1012,7 @@ class MonitorPage(QtWidgets.QWidget):
         self.active_page = False
         self.feed_timer.stop()
         self.close_monitor()
+        self.replayer.pause()
 
     def active_runs(self) -> list[dict[str, Any]]:
         return list(self.status.get("active", []))
@@ -1019,6 +1111,8 @@ class MonitorPage(QtWidgets.QWidget):
     # ---------- selection ----------
 
     def follow_single_worker(self) -> None:
+        if self.replay_hold:
+            return  # a replay opened from Results stays until a worker is chosen
         active = self.active_runs()
         if len(active) == 1 and self.selected_attempt != active[0]["attempt"]["id"]:
             self.choose_worker(active[0]["attempt"]["id"], focus_map=False)
@@ -1027,7 +1121,8 @@ class MonitorPage(QtWidgets.QWidget):
         active = self.run_of(identity)
         if active is None:
             return
-        changed = identity != self.selected_attempt
+        changed = identity != self.selected_attempt or self.replay is not None
+        self.end_replay()  # also a Results lookup still pending: its reply is ignored
         self.selected_attempt = identity
         self.shown_run = active
         self.strip.select(identity)
@@ -1067,6 +1162,7 @@ class MonitorPage(QtWidgets.QWidget):
         )
         self.measurements.set_metrics(self.shown_run.get("metrics") or {}, ended=True)
         self.set_legend_status(ENDED_STATUS, False)
+        self.start_replay(self.shown_run)
 
     def selected_run(self) -> dict[str, Any] | None:
         return self.run_of(self.selected_attempt)
@@ -1149,6 +1245,9 @@ class MonitorPage(QtWidgets.QWidget):
         self.monitor_cursor = PathCursor()
         self.live = LiveLayers(footprint=self.robot_footprint(active["experiment"]["robot_id"]))
         self.layer_revisions = {}
+        self.live_map.insight.clear()
+        self.live_map.insight.available = None if self.insight_supported else False
+        self.refresh_decisions()
         self.reference_mismatch = False
         self.live_map.set_layers(self.live)
         world = active["experiment"]["world_id"]
@@ -1166,7 +1265,11 @@ class MonitorPage(QtWidgets.QWidget):
     def poll_monitor(self) -> None:
         if not self.monitor_id or self.monitor_pending or not self.active_page:
             return
-        layers = [n for n in MONITOR_LAYERS if not (n == "explored" and self.reference_mismatch)]
+        layers = [
+            name
+            for name in engine_layers(self.visible, self.decisions_view, self.insight_supported)
+            if not (name == "explored" and self.reference_mismatch)
+        ]
         self.monitor_pending = True
         self.monitor_requested = self.monitor_id
         self.transport.submit(
@@ -1185,7 +1288,8 @@ class MonitorPage(QtWidgets.QWidget):
         )
 
     def set_legend_status(self, text: str, live: bool) -> None:
-        self.legend.set_status(text, live)
+        """The map's status chip (screens 18–20 move the legend line's status onto the map)."""
+        self.live_map.set_chip(text, live)
 
     def apply_monitor(self, result: dict[str, Any]) -> None:
         if "history" not in result:
@@ -1199,7 +1303,9 @@ class MonitorPage(QtWidgets.QWidget):
             self.set_legend_status(f"Monitor reply rejected: {exc}", False)
             return
         self.reference_mismatch = facts.mismatch
+        notes = list(facts.notes) + self.apply_insight(result.get("layers") or {})
         self.live_map.update()
+        self.refresh_decisions()
         live = facts.status == "available" and facts.pose_age is not None
         if live:
             text = (
@@ -1222,7 +1328,310 @@ class MonitorPage(QtWidgets.QWidget):
             text += f" · {facts.outside} samples outside the reference region"
         if facts.mismatch:
             text += " · World map differs from this attempt's reference; explored cells hidden"
-        self.set_legend_status(" · ".join([text, *facts.notes]), live)
+        age = self.insight_figures().get("age_simulation_seconds")
+        if live and isinstance(age, (int, float)):
+            text += f" · analysis {age:.1f} s old"
+        self.set_legend_status(" · ".join([text, *notes]), live)
+
+    # ---------- layers and explorer insight ----------
+
+    def open_layers(self) -> None:
+        """The Layers menu beside its button (it stays open while layers are switched)."""
+        host = self.window().findChild(PopupHost)
+        if host is None:
+            return
+        disabled = disabled_layers(self.live_map.insight, self.insight_supported)
+        menu = LayerMenu(self.themes, self.visible, disabled)
+        menu.changed.connect(self.set_visible)
+        controls = self.live_map.layer_controls
+        controls.set_opened(True)
+        menu.popup(host, controls.layers, on_close=lambda: controls.set_opened(False))
+
+    def set_visible(self, visible: frozenset[str]) -> None:
+        self.visible = visible
+        save_visible(visible)
+        self.live_map.set_visible(visible)
+        # The legend names the visible layers the run can show.
+        if self.card.replaying:
+            self.render_replay()
+        else:
+            self.refresh_decisions()
+
+    def _view_changed(self, index: int) -> None:
+        self.decisions_view = index == RunCard.DECISIONS
+        self.map_pane.show_decisions(self.decisions_view)
+        self.refresh_decisions()
+
+    def _marks_changed(self, _: object) -> None:
+        insight = self.live_map.insight
+        self.decisions_column.set_marks(insight.pinned, insight.hovered)
+
+    def apply_insight(self, layers: Mapping[str, Any]) -> list[str]:
+        """The ``decisions``, ``chunks`` and ``goals`` layers of a reply; returns notes for the status."""
+        insight, notes = self.live_map.insight, []
+        for name in INSIGHT_ENGINE_LAYERS:
+            layer = layers.get(name)
+            if not isinstance(layer, dict):
+                continue
+            try:
+                if layer["revision"] == -1:
+                    if layer.get("reason") and name == "decisions":
+                        insight.available, insight.reason = False, str(layer["reason"])
+                    if name == "decisions":
+                        insight.set_decisions(None)
+                    elif name == "chunks":
+                        insight.chunks = None
+                    self.layer_revisions.pop(name, None)
+                elif layer["data"] is not None:
+                    data = layer["data"]
+                    if name == "decisions":
+                        insight.set_decisions(Decisions.from_layer(data))
+                        insight.available = True
+                    elif name == "chunks":
+                        insight.chunks = ChunkGrid.from_layer(data)
+                    else:
+                        if data.get("after") != max(0, self.layer_revisions.get("goals", 0)):
+                            continue  # a page for another cursor (a reply from before a reset)
+                        insight.apply_goals(data)
+                    self.layer_revisions[name] = int(layer["revision"])
+            except (KeyError, TypeError, ValueError) as exc:
+                notes.append(f"{name.capitalize()} rejected: {exc}")
+        return notes
+
+    def insight_figures(self) -> Mapping[str, Any]:
+        """The worker's live analysis figures (``worker.status`` metrics ``insight``)."""
+        run = self.shown_run if self.replay is None else None
+        figures = ((run or {}).get("metrics") or {}).get("insight")
+        return figures if isinstance(figures, dict) else {}
+
+    def refresh_decisions(self, figures: Mapping[str, Any] | None = None, status: str = "") -> None:
+        """The Decisions column from the shown tick (live or replayed). Without ``figures`` during a replay it
+        draws the replay frame again, so the replay's own figures and status stay."""
+        if figures is None and self.card.replaying:
+            self.render_replay()
+            return
+        insight = self.live_map.insight
+        decisions = insight.decisions
+        if figures is None:
+            figures = self.insight_figures()
+        live = decisions is not None
+        if not status:
+            if insight.available is False:
+                status = "No analysis"
+            elif decisions is None:
+                status = "Waiting for the analysis"
+            else:
+                age = figures.get("age_simulation_seconds")
+                old = f"Analysis {age:.1f} s old" if isinstance(age, (int, float)) else "Analysis"
+                status = old + (f" · {decisions.mode}" if decisions.mode else "")
+        self.decisions_column.set_state(
+            decisions, figures, status, live, insight.available, insight.reason
+        )
+        disabled = disabled_layers(insight, self.insight_supported)
+        self.legend.set_visible(self.visible - disabled.keys())
+        self.decisions_column.set_marks(insight.pinned, insight.hovered)
+
+    # ---------- replay ----------
+
+    @property
+    def replay(self) -> ReplayData | None:
+        return self.replayer.data
+
+    def open_replay(self, attempt_id: str) -> None:
+        """Replay a finished attempt chosen on Results: its attempt and experiment rows first."""
+        self.pending_replay = attempt_id
+        self.transport.submit(
+            "replay-attempt:" + attempt_id, "results.get", {"table": "attempts", "id": attempt_id}
+        )
+
+    def _replay_lookup_failed(self, error: str) -> None:
+        self.pending_replay = None
+        self.notify.emit(f"Replay unavailable: {error}", "bad")
+
+    def _replay_rows(self, attempt: dict[str, Any], experiment: dict[str, Any]) -> None:
+        self.pending_replay = None
+        run = {
+            "attempt": attempt,
+            "experiment": experiment,
+            "metrics": attempt.get("metrics") or {},
+        }
+        self.close_monitor()
+        self.selected_attempt = None
+        self.strip.select(None)
+        self.shown_run = run
+        self.replay_hold = True  # the sole live worker is not followed until a worker is chosen
+        identity = str(attempt["id"])
+        self.measurements.clear()
+        self.coverage = CoverageHistory(identity)
+        self._read_coverage()
+        self.event_view.set_attempt(identity)
+        self.log_view.select_attempt(identity, attempt.get("directory"))
+        self.card.set_meta(attempt_meta(attempt), BadgeLook("Run ended", "neutral", None))
+        self.measurements.set_metrics(run["metrics"], ended=True)
+        self._update_head()
+        self._update_card()
+        self.start_replay(run)
+
+    def start_replay(self, run: dict[str, Any]) -> None:
+        """Replay the finished run ``run``; the card keeps its last snapshot until the run's extent arrives
+        (a run the engine cannot replay keeps it, with the reason in the status chip)."""
+        self.close_monitor()
+        self.replay_run = run
+        self.final_metrics = dict(run.get("metrics") or {})
+        self.replayer.start(str(run["attempt"]["id"]))
+
+    def _replay_started(self) -> None:
+        run = self.replay_run
+        if run is None:
+            return
+        self.live = LiveLayers(footprint=self.robot_footprint(run["experiment"]["robot_id"]))
+        self.live_map.set_layers(self.live)
+        self.live_map.insight.clear()
+        self.card.set_replaying(True)
+        self.card.replay.set_playing(False)
+        world = str(run["experiment"]["world_id"])
+        if world not in self.worlds:
+            self.transport.submit("monitor-map:" + world, "spawns.map", {"world_id": world})
+        self.render_replay()
+
+    def end_replay(self) -> None:
+        self.replayer.stop()
+        self.replay_run = None
+        self.replay_hold = False
+        self.pending_replay = None
+        self.card.set_replaying(False)
+
+    def _update_timeline(self) -> None:
+        data = self.replay
+        if data is None or not data.ready:
+            return
+        length = max(1, data.end_ns - data.zero_ns)
+        goals = [(start - data.zero_ns) / length for start in data.goal_starts()]
+        milestones = []
+        for entry in self.final_metrics.get("coverage_milestones") or []:
+            seconds = entry.get("simulation_elapsed") if isinstance(entry, dict) else None
+            if entry.get("reached") and isinstance(seconds, (int, float)):
+                milestones.append(seconds * 1e9 / length)
+        self.card.replay.track.set_marks(
+            [g for g in goals if 0 <= g <= 1], [m for m in milestones if 0 <= m <= 1]
+        )
+
+    def render_replay(self) -> None:
+        """The map, the decisions column, the measurements and the bar at the replay time."""
+        data, run = self.replay, self.replay_run
+        if data is None or not data.ready or run is None or not self.card.replaying:
+            return
+        time_ns = self.replayer.time
+        # The attempt's own reference (the run map's base), else today's until it arrives.
+        world = data.world or self.worlds.get(str(run["experiment"]["world_id"]))
+        if world is not None and world is not self.live_map.world:
+            self.live_map.set_world(world)
+        frame = data.frame(time_ns)
+        data.path_to(self.live.path, frame.vertices)
+        if frame.explored is not None or data.window_index(time_ns) in data.windows:
+            self.live.explored = frame.explored
+        self.live.pose, self.live.goal, self.live.plan, self.live.tail = (
+            frame.pose,
+            frame.goal,
+            [],
+            None,
+        )
+        insight = self.live_map.insight
+        tick = frame.tick
+        decisions = tick.decisions if tick is not None else None
+        if decisions is not insight.decisions:  # a new tick (keeps the hover while it is shown)
+            insight.set_decisions(decisions)
+        insight.chunks = tick.chunks if tick is not None else None
+        insight.goals = frame.goals
+        available = data.analysis.get("available")
+        insight.available = available if isinstance(available, bool) else None
+        insight.reason = str(data.analysis.get("reason") or "")
+        self.live_map.update()
+        self._update_timeline()
+        elapsed = (time_ns - data.zero_ns) / 1e9
+        length = (data.end_ns - data.zero_ns) / 1e9
+        failure = next(
+            (
+                self.replayer.failed_windows[i]
+                for i in data.missing(time_ns)
+                if i in self.replayer.failed_windows
+            ),
+            None,
+        )
+        loading = failure is None and (bool(data.missing(time_ns)) or not data.path_complete)
+        self.card.replay.set_time(elapsed, length, "loading" if loading else "")
+        text = f"Replay {clock(elapsed)} · {frame.vertices:,} path vertices"
+        if decisions is not None:
+            text += f" · analysis tick {decisions.tick}"
+        for note in (data.path_note, failure and f"Replay unavailable: {failure}"):
+            if note:
+                text += " · " + note
+        self.set_legend_status(text, False)
+        mode = decisions.mode if decisions is not None else None
+        status = f"Replay at {clock(elapsed)}" + (f" · {mode}" if mode else "")
+        if insight.available is False:
+            status = "No analysis"
+        self.refresh_decisions(tick.figures if tick is not None else {}, status)
+        self._replay_measurements(frame, elapsed if data.moved else None, length)
+
+    def _replay_measurements(self, frame: Frame, elapsed: float | None, length: float) -> None:
+        """The run measurements at the replay time, as the live Monitor showed them: coverage (the value, the
+        curve up to it, milestones reached by then), motion (distance, speed, turning), the explorer's CPU and
+        RAM, the RTF and quality flags of the latest recorded samples. Values without a sample yet read "—".
+        ``elapsed`` is None for a run that never moved (elapsed time starts at the first movement)."""
+        final = self.final_metrics
+        metrics: dict[str, Any] = {
+            "simulation_elapsed": elapsed,
+            "rtf": final.get("rtf"),
+            "quality_flags": final.get("quality_flags") or [],
+            "motion_started": elapsed is not None,
+        }
+        if frame.motion is not None:
+            metrics["distance_m"] = frame.motion.get("distance_m")
+            metrics["speed"] = frame.motion.get("speed")
+            metrics["angular_speed"] = frame.motion.get("wz")
+        if frame.resources is not None:
+            # The explorer's process accounting at that time, with the RTF and quality flags of that sample.
+            for key in (
+                "cpu_percent",
+                "rss_mib",
+                "cpu_average_percent",
+                "rss_average_mib",
+                "cpu_seconds",
+                "rtf",
+            ):
+                metrics[key] = frame.resources.get(key)
+            metrics["quality_flags"] = frame.resources.get("quality_flags") or []
+        if frame.coverage is not None:
+            percent = frame.coverage.get("coverage_percent")
+            age = frame.coverage.get("map_age_ns")
+            metrics["coverage_map_age"] = age / 1e9 if isinstance(age, (int, float)) else None
+            metrics["coverage_percent"] = percent
+            metrics["coverage_status"] = frame.coverage.get("status")
+            target = final.get("coverage_target_m2")
+            metrics["coverage_target_m2"] = target
+            if isinstance(percent, (int, float)) and isinstance(target, (int, float)):
+                metrics["coverage_covered_m2"] = percent / 100 * target
+        milestones = []
+        for entry in final.get("coverage_milestones") or []:
+            if not isinstance(entry, dict):
+                continue
+            seconds = entry.get("simulation_elapsed")
+            reached = (
+                bool(entry.get("reached"))
+                and elapsed is not None
+                and isinstance(seconds, (int, float))
+                and seconds <= elapsed
+            )
+            milestones.append(dict(entry, reached=reached))
+        metrics["coverage_milestones"] = milestones
+        self.measurements.set_metrics(metrics, ended=False)
+        history = self.coverage
+        shown = elapsed if elapsed is not None else -1.0
+        samples = [s for s in history.samples if s.seconds <= shown] if history else []
+        self.measurements.chart.set_data(
+            samples, milestone_marks(metrics, samples), x_end=chart_end(length)
+        )
 
     # ---------- coverage history ----------
 
@@ -1257,7 +1666,10 @@ class MonitorPage(QtWidgets.QWidget):
             history.complete = True
             history.read_at = time.monotonic()
         run = self.shown_run
-        self._update_chart((run or {}).get("metrics") or {})
+        if self.card.replaying:
+            self.render_replay()  # the curve up to the replay time
+        else:
+            self._update_chart((run or {}).get("metrics") or {})
 
     def _update_chart(self, metrics: Mapping[str, Any]) -> None:
         history = self.coverage
@@ -1286,6 +1698,7 @@ class MonitorPage(QtWidgets.QWidget):
         """Every second on this page: new events, the log while followed, recorded coverage every 5 s."""
         if not self.active_page:
             return
+        self.replayer.retry()
         self.events.poll()
         self.log_view.poll()
         history = self.coverage
@@ -1312,6 +1725,27 @@ class MonitorPage(QtWidgets.QWidget):
             if self.monitor_id and result.get("attempt_id") == self.monitor_id:
                 self.apply_monitor(result)
             return True
+        if self.replayer.received(tag, result):
+            return True
+        if tag.startswith("replay-attempt:"):
+            if tag.removeprefix("replay-attempt:") != self.pending_replay:
+                return True  # a worker was chosen meanwhile
+            experiment = result.get("experiment_id") if isinstance(result, dict) else None
+            if not isinstance(experiment, str):
+                self._replay_lookup_failed("the attempt has no experiment")
+                return True
+            self.replay_attempt_row = result
+            self.transport.submit(
+                "replay-experiment:" + str(result["id"]),
+                "results.get",
+                {"table": "experiments", "id": experiment},
+            )
+            return True
+        if tag.startswith("replay-experiment:"):
+            identity = tag.removeprefix("replay-experiment:")
+            if identity == self.pending_replay and identity == self.replay_attempt_row.get("id"):
+                self._replay_rows(self.replay_attempt_row, result)
+            return True
         if tag.startswith("monitor-map:"):
             world_id = tag.removeprefix("monitor-map:")
             try:
@@ -1323,6 +1757,8 @@ class MonitorPage(QtWidgets.QWidget):
             run = self.selected_run()
             if run is not None and run["experiment"]["world_id"] == world_id:
                 self.live_map.set_world(world)
+            elif self.replay is not None:
+                self.render_replay()  # today's world until the run map brings the attempt's own
             return True
         if tag.startswith("monitor-coverage:"):
             if self.coverage is not None and tag == self.coverage.pending:
@@ -1349,7 +1785,8 @@ class MonitorPage(QtWidgets.QWidget):
         return False
 
     def _world_failed(self, world_id: str, message: str) -> None:
-        run = self.selected_run()
+        replaying = self.replay is not None and self.replay.world is None
+        run = self.selected_run() or (self.replay_run if replaying else None)
         if run is not None and run["experiment"]["world_id"] == world_id:
             self.live_map.set_message(message)
             self.set_legend_status(message, False)
@@ -1360,6 +1797,20 @@ class MonitorPage(QtWidgets.QWidget):
             or self.slots.failed(tag, error)
             or self.log_view.failed(tag, error)  # shown in the Logs footer
         ):
+            return True
+        if self.replayer.failed_reply(tag, error):
+            return True
+        if tag.startswith(("replay-attempt:", "replay-experiment:")):
+            if tag.split(":", 1)[1] == self.pending_replay:
+                self._replay_lookup_failed(error)
+            return True
+        if tag == "monitor" and self.insight_supported and "Choose distinct layers" in error:
+            # An engine image older than the explorer insight: its layers are left out from now on.
+            self.monitor_pending = False
+            self.insight_supported = False
+            self.live_map.insight.available = False
+            self.live_map.insight.reason = "The engine image predates the explorer analysis"
+            self.refresh_decisions()
             return True
         if tag == "monitor":
             # The Monitor reports its own errors; polling at 10 Hz must not flood the toasts.

@@ -384,7 +384,7 @@ def attempt_figures(directory: Path, destination: Path, summary: dict[str, Any])
         except duckdb.Error as exc:
             reference, note = load_reference((manifest.get("coverage") or {}).get("reference"))
             unreadable = f"Ground-truth stream unreadable: {exc}"
-            physical = GroundTruthPath(reference, None, (), (*filter(None, [note]), unreadable))
+            physical = GroundTruthPath(reference, None, (), (), (*filter(None, [note]), unreadable))
         ground_truth_layer(axes[1, 0], physical, directory, manifest)
         axis_style(
             axes[1, 0], "World reference and ground-truth path", "World X (m)", "World Y (m)"

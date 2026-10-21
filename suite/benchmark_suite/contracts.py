@@ -22,7 +22,7 @@ import re
 from typing import Any, Mapping
 
 PROTOCOL_VERSION = 1
-DATASET_VERSION = 8  # 8: summaries add average_speed_mps (18 October 2026)
+DATASET_VERSION = 9  # 9: decisions, frontier_candidates, explored_cells streams (20 October 2026)
 GAZEBO_SEED = 1234
 DEFAULT_LIMIT = 1800.0
 NO_MOVEMENT_LIMIT = 180.0

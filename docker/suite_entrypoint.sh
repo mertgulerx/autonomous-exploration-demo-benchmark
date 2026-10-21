@@ -22,6 +22,9 @@ source /opt/benchmark_ws/install/setup.bash
 if [[ -n "${BENCHMARK_TELEMETRY_INSTALL:-}" ]]; then
   source "${BENCHMARK_TELEMETRY_INSTALL}/setup.bash"
 fi
+if [[ -n "${BENCHMARK_INSIGHT_INSTALL:-}" ]]; then
+  source "${BENCHMARK_INSIGHT_INSTALL}/setup.bash"
+fi
 if [[ -n "${BENCHMARK_SUITE_PROJECT:-}" ]]; then
   export PYTHONPATH="${BENCHMARK_SUITE_PROJECT}/suite:${BENCHMARK_SUITE_PROJECT}/exploration_benchmark_runner:${BENCHMARK_SUITE_PROJECT}/exploration_benchmark_robots:${PYTHONPATH:-}"
 else

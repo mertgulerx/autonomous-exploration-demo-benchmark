@@ -296,6 +296,27 @@ def paint_change_pill(
 # ---------- Switch ----------
 
 
+def paint_switch_track(
+    painter: QtGui.QPainter, origin: QtCore.QPointF, on: bool, theme: Theme
+) -> None:
+    """The ``.switch`` track (32×18: ink when on, ``control.switchOff`` off) and its 14 px knob with its
+    shadow, at ``origin`` (also painted inside the Monitor's Layers menu)."""
+    painter.save()
+    painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+    painter.setPen(QtCore.Qt.PenStyle.NoPen)
+    painter.setBrush(theme.color("text.ink" if on else "control.switchOff"))
+    painter.drawPath(rounded_path(QtCore.QRectF(origin.x(), origin.y(), 32, 18), 9))
+    knob = QtCore.QRectF(origin.x() + (16 if on else 2), origin.y() + 2, 14, 14)
+    margin = shadow_margin((gui_tokens.KNOB_SHADOW,))
+    painter.drawImage(
+        QtCore.QPointF(knob.x() - margin, knob.y() - margin),
+        shadow_image(14, 14, 7, (gui_tokens.KNOB_SHADOW,)),
+    )
+    painter.setBrush(theme.color("text.onInk") if on else css_color(gui_tokens.ON_ACCENT))
+    painter.drawEllipse(knob)
+    painter.restore()
+
+
 class Switch(QtWidgets.QAbstractButton, CssBox):
     """``.switch``: 32×18 track (off ``control.switchOff``, on ink) with a 14 px knob; label 13 px after it.
     The track snaps with the box; the label keeps the fraction."""
@@ -341,18 +362,7 @@ class Switch(QtWidgets.QAbstractButton, CssBox):
         painter = QtGui.QPainter(self)
         painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
         top = (self.height() - 18) // 2
-        on = self.isChecked()
-        painter.setPen(QtCore.Qt.PenStyle.NoPen)
-        painter.setBrush(theme.color("text.ink" if on else "control.switchOff"))
-        painter.drawPath(rounded_path(QtCore.QRectF(0, top, 32, 18), 9))
-        knob = QtCore.QRectF(16 if on else 2, top + 2, 14, 14)
-        margin = shadow_margin((gui_tokens.KNOB_SHADOW,))
-        painter.drawImage(
-            QtCore.QPointF(knob.x() - margin, knob.y() - margin),
-            shadow_image(14, 14, 7, (gui_tokens.KNOB_SHADOW,)),
-        )
-        painter.setBrush(theme.color("text.onInk") if on else css_color(gui_tokens.ON_ACCENT))
-        painter.drawEllipse(knob)
+        paint_switch_track(painter, QtCore.QPointF(0, top), self.isChecked(), theme)
         if self.text():
             color = theme.color(self.label_token if self.isEnabled() else "text.disabled")
             draw_text(

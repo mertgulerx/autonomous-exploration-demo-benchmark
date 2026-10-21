@@ -259,6 +259,11 @@ class Window(QtWidgets.QMainWindow):
         self.navigate("monitor")
         self.monitor.choose_worker(attempt_id)
 
+    def open_replay(self, attempt_id: str) -> None:
+        """Results' Replay: the Monitor replaying that finished run."""
+        self.monitor.open_replay(attempt_id)
+        self.navigate("monitor")
+
     def open_campaign(self, campaign_id: str, name: str) -> None:
         """The Monitor's Open campaign link: that campaign on Campaigns."""
         self.select_campaign({"id": campaign_id, "name": name or "Selected campaign"})
@@ -271,6 +276,7 @@ class Window(QtWidgets.QMainWindow):
             lambda identity, name: self.select_campaign({"id": identity, "name": name})
         )
         self.results_page.attempt_selected.connect(self.monitor.log_view.select_attempt)
+        self.results_page.replay_requested.connect(self.open_replay)
         self.results_page.notify.connect(self.page_notice)
         self.report_browser = self.results_page.report_browser
         self.results = self.results_page.results

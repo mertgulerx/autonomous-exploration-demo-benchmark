@@ -88,6 +88,8 @@ class GroundTruthPath:
     reference: Any | None
     path: PhysicalPath | None
     speeds: tuple[float, ...]
+    # Simulation time (ns) of the sample behind each vertex, for replay.
+    stamps: tuple[int, ...]
     notes: tuple[str, ...]
 
 
@@ -137,12 +139,13 @@ def ground_truth_path(
     maximum = finite((manifest.get("robot") or {}).get("max_linear_speed"))
     if maximum is None or maximum <= 0:
         notes.append("Robot speed limit unavailable; ground-truth path not drawn")
-        return GroundTruthPath(reference, None, (), tuple(notes))
+        return GroundTruthPath(reference, None, (), (), tuple(notes))
     path = PhysicalPath(
         maximum, reference=ReferenceCells.of(reference) if reference is not None else None
     )
     fallback = triple((manifest.get("ground_truth_alignment") or {}).get("model_to_base"))
     speeds: list[float] = []
+    stamps: list[int] = []
     for row in rows:
         offset = triple([row.get(key) for key in GROUND_TRUTH_OFFSET]) or fallback
         if offset is None:
@@ -152,19 +155,23 @@ def ground_truth_path(
         if path.add(row["clock_ns"], x, y) is not None:
             speed = finite(row.get("speed"))
             speeds.append(math.nan if speed is None else speed)
+            stamps.append(int(row["clock_ns"]))
     if not path.samples:
         notes.append(
             "No ground-truth samples with a model-to-base offset "
             "(diagnostics disabled or alignment missing)"
         )
-        return GroundTruthPath(reference, None, (), tuple(notes))
+        return GroundTruthPath(reference, None, (), (), tuple(notes))
     dropped = max(0, path.count - path.settings.capacity)
     if dropped:
         notes.append(f"Oldest {dropped:,} vertices not drawn (history bound)")
-    return GroundTruthPath(reference, path, tuple(speeds[dropped:]), tuple(notes))
+    return GroundTruthPath(
+        reference, path, tuple(speeds[dropped:]), tuple(stamps[dropped:]), tuple(notes)
+    )
 
 
-# Results run map: at most this many vertices per reply (about 0.8 MiB), and this many cached maps.
+# Results run map: at most this many vertices per reply (about 1.1 MiB with stamps), and this many
+# cached maps.
 PAGE_VERTICES = 20_000
 CACHED_MAPS = 8
 
@@ -188,7 +195,7 @@ def build(payload: dict[str, Any]) -> dict[str, Any]:
         # A read error may be transient (compaction moves segments): report it once, never cache it.
         reference, note = load_reference((manifest.get("coverage") or {}).get("reference"))
         unreadable = f"Ground-truth stream unreadable: {exc}"
-        physical = GroundTruthPath(reference, None, (), (*filter(None, [note]), unreadable))
+        physical = GroundTruthPath(reference, None, (), (), (*filter(None, [note]), unreadable))
         cacheable = False
     notes = list(physical.notes)
     reference = physical.reference
@@ -227,6 +234,7 @@ def build(payload: dict[str, Any]) -> dict[str, Any]:
         x=points[:, 0].copy(),
         y=points[:, 1].copy(),
         flags=np.asarray([point[2] for point in page["points"]] if page else [], dtype=np.uint8),
+        stamps=np.asarray(physical.stamps, dtype=np.int64),
         first_sequence=page["first_sequence"] if page else 1,
         samples=page["samples"] if page else 0,
         breaks=page["breaks"] if page else {},
@@ -287,8 +295,10 @@ class RunMaps:
         start = max(after + 1, first)
         stop = min(count, start + PAGE_VERTICES - 1)
         points: list[list[Any]] = []
+        stamps: list[int] = []
         if stop >= start:
             window = slice(start - first, stop - first + 1)
+            stamps = entry["stamps"][window].tolist()
             points = [
                 [x, y, flags]
                 for x, y, flags in zip(
@@ -305,6 +315,7 @@ class RunMaps:
             after=after,
             from_sequence=start,
             points=points,
+            stamps=stamps,
             first_sequence=first,
             last_sequence=max(count, 0),
             dropped=first - 1,

@@ -71,7 +71,7 @@ from .gui_widgets import (
     plural,
     rounded_path,
 )
-from .monitoring import MONITOR_LAYERS, PathCursor
+from .monitoring import DRAWN_LAYERS, PathCursor
 
 # ---------- operations ----------
 
@@ -1265,9 +1265,9 @@ class LiveCard(Card):
             {
                 "attempt_id": identity,
                 "after_sequence": live.cursor.applied,
-                "layers": list(MONITOR_LAYERS),
+                "layers": list(DRAWN_LAYERS),
                 "revisions": {
-                    name: live.revisions[name] for name in MONITOR_LAYERS if name in live.revisions
+                    name: live.revisions[name] for name in DRAWN_LAYERS if name in live.revisions
                 },
             },
         )

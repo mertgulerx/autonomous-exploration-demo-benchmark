@@ -33,7 +33,9 @@ SEGMENT_START = 1
 IN_COLLISION = 2
 OUTSIDE_REFERENCE = 4
 BREAK_REASONS = ("invalid", "gap", "reversed", "jump")
-MONITOR_LAYERS = ("explored", "navigation")
+MONITOR_LAYERS = ("explored", "navigation", "decisions", "chunks", "goals")
+# Layers the current Monitor and campaign tiles draw; the insight layers wait for the layer system.
+DRAWN_LAYERS = ("explored", "navigation")
 
 
 @dataclass(frozen=True, slots=True)
@@ -261,10 +263,31 @@ def trim_reply(
             result["from_sequence"] += skip
             result["after"] = after
     result["layers"] = {
-        name: dict(layer, data=None) if layer.get("revision") == revisions.get(name) else layer
+        name: dict(layer, data=None)
+        if layer.get("revision") == revisions.get(name)
+        else trim_goals(layer, revisions.get(name))
+        if name == "goals"
+        else layer
         for name, layer in result.get("layers", {}).items()
     }
     return result
+
+
+def trim_goals(layer: Mapping[str, Any], held: int | None) -> dict[str, Any]:
+    """Adapt a goals page to a reader whose update cursor (its ``goals`` revision) is ``held``.
+
+    A page that starts after the reader's cursor would skip goals, and one that ends at or before it holds
+    nothing new: the reader gets nothing and keeps its cursor until a reply is computed for it. A page that
+    starts before it loses the goals it already has.
+    """
+    page, cursor = layer.get("data"), max(0, held or 0)
+    if page is None:
+        return dict(layer)
+    if page["after"] > cursor or page["revision"] <= cursor:
+        # Starts past the reader (would skip goals) or ends before it (nothing new): keep its cursor.
+        return dict(layer, revision=cursor, data=None)
+    goals = [goal for goal in page["goals"] if goal["update"] > cursor]
+    return dict(layer, data=dict(page, after=cursor, goals=goals))
 
 
 @dataclass(slots=True)

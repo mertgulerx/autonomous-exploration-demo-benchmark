@@ -315,12 +315,12 @@ class RunsCard(Card):
 
 class RunMapView(LiveMap):
     """``.sum .stage .map``: the final map fitted 1 px inside the stage with a ``border.strong`` ring; the
-    explored cells, the ground-truth path and the robot at its end; no controls, no scale bar."""
+    explored cells, the ground-truth path and the robot at its end; no scale bar. The wheel zooms, dragging
+    pans and the reset button fits the map again, as on the Monitor."""
 
     PAD = 1
     RING = "border.strong"
     ROBOT = 7
-    CONTROLS = False
     SCALE_BAR = False
 
     world_changed = QtCore.Signal()  # the summary sizes the map to the world's aspect
@@ -337,9 +337,6 @@ class RunMapView(LiveMap):
             return width * 0.75
         columns, rows = self.world.size
         return (width - 2 * self.PAD) * rows / max(1, columns) + 2 * self.PAD
-
-    def wheelEvent(self, event: QtGui.QWheelEvent) -> None:
-        event.ignore()  # the map stays fitted; the summary scrolls
 
 
 @dataclass
@@ -588,14 +585,27 @@ class FirstReached(Themed):
 
 
 class RunSummary(Card):
-    """``.sum``: the run's robot and Open folder; the map (as tall as the world's aspect needs at the card's
-    width) and its legend; "Coverage over simulation time"; the first-reached times; Covered area, Real-time
-    factor | CPU average, RSS average, Coverage status (values the row does not show). The body under the head
-    scrolls when the card is shorter than its content."""
+    """``.sum``: the run's robot and Open folder; the map and its legend; "Coverage over simulation time"; the
+    first-reached times; Covered area, Real-time factor | CPU average, RSS average, Coverage status (values the
+    row does not show). The map and the chart share the card's height: by default the map takes ``MAP_SHARE``
+    of it, at most what the world's aspect needs at the card's width; dragging the gap under the map resizes
+    it (remembered; a double click restores the default; up to the world's aspect) and the chart takes the rest.
+    The body under the head scrolls when the map and the chart need more than the card's height."""
+
+    MAP_MIN, CHART_MIN = 160, 112
+    MAP_SHARE = 0.62
+    # Everything in the body except the map and the chart: margins, legend, chart title, first-reached, lists.
+    FIXED = 14 + 10 + 18 + 16 + 18 + 6 + 4 + 44 + 96 + 6
 
     def __init__(self, themes: ThemeManager, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(themes, parent)
         self.head = CardHead(themes, "Run summary", self)
+        self.replay = Button(themes, "Replay", icon="play", variant="ghost", small=True)
+        self.replay.setToolTip(
+            "Replay this run on the Monitor: map, explorer decisions and coverage over time"
+        )
+        self.replay.setEnabled(False)
+        self.head.add(self.replay)
         self.open_folder = Button(themes, "Open folder", icon="folder", variant="ghost", small=True)
         self.open_folder.setEnabled(False)
         self.head.add(self.open_folder)
@@ -617,6 +627,7 @@ class RunSummary(Card):
         body = self.body
         self.map = RunMapView(themes, body)
         self.map.world_changed.connect(self._layout)
+        self.map_split = CardSplit(themes, body, "results/summary-map", self._layout, across=False)
         self.legend = MapLegend(themes, body)
         self.chart_title = TextLine(
             themes, "Coverage over simulation time", SECTION, "text.secondary", body
@@ -671,15 +682,21 @@ class RunSummary(Card):
         self.area.setGeometry(1, 53, width - 2, max(0, height - 54))
         # Body coordinates: the card's 21 px content edge is 20 px into the body (1 px border).
         inner = width - 42
-        stage = max(80, round(self.map.height_for(inner)))
+        free = height - 54 - self.FIXED  # for the map and the chart
+        aspect = max(80, round(self.map.height_for(inner)))
+        high = max(self.MAP_MIN, aspect)  # dragged taller than the card fits, the body scrolls
+        default = min(aspect, max(self.MAP_MIN, free * self.MAP_SHARE))
+        stage = round(self.map_split.resolve(default, self.MAP_MIN, high))
+        chart = max(self.CHART_MIN, free - stage)
         self.map.setGeometry(20, 14, inner, stage)
+        self.map_split.place(20, 14 + stage, inner, 10)
         y = 14 + stage + 10
         self.legend.setGeometry(20, y, inner, 18)
         y += 18 + 16
         place(self.chart_title, 20, y, inner, 18)
         y += 18 + 6
-        self.chart.setGeometry(20, y, inner, 112)
-        y += 112 + 4
+        self.chart.setGeometry(20, y, inner, chart)
+        y += chart + 4
         self.reached.setGeometry(20, y, inner, 44)
         y += 44
         half = (inner - 24) / 2
@@ -1128,6 +1145,7 @@ class ResultsPage(QtWidgets.QWidget):
     # The selected run's attempt and directory: the Monitor's Logs view reads it until a live run is chosen
     # there (as before the redesign).
     attempt_selected = QtCore.Signal(str, object)
+    replay_requested = QtCore.Signal(str)  # attempt id
     notify = QtCore.Signal(str, str)  # text, kind
 
     def __init__(
@@ -1178,6 +1196,8 @@ class ResultsPage(QtWidgets.QWidget):
         self.loader = RunMapLoader(transport, self.summary.map)
         self.loader.status.connect(self.summary.legend.set_status)
         self.summary.open_folder.clicked.connect(self.open_folder)
+        self.replay_attempt: str | None = None
+        self.summary.replay.clicked.connect(self._replay)
         self.generate.clicked.connect(self._generate)
         self.campaign.currentIndexChanged.connect(self._campaign_picked)
         self.results.selected.connect(self.select_result)
@@ -1406,6 +1426,8 @@ class ResultsPage(QtWidgets.QWidget):
         )
         self.summary.directory = str(row.get("directory") or "")
         self.summary.open_folder.setEnabled(bool(self.summary.directory))
+        self.replay_attempt = identity
+        self.summary.replay.setEnabled(bool(identity))
         self.summary.clear_values()
         self.loader.show_attempt(identity, "No finished attempt for this experiment")
         self.transport.submit(
@@ -1414,6 +1436,10 @@ class ResultsPage(QtWidgets.QWidget):
         self._read_coverage(identity)
         if identity:
             self.attempt_selected.emit(identity, row.get("directory"))
+
+    def _replay(self) -> None:
+        if self.replay_attempt:
+            self.replay_requested.emit(self.replay_attempt)
 
     def _read_coverage(self, attempt: str | None, offset: int = 0) -> None:
         if offset == 0:

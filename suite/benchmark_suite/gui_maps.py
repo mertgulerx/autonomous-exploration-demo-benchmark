@@ -22,7 +22,7 @@ use the same painters. Maps draw the data they are given: no smoothing, nothing 
 
 import base64
 from collections import deque
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 import math
 import struct
@@ -771,17 +771,25 @@ def paint_live(
     theme: Theme,
     path_layers: PathLayers,
     robot_size: float,
+    *,
+    path: bool = True,
+    navigation: bool = True,
+    marks: Callable[[], None] | None = None,
 ) -> None:
     """A live run's marks in ``maps.js`` order: the plan, the path (``path_layers`` already drawn), reference
-    disagreements, the goal and the robot."""
-    if layers.plan and layers.pose is not None:
+    disagreements, ``marks`` (the Monitor's goal history and analysis marks), the goal and the robot.
+    ``path`` and ``navigation`` are the Monitor's layer switches."""
+    if navigation and layers.plan and layers.pose is not None:
         points = [placement.point(layers.pose[0], layers.pose[1])]
         points += [placement.point(x, y) for x, y in layers.plan[1:]]
         paint_plan(painter, points, theme)
-    if len(layers.path):
+    if path and len(layers.path):
         path_layers.paint(painter, layers, placement, theme)
-    paint_markers(painter, layers.path.markers, placement, theme)
-    if layers.goal is not None:
+    if path:
+        paint_markers(painter, layers.path.markers, placement, theme)
+    if marks is not None:
+        marks()
+    if navigation and layers.goal is not None:
         paint_goal(painter, placement.point(*layers.goal), theme)
     if layers.pose is not None and layers.footprint:
         paint_footprint(painter, placement, layers.pose, layers.footprint, theme, robot_size)
