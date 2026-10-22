@@ -24,6 +24,8 @@ for family in rosbot ugv; do
     --directory /opt/vendor --resource-directory "$ROBOT_RESOURCES"
 done
 
+# The previous layer removed the package lists; the locked install needs them.
+apt-get update
 python3 -m exploration_benchmark_robots.dependencies install-binaries --resource-directory "$ROBOT_RESOURCES"
 
 export HUSARION_ROS_BUILD_TYPE=simulation

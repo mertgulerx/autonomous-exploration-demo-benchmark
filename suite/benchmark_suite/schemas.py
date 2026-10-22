@@ -33,6 +33,8 @@ COMMON = IDENTITIES + [
     ("source", pa.string(), False),
     ("source_ns", pa.int64(), True),
     ("clock_ns", pa.int64(), True),
+    # Dataset schema 10: the worker's /clock when the row was made (null before the first /clock message).
+    ("receipt_clock_ns", pa.int64(), True),
     ("receipt_utc_ns", pa.int64(), False),
     ("receipt_monotonic_ns", pa.int64(), False),
     ("simulation_elapsed_ns", pa.int64(), True),
@@ -74,9 +76,10 @@ FIELDS = {
         ("speed", pa.float64()),
         ("distance_m", pa.float64()),
         ("frame", pa.string()),
-        ("world_x", pa.float64()),
-        ("world_y", pa.float64()),
-        ("world_yaw", pa.float64()),
+        # Odometry through the alignment frozen at readiness, not a ground-truth pose (schema 9: world_*).
+        ("odom_aligned_x_m", pa.float64()),
+        ("odom_aligned_y_m", pa.float64()),
+        ("odom_aligned_yaw_rad", pa.float64()),
         ("command_vx", pa.float64()),
         ("command_vy", pa.float64()),
         ("command_wz", pa.float64()),
@@ -118,6 +121,17 @@ FIELDS = {
         ("event_sequence", pa.int64()),
     ],
     "events": [("event", pa.string()), ("payload_json", pa.string())],
+    # One row per Nav2 goal sequence from the worker's goal accumulator (schema 10).
+    "goal_facts": [
+        ("goal_sequence", pa.int64()),
+        ("native_uuid", pa.string()),
+        ("dispatch_clock_ns", pa.int64()),
+        ("end_clock_ns", pa.int64()),
+        ("status", pa.string()),
+        ("recoveries", pa.int32()),
+        ("min_distance_remaining_m", pa.float64()),
+        ("feedback_messages", pa.int64()),
+    ],
     "quality": [
         ("category", pa.string()),
         ("observation", pa.string()),
@@ -195,16 +209,48 @@ FIELDS = {
     ],
 }
 
-SCHEMAS = {
-    kind: pa.schema(
-        [pa.field(name, typ, nullable=nullable) for name, typ, nullable in COMMON]
-        + [pa.field(name, typ, nullable=True) for name, typ in fields],
-        metadata={
-            b"schema_version": str(DATASET_VERSION).encode(),
-            b"time_units": b"nanoseconds",
-            b"distance_units": b"metres",
-            b"kind": kind.encode(),
-        },
-    )
-    for kind, fields in FIELDS.items()
+# Schema-9 names of fields that schema 10 renamed (D-22); readers map them (datasets.stream_relation).
+LEGACY_FIELDS = {
+    "trajectory": {
+        "world_x": "odom_aligned_x_m",
+        "world_y": "odom_aligned_y_m",
+        "world_yaw": "odom_aligned_yaw_rad",
+    }
 }
+# Fields schema 10 added to every stream, with their SQL type for reading older shards.
+ADDED_FIELDS = (("receipt_clock_ns", "BIGINT"),)
+# Streams schema 10 added.
+ADDED_KINDS = frozenset({"goal_facts"})
+
+
+def build(version: int) -> dict[str, pa.Schema]:
+    """Arrow schemas of the streams as written by dataset schema ``version`` (9 or 10)."""
+    added = {name for name, _ in ADDED_FIELDS} if version < 10 else set()
+    common = [field for field in COMMON if field[0] not in added]
+    legacy = {} if version >= 10 else LEGACY_FIELDS
+    return {
+        kind: pa.schema(
+            [pa.field(name, typ, nullable=nullable) for name, typ, nullable in common]
+            + [
+                pa.field(
+                    {new: old for old, new in legacy.get(kind, {}).items()}.get(name, name),
+                    typ,
+                    nullable=True,
+                )
+                for name, typ in fields
+            ],
+            metadata={
+                b"schema_version": str(version).encode(),
+                b"time_units": b"nanoseconds",
+                b"distance_units": b"metres",
+                b"kind": kind.encode(),
+            },
+        )
+        for kind, fields in FIELDS.items()
+        if version >= 10 or kind not in ADDED_KINDS
+    }
+
+
+SCHEMAS = build(DATASET_VERSION)
+# Every schema a recorded shard may have, by dataset schema version (older versions were written as 9).
+SCHEMAS_BY_VERSION = {9: build(9), DATASET_VERSION: SCHEMAS}

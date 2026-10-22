@@ -17,6 +17,7 @@ import json
 from pathlib import Path
 import signal
 import sys
+import time
 from typing import Any
 
 import yaml
@@ -66,11 +67,18 @@ def parser() -> argparse.ArgumentParser:
             "library",
             "reports",
             "deletions",
+            "runs",
         ),
     )
     query.add_argument("--filters", default="{}")
     query.add_argument("--offset", type=int, default=0)
     query.add_argument("--limit", type=int, default=100)
+    export = operations.add_parser("export", help="Export a study (results/studies/<study_id>)")
+    export.add_argument("study_id")
+    export.add_argument("--wait", action="store_true", help="Wait until the export has finished")
+    operations.add_parser(
+        "verify-export", help="Check an export against its SHA256SUMS"
+    ).add_argument("directory", type=Path)
     call = operations.add_parser("call", help="Access any versioned protocol operation")
     call.add_argument("method")
     call.add_argument("--params", default="{}")
@@ -107,6 +115,24 @@ def main(argv: list[str] | None = None) -> int:
             from .gui import run
 
             return run(socket)
+        if arguments.operation == "verify-export":
+            from .storage import verify_sums
+
+            print(json.dumps(verify_sums(arguments.directory), indent=2))
+            return 0
+        if arguments.operation == "export":
+            client = Client(socket)
+            try:
+                result = client.call("study.export", {"study_id": arguments.study_id})
+                while arguments.wait:
+                    time.sleep(1.0)
+                    result = client.call("study.export_status", {"study_id": arguments.study_id})
+                    if result.get("state") != "running":
+                        break
+            finally:
+                client.close()
+            print(json.dumps(result, indent=2, ensure_ascii=False, allow_nan=False))
+            return 0 if result.get("state") != "failed" else 1
         method, params = "engine.status", {}
         if arguments.operation == "catalog":
             method = "catalog.get"

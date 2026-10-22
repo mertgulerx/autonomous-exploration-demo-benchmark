@@ -35,8 +35,9 @@ from .analysis import (
     with_navigation,
 )
 from .contracts import DATASET_VERSION, average_speed, content_hash
-from .datasets import files, iter_rows, materialize_manifest
+from .datasets import files, iter_rows, materialize_manifest, stream_relation
 from .schemas import IDENTITIES, SCHEMAS
+from .strata import coverage_identity, key_parts, physical_identity
 from .storage import atomic_json, file_hash, load_object, sync_directory
 
 MILESTONE_PERCENTS = (25, 50, 75, 90, 95)  # coverage milestones (``coverage.MILESTONES``)
@@ -164,51 +165,26 @@ def navigation_counts(directory: Path) -> dict[str, int | None]:
             ([str(path) for path in paths], directory.name),
         ).fetchone()
         assert counts is not None
-        return dict(zip(names, counts))
+        result = dict(zip(names, counts))
+        # From dataset schema 10 recoveries come from the goal accumulator, whatever feedback was recorded.
+        goal_facts = files(directory, "goal_facts")
+        if goal_facts:
+            recovered = connection.execute(
+                "SELECT sum(recoveries) FROM read_parquet(?) WHERE attempt_id=?",
+                ([str(path) for path in goal_facts], directory.name),
+            ).fetchone()
+            result["recoveries"] = recovered[0] if recovered else None
+        return result
 
 
 def comparison_identity(manifest: dict[str, Any]) -> tuple[str, str, str]:
-    robot = manifest.get("robot", {})
-    generated = manifest.get("robot_configuration", {})
-    reference = manifest.get("coverage", {}).get("reference", {})
-    physical = {
-        name: robot.get(name)
-        for name in (
-            "id",
-            "kinematics",
-            "footprint",
-            "max_linear_speed",
-            "max_angular_speed",
-            "max_lateral_speed",
-            "linear_acceleration",
-            "angular_acceleration",
-            "angular_deceleration",
-            "physics_step",
-            "lidar",
-            "dependencies",
-            "source_revisions",
-        )
-    }
-    physical["sensor_configuration"] = generated.get("sensor_configuration")
-    coverage = {
-        name: reference.get(name)
-        for name in ("id", "metric_version", "grid_sha256", "metadata_sha256", "target_area_m2")
-    }
-    config = manifest.get("configuration", {})
-    key = content_hash(
-        dict(
-            physical=physical,
-            coverage=coverage,
-            spawn=config.get("scenario", {}).get("spawn"),
-            policy=manifest.get("policy"),
-            common=manifest.get("runtime", {}),
-            generated_common={
-                name: generated.get("sha256", {}).get(name)
-                for name in ("navigation.yaml", "slam.yaml", "ekf.yaml")
-            },
-        )
+    """Comparison key version 1 with the physical and coverage hashes (``strata`` holds version 2)."""
+    parts = key_parts(manifest, manifest.get("runtime", {}))
+    return (
+        content_hash(parts),
+        content_hash(physical_identity(manifest)),
+        content_hash(coverage_identity(manifest)),
     )
-    return key, content_hash(physical), content_hash(coverage)
 
 
 def enrich_incidents(directory: Path, destination: Path, settings: DetectorSettings) -> None:
@@ -223,9 +199,12 @@ def enrich_incidents(directory: Path, destination: Path, settings: DetectorSetti
         }
     ) as connection:
         if motion:
+            sources = [str(path) for path in motion]
             connection.execute(
-                "CREATE TEMP TABLE motion AS SELECT *,row_number() OVER(ORDER BY clock_ns,receipt_monotonic_ns)-1 AS n FROM read_parquet(?) WHERE attempt_id=?",
-                ([str(path) for path in motion], directory.name),
+                "CREATE TEMP TABLE motion AS SELECT *,row_number() OVER(ORDER BY clock_ns,receipt_monotonic_ns)-1 AS n FROM "
+                + stream_relation(connection, "trajectory", sources)
+                + " WHERE attempt_id=?",
+                (sources, directory.name),
             )
         else:
             connection.register(
@@ -247,7 +226,7 @@ def enrich_incidents(directory: Path, destination: Path, settings: DetectorSetti
                 AND i.start_ns-c1.simulation_elapsed_ns<=? AND i.end_ns-c2.simulation_elapsed_ns<=?
                 THEN c2.coverage_percent-c1.coverage_percent ELSE NULL END AS coverage_change_percent)
             FROM read_parquet(?) i
-            LEFT JOIN LATERAL (SELECT min(world_x) AS x1,min(world_y) AS y1,max(world_x) AS x2,max(world_y) AS y2 FROM motion WHERE n BETWEEN i.trajectory_start_row AND i.trajectory_end_row AND valid) box ON true
+            LEFT JOIN LATERAL (SELECT min(odom_aligned_x_m) AS x1,min(odom_aligned_y_m) AS y1,max(odom_aligned_x_m) AS x2,max(odom_aligned_y_m) AS y2 FROM motion WHERE n BETWEEN i.trajectory_start_row AND i.trajectory_end_row AND valid) box ON true
             ASOF LEFT JOIN coverage c1 ON i.start_ns>=c1.simulation_elapsed_ns
             ASOF LEFT JOIN coverage c2 ON i.end_ns>=c2.simulation_elapsed_ns"""
         batches = connection.execute(
@@ -319,6 +298,7 @@ def summarize(
         robot.get("max_linear_speed", 0.8), robot.get("footprint", []), settings
     )
     incident_counts: Counter[str] = Counter()
+    no_progress_measured = int(manifest.get("schema_version") or 0) < 10
     with parquet_rows(destination / "incidents.parquet", SCHEMAS["incidents"]) as writer:
 
         def record(rows: list[dict[str, Any]]) -> None:
@@ -347,13 +327,17 @@ def summarize(
                 ):
                     x, y, angle = alignment
                     row.update(
+                        # Goal positions (map frame) placed in the world; read by analysis.position.
                         world_x=x + math.cos(angle) * row["x"] - math.sin(angle) * row["y"],
                         world_y=y + math.sin(angle) * row["x"] + math.cos(angle) * row["y"],
                     )
                 yield row
 
-        for row in navigation_no_progress(navigation_positions(), settings):
-            record([row])
+        # The detector needs Nav2 feedback at full rate; from dataset schema 10 feedback is a 1 Hz debug
+        # stream at most, so it is not run (not measured, never 0). Retired with the reports (R7).
+        if no_progress_measured:
+            for row in navigation_no_progress(navigation_positions(), settings):
+                record([row])
     enrich_incidents(directory, destination, settings)
     speed = quantiles(directory, "trajectory", "speed")
     physical_speed = quantiles(directory, "ground_truth", "speed")
@@ -450,6 +434,7 @@ def summarize(
         analysis_version=ANALYSIS_VERSION,
         detectors=asdict(settings),
         incident_counts=incident_counts,
+        navigation_no_progress_measured=no_progress_measured,
         motion_gaps=detector.gaps,
         spatial_limit_reached=detector.spatial_limit_reached,
         spatial_tolerance_m=detector.radius,

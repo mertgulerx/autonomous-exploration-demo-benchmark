@@ -27,6 +27,13 @@ Thumbs.db
 .venv-suite
 .venv-suite-engine
 .venv-suite-gui
+.venv-analysis
+# The offline analysis package (RESULTS_OVERHAUL R5) has its own environment; never in an image.
+analysis
+# Local suite development files; the image installs only the benchmark_suite package.
+suite/.venv
+suite/uv.lock
+suite/tools
 .mypy_cache
 .ruff_cache
 .pytest_cache

@@ -12,7 +12,8 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
+from datetime import UTC, datetime
 import fcntl
 import json
 import math
@@ -23,16 +24,60 @@ import time
 from typing import Any, Iterator
 import uuid
 
-from .contracts import CampaignSpec, ContractError, canonical, integer, known_keys, mapping, text
+from .contracts import (
+    UNASSIGNED,
+    CampaignSpec,
+    ContractError,
+    canonical,
+    content_hash,
+    integer,
+    known_keys,
+    mapping,
+    text,
+)
 from .design import ORDERING_VERSION, experiments
 from .storage import put_object, require_local_storage
 
 # A campaign row started by tuning.start (CampaignSpec.tuning; absent from other specifications).
 TUNING_CAMPAIGN = "coalesce(json_extract(specification,'$.tuning'),0)=1"
 
-SCHEMA = """
+# Operational database version: 1 until the Results overhaul; 2 adds provenance and run records.
+STORE_VERSION = 2
+# Campaign states that own execution or recovery (the engine reads them at start).
+ACTIVE_STATES = ("RUNNING", "RETRYING", "PAUSING", "PAUSED", "STOPPING", "BLOCKED", "REPORTING")
+# Campaign states whose runs or recovery need the engine image that recorded them: the store is not
+# upgraded while a campaign is in one of them.
+UPGRADE_BLOCKING_STATES = ACTIVE_STATES + ("RECOVERY_REQUIRED",)
+
+# Tables added by version 2 (RESULTS_OVERHAUL R1; contracts in docs/MEASUREMENTS.md). A run record is
+# written once per attempt and version; finality and report class are read from ``experiments``.
+VERSION_2_STATEMENTS = (
+    """CREATE TABLE IF NOT EXISTS provenance(
+ id TEXT PRIMARY KEY, document TEXT NOT NULL, created_ns INTEGER NOT NULL)""",
+    """CREATE TABLE IF NOT EXISTS run_records(
+ attempt_id TEXT NOT NULL REFERENCES attempts(id), run_record_version INTEGER NOT NULL,
+ record_kind TEXT NOT NULL, study_id TEXT NOT NULL, evidence_level TEXT NOT NULL,
+ campaign_id TEXT NOT NULL, experiment_id TEXT NOT NULL, attempt_number INTEGER NOT NULL, outcome TEXT,
+ robot_id TEXT NOT NULL, world_id TEXT NOT NULL, spawn_id TEXT NOT NULL, profile_id TEXT NOT NULL,
+ repetition INTEGER NOT NULL, block_id TEXT NOT NULL, parameter_hash TEXT, comparison_key TEXT,
+ time_limit_s REAL, provenance_id TEXT REFERENCES provenance(id), recorded_ns INTEGER NOT NULL,
+ record TEXT NOT NULL, PRIMARY KEY(attempt_id,run_record_version))""",
+    """CREATE INDEX IF NOT EXISTS run_records_study ON run_records(study_id,run_record_version)""",
+    """CREATE INDEX IF NOT EXISTS run_records_campaign ON run_records(campaign_id)""",
+    """CREATE INDEX IF NOT EXISTS run_records_provenance ON run_records(provenance_id)""",
+    # The highest repetition number a study has used, kept when its campaigns are deleted, so a block ID
+    # (study namespace, design.py) is never given to another run (RD-30).
+    """CREATE TABLE IF NOT EXISTS study_repetitions(
+ study_id TEXT PRIMARY KEY, last_repetition INTEGER NOT NULL)""",
+    # The run-record queue looks for finished attempts at every engine tick (run_records.py).
+    """CREATE INDEX IF NOT EXISTS attempts_phase ON attempts(phase,discarded,terminal_ns)""",
+)
+VERSION_2_TABLES = "".join(statement + ";\n" for statement in VERSION_2_STATEMENTS)
+
+SCHEMA = (
+    f"""
 CREATE TABLE IF NOT EXISTS schema_version(version INTEGER NOT NULL);
-INSERT INTO schema_version SELECT 1 WHERE NOT EXISTS(SELECT 1 FROM schema_version);
+INSERT INTO schema_version SELECT {STORE_VERSION} WHERE NOT EXISTS(SELECT 1 FROM schema_version);
 CREATE TABLE IF NOT EXISTS catalogs(hash TEXT PRIMARY KEY, snapshot TEXT NOT NULL, created_ns INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS library(
  id TEXT PRIMARY KEY, kind TEXT NOT NULL, owner TEXT NOT NULL, name TEXT NOT NULL,
@@ -94,6 +139,8 @@ CREATE TABLE IF NOT EXISTS deletions(
  paths TEXT NOT NULL, summary TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS deletions_state ON deletions(state,requested_ns);
 """
+    + VERSION_2_TABLES
+)
 
 
 # Campaign states in the order the Campaigns table lists them with ``sort_by="attention"``.
@@ -122,6 +169,71 @@ CAMPAIGN_SORT_KEYS = frozenset(
 SUMMARY_METRICS = ("coverage_percent", "simulation_elapsed", "distance_m")
 
 
+def upgrade_blockers(workspace: Path) -> int:
+    """Campaigns that would make an engine refuse to upgrade this workspace's database (read-only).
+
+    The launcher asks before it replaces the engine image (deployment.py): 0 when the database is new,
+    already at this version or unreadable (the engine then decides).
+    """
+    path = workspace / "suite.sqlite3"
+    if not path.exists():
+        return 0
+    try:
+        with closing(sqlite3.connect(f"file:{path}?mode=ro", uri=True)) as database:
+            version = database.execute("SELECT version FROM schema_version").fetchone()
+            if not version or int(version[0]) != 1:
+                return 0
+            return int(
+                database.execute(
+                    "SELECT count(*) FROM campaigns WHERE state IN ("
+                    + ",".join("?" * len(UPGRADE_BLOCKING_STATES))
+                    + ")",
+                    UPGRADE_BLOCKING_STATES,
+                ).fetchone()[0]
+            )
+    except sqlite3.Error:
+        return 0
+
+
+def study_campaign_rows(
+    database: sqlite3.Connection, study_id: str
+) -> list[tuple[str, str, str, str, int, int | None]]:
+    """A study's campaigns (id, name, state, specification, created, finished), oldest first.
+
+    Campaigns without a study block form the ``unassigned`` study; tuning runs belong to none. Shared by
+    the engine (repetition numbers) and the export job, which reads the database on its own connection.
+    """
+    return [
+        tuple(row)
+        for row in database.execute(
+            "SELECT id,name,state,specification,created_ns,execution_finished_ns FROM campaigns "
+            f"WHERE NOT ({TUNING_CAMPAIGN}) AND COALESCE(json_extract(specification,'$.study.id'),?)=? "
+            "ORDER BY created_ns,id",
+            (UNASSIGNED, study_id),
+        )
+    ]
+
+
+def restart_sources(database: sqlite3.Connection) -> dict[str, str]:
+    """Restarted copies and the campaigns they replace (``campaign.restarted_from`` events, RD-30).
+
+    A repeated campaign also names its source (``source_campaign_id``) but adds blocks; only a restart
+    replaces its source's blocks.
+    """
+    return {
+        row[0]: json.loads(row[1])["source_campaign_id"]
+        for row in database.execute(
+            "SELECT campaign_id,payload FROM events WHERE kind='campaign.restarted_from' "
+            "AND campaign_id IS NOT NULL"
+        )
+    }
+
+
+def replaced_campaigns(database: sqlite3.Connection) -> set[str]:
+    """Campaigns a restarted copy replaces: never in a study's export or its study views (RD-30)."""
+    return set(restart_sources(database).values())
+
+
 class Store:
     def __init__(self, workspace: Path):
         self.workspace = workspace.resolve()
@@ -144,9 +256,16 @@ class Store:
             self.db.execute("PRAGMA journal_mode=WAL")
             self.db.execute("PRAGMA synchronous=FULL")
             self.db.execute("PRAGMA busy_timeout=5000")
+            version = self._version()
+            if version == 1:
+                self._upgrade_from_1()
+            elif version not in (None, STORE_VERSION):
+                raise ContractError(
+                    "workspace",
+                    f"Unsupported operational database version {version}; this engine reads "
+                    f"version {STORE_VERSION}",
+                )
             self.db.executescript(SCHEMA)
-            if self.db.execute("SELECT version FROM schema_version").fetchone()[0] != 1:
-                raise ContractError("workspace", "Unsupported operational database version")
             check = self.db.execute("PRAGMA quick_check").fetchone()[0]
             if check != "ok":
                 raise ContractError("workspace", "Database integrity check failed: " + check)
@@ -155,6 +274,49 @@ class Store:
                 self.db.close()
             self.lock.close()
             raise
+
+    def _version(self) -> int | None:
+        """The database's version, or None for a new database."""
+        if not self.db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='schema_version'"
+        ).fetchone():
+            return None
+        row = self.db.execute("SELECT version FROM schema_version").fetchone()
+        return int(row[0]) if row else None
+
+    def _upgrade_from_1(self) -> None:
+        """Add the version-2 tables in one transaction, after an online backup of version 1.
+
+        Refused while a campaign still needs the previous image: its recovery and remaining runs belong to
+        the code that recorded it. The library, campaigns and recorded rows are left as they are.
+        """
+        active = self.db.execute(
+            "SELECT count(*) FROM campaigns WHERE state IN ("
+            + ",".join("?" * len(UPGRADE_BLOCKING_STATES))
+            + ")",
+            UPGRADE_BLOCKING_STATES,
+        ).fetchone()[0]
+        if active:
+            raise ContractError(
+                "workspace",
+                f"The operational database needs an upgrade to version {STORE_VERSION}, but {active} "
+                "campaign(s) are active; finish or stop them with the previous suite image first",
+                "conflict",
+            )
+        stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
+        backup = self.workspace / f"suite.sqlite3.v1-{stamp}.bak"
+        with closing(sqlite3.connect(backup)) as target:
+            self.db.backup(target)
+        exports = self.db.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='exports'"
+        ).fetchone()
+        with self.transaction():
+            for statement in VERSION_2_STATEMENTS:
+                self.db.execute(statement)
+            # The empty table of the export feature removed on 16 October 2026 (RESULTS_RESEARCH RD-44).
+            if exports and not self.db.execute("SELECT 1 FROM exports LIMIT 1").fetchone():
+                self.db.execute("DROP TABLE exports")
+            self.db.execute("UPDATE schema_version SET version=?", (STORE_VERSION,))
 
     @contextmanager
     def transaction(self) -> Iterator[None]:
@@ -166,7 +328,8 @@ class Store:
         try:
             yield
         except BaseException:
-            if outer:
+            # SQLite may already have rolled back (for example on SQLITE_FULL); keep the original error.
+            if outer and self.db.in_transaction:
                 self.db.execute("ROLLBACK")
             raise
         else:
@@ -187,6 +350,16 @@ class Store:
     def rows(self, sql: str, arguments: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
         self._assert_owner()
         return [dict(row) for row in self.db.execute(sql, arguments)]
+
+    def put_provenance(self, document: dict[str, Any]) -> str:
+        """Store a provenance document once under its content hash and return the hash."""
+        identity = content_hash(document)
+        with self.transaction():
+            self.db.execute(
+                "INSERT OR IGNORE INTO provenance(id,document,created_ns) VALUES(?,?,?)",
+                (identity, canonical(document), time.time_ns()),
+            )
+        return identity
 
     def event(
         self, kind: str, payload: Any, campaign_id: str | None = None, attempt_id: str | None = None

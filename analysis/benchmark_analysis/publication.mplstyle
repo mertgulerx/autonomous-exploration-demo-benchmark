@@ -1,0 +1,55 @@
+# Publication figure style of the analysis package (docs/research/FIGURE_STYLE.md). Matplotlib 3.10.3.
+# Drawn at final size (style.figure); text 9 pt; legend size set by the journal preset (FP-6); TrueType fonts.
+
+font.family: serif
+font.serif: STIXGeneral, DejaVu Serif
+mathtext.fontset: stix
+font.size: 9
+axes.titlesize: 9
+axes.labelsize: 9
+xtick.labelsize: 9
+ytick.labelsize: 9
+legend.fontsize: 8
+legend.frameon: False
+legend.handlelength: 1.6
+legend.borderaxespad: 0.3
+
+axes.linewidth: 0.6
+axes.edgecolor: 222222
+axes.labelcolor: 000000
+axes.spines.top: False
+axes.spines.right: False
+axes.grid: False
+axes.axisbelow: True
+axes.prop_cycle: cycler('color', ['000000', '0072B2', 'D55E00', '009E73', 'CC79A7', 'E69F00'])
+grid.linewidth: 0.4
+grid.color: d9d9d9
+
+lines.linewidth: 1.0
+lines.markersize: 3.5
+patch.linewidth: 0.6
+boxplot.flierprops.markersize: 2.5
+errorbar.capsize: 0
+
+xtick.major.width: 0.6
+ytick.major.width: 0.6
+xtick.minor.width: 0.4
+ytick.minor.width: 0.4
+xtick.major.size: 3
+ytick.major.size: 3
+xtick.minor.size: 1.5
+ytick.minor.size: 1.5
+xtick.direction: out
+ytick.direction: out
+
+image.cmap: cividis
+figure.dpi: 150
+figure.constrained_layout.use: True
+savefig.dpi: 600
+savefig.bbox: standard
+savefig.transparent: False
+savefig.facecolor: white
+
+pdf.fonttype: 42
+ps.fonttype: 42
+svg.fonttype: none

@@ -73,9 +73,13 @@ def valid_motion(row: dict[str, Any]) -> bool:
 
 
 def position(row: dict[str, Any]) -> tuple[float, float]:
-    return float(row["world_x"] if row.get("world_x") is not None else row["x"]), float(
-        row["world_y"] if row.get("world_y") is not None else row["y"]
-    )
+    """World position of a trajectory row (odometry through the frozen alignment) or a mapped goal.
+
+    ``world_x``/``world_y`` are the goal positions report_data places; this module retires with R7.
+    """
+    x = row.get("odom_aligned_x_m", row.get("world_x"))
+    y = row.get("odom_aligned_y_m", row.get("world_y"))
+    return float(x if x is not None else row["x"]), float(y if y is not None else row["y"])
 
 
 @dataclass(slots=True)
@@ -170,7 +174,7 @@ class MotionDetector:
                 linear_limit_m_s=self.limit,
                 goal_sequence=segment.first.get("active_goal_sequence"),
                 position_source="world"
-                if segment.first.get("world_x") is not None
+                if segment.first.get("odom_aligned_x_m", segment.first.get("world_x")) is not None
                 or segment.first["source"].startswith("gazebo")
                 else "odometry",
             ),

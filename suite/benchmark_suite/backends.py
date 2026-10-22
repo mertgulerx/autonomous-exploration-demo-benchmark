@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from collections.abc import Callable
+from pathlib import Path
 import time
 from typing import Any, Protocol
 
@@ -33,6 +34,11 @@ class WorkerHandle(Protocol):
 
 class Backend(Protocol):
     synthetic: bool
+
+    @property
+    def root(self) -> Path | None:
+        """The checkout the engine reads (provenance); None for a backend without one."""
+        ...
 
     def preflight(self) -> None: ...
     def start(
@@ -92,6 +98,7 @@ class SyntheticWorker:
 
 class SyntheticBackend:
     synthetic = True
+    root: Path | None = None
 
     def __init__(
         self, outcome: Callable[[dict[str, Any], bool], str] | None = None, steps: int = 4

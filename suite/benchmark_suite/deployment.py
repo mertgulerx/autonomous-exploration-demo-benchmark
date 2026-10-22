@@ -22,16 +22,28 @@ import os
 from pathlib import Path
 import shutil
 import signal
+from socket import gethostname
 import subprocess
 import time
 from typing import Any, Callable, IO
 
 from .contracts import ContractError
 from .protocol import Client
+from .provenance import (
+    CHECKOUT_ROLE,
+    HOST_FACTS,
+    RUNTIME_IMAGE_LABEL,
+    RUNTIME_LABEL_PREFIX,
+    SUITE_LABEL_PREFIX,
+    image_labels,
+)
 from .storage import require_local_storage
+from .store import upgrade_blockers
 
 DEFAULT_IMAGE = "autonomous-exploration-benchmark:suite"
 VERSION_LABEL = "org.benchmark.suite.version"
+# The ID of the runtime image a suite image was built on (provenance; a flattened base has another ID).
+BASE_ID_LABEL = "org.benchmark.suite.base-id"
 # Campaign states during which the engine is not stopped for an image update.
 BUSY_STATES = frozenset({"RUNNING", "RETRYING", "PAUSING", "STOPPING", "REPORTING"})
 # Suite CLI commands that only read: they never build or replace the engine.
@@ -194,6 +206,9 @@ def build_image(
             container = command("create", base)
             try:
                 changes = ["--change", "LABEL org.benchmark.base-source=" + original["Id"]]
+                # Keep the runtime image's labels (its repository states, provenance.py).
+                for label, value in sorted((original["Config"].get("Labels") or {}).items()):
+                    changes.extend(("--change", f"LABEL {label}={json.dumps(value)}"))
                 for entry in original["Config"].get("Env", []):
                     name, _, value = entry.partition("=")
                     changes.extend(("--change", "ENV " + name + "=" + json.dumps(value)))
@@ -225,6 +240,8 @@ def build_image(
             finally:
                 docker("rm", container, timeout=5)
         base = flattened
+    # The checkout the suite code comes from (provenance; D-08). The explorer's labels are the base's.
+    labels = image_labels(root, SUITE_LABEL_PREFIX, (CHECKOUT_ROLE,))
     command(
         "build",
         "-f",
@@ -233,6 +250,13 @@ def build_image(
         "BENCHMARK_BASE=" + base,
         "--label",
         f"{VERSION_LABEL}={version}",
+        "--label",
+        f"{BASE_ID_LABEL}={original['Id']}",
+        *(
+            argument
+            for name, value in labels.items()
+            for argument in ("--label", f"{name}={value}")
+        ),
         "-t",
         image,
         str(root),
@@ -301,7 +325,8 @@ def ensure_engine(
     os.chmod(socket.parent, 0o700)
     name = f"benchmark-suite-{os.getuid()}-{workspace_key(workspace)}"
     network_name = name + "-network"
-    gpu_mode, gpu_args = gpu_arguments(json.loads(command("info", "--format", "{{json .}}")))
+    info = json.loads(command("info", "--format", "{{json .}}"))
+    gpu_mode, gpu_args = gpu_arguments(info)
     running = lookup("container", name)
     if running:
         labels = running["Config"].get("Labels") or {}
@@ -320,6 +345,25 @@ def ensure_engine(
     version = required_version(root)
     outdated = installed is not None and image_version(installed) != version
     build = installed is None or rebuild or (outdated and update)
+    # A new engine upgrades a version-1 database and refuses while a campaign needs the old image (store.py):
+    # keep the installed image until those campaigns are finished or stopped, rather than replace it.
+    blockers = upgrade_blockers(workspace) if build else 0
+    if blockers:
+        if installed is None or rebuild:
+            raise ContractError(
+                "workspace",
+                f"{blockers} campaign(s) in this workspace are active, and this checkout's engine upgrades "
+                "the operational database, which it refuses while they are; finish or stop them with the "
+                "installed suite image first (start without --rebuild)",
+                "conflict",
+            )
+        build = False
+        print(
+            f"The suite image is version {image_version(installed)}, this checkout needs {version}, which "
+            f"upgrades the operational database; {blockers} campaign(s) are active, so the engine keeps "
+            "its image until they are finished or stopped.",
+            flush=True,
+        )
     if build and running and running["State"]["Running"]:
         if rebuild:
             raise ContractError(
@@ -370,6 +414,22 @@ def ensure_engine(
         if not running["State"]["Running"]:
             command("start", name)
     else:
+        # Provenance the engine cannot see from inside its container (provenance.document).
+        installed_labels = installed["Config"].get("Labels") or {}
+        # Suite images carry the runtime image's labels (inherited, or copied into a flattened base).
+        runtime_labels = {
+            key: value
+            for key, value in installed_labels.items()
+            if key.startswith(RUNTIME_LABEL_PREFIX) or key == RUNTIME_IMAGE_LABEL
+        }
+        runtime_image = dict(
+            id=installed_labels.get(BASE_ID_LABEL)
+            or installed_labels.get("org.benchmark.base-source"),
+            labels=runtime_labels or None,
+        )
+        host = {fact: info.get(fact) for fact in HOST_FACTS}
+        studies = root / "results/studies"
+        studies.mkdir(parents=True, exist_ok=True)
         network = lookup("network", network_name)
         if network:
             labels = network.get("Labels") or {}
@@ -423,10 +483,22 @@ def ensure_engine(
             bind_mount(workspace),
             "--mount",
             bind_mount(socket.parent),
+            # Study exports (RESULTS_RESEARCH RD-36), apart from the operational workspace.
+            "--mount",
+            bind_mount(studies),
             "--workdir",
             str(root),
             "--env",
             "BENCHMARK_IMAGE_ID=" + installed["Id"],
+            "--env",
+            "BENCHMARK_IMAGE_LABELS=" + json.dumps(installed_labels, sort_keys=True),
+            "--env",
+            "BENCHMARK_RUNTIME_IMAGE=" + json.dumps(runtime_image, sort_keys=True),
+            "--env",
+            "BENCHMARK_HOST=" + json.dumps(host, sort_keys=True),
+            # Never recorded: study exports refuse files that contain it (exports.py).
+            "--env",
+            "BENCHMARK_HOST_NAME=" + gethostname(),
         ]
         devices = Path("/dev/dri")
         if devices.exists():
@@ -509,6 +581,11 @@ def main() -> int:
             ) == str(root):
                 docker("stop", "--time", "60", name)
             return 0
+        if arguments.cli and arguments.cli[0] == "verify-export":
+            # Reads a local export only: no engine is needed.
+            from .cli import main as cli
+
+            return cli(["--workspace", str(workspace), *arguments.cli])
         runtime = ensure_engine(
             root,
             workspace,

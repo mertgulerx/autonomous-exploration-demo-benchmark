@@ -23,6 +23,23 @@ ENV DEBIAN_FRONTEND=noninteractive \
     FASTDDS_BUILTIN_TRANSPORTS=UDPv4 \
     QT_X11_NO_MITSHM=1
 
+# Package archives frozen at the binary lock's date (exploration_benchmark_robots/config/binary_lock.yaml): the
+# live Ubuntu and ROS archives keep only their newest versions, so every apt step installs from the Ubuntu and
+# ROS snapshot archives and a rebuild reproduces the locked closure. The ROS snapshot key is fetched by its full
+# fingerprint and checked. Refreshing the lock means new dates here and a new lock (a changed environment).
+ARG UBUNTU_SNAPSHOT=20261011T000000Z
+ARG ROS_SNAPSHOT=2026-10-05
+ARG ROS_SNAPSHOT_KEY=4B63CF8FDE49746E98FA01DDAD19BAB3CBF125EA
+RUN set -eu; \
+    python3 -c "import sys, urllib.request; sys.stdout.buffer.write(urllib.request.urlopen('https://keyserver.ubuntu.com/pks/lookup?op=get&options=mr&search=0x${ROS_SNAPSHOT_KEY}', timeout=60).read())" > /tmp/ros-snapshot.asc; \
+    test "$(gpg --batch --quiet --show-keys --with-colons /tmp/ros-snapshot.asc | awk -F: '$1 == "fpr" {print $10; exit}')" = "${ROS_SNAPSHOT_KEY}"; \
+    gpg --batch --quiet --dearmor -o /usr/share/keyrings/ros-snapshots-archive-keyring.gpg /tmp/ros-snapshot.asc; \
+    rm /tmp/ros-snapshot.asc; \
+    printf 'Types: deb\nURIs: http://snapshots.ros.org/%s/%s/ubuntu\nSuites: noble\nComponents: main\nSigned-By: /usr/share/keyrings/ros-snapshots-archive-keyring.gpg\n' \
+        "${ROS_DISTRO}" "${ROS_SNAPSHOT}" > /etc/apt/sources.list.d/ros2.sources; \
+    sed -i "s#http://archive.ubuntu.com/ubuntu/\?#https://snapshot.ubuntu.com/ubuntu/${UBUNTU_SNAPSHOT}/#; s#http://security.ubuntu.com/ubuntu/\?#https://snapshot.ubuntu.com/ubuntu/${UBUNTU_SNAPSHOT}/#" \
+        /etc/apt/sources.list.d/ubuntu.sources
+
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     python3-colcon-common-extensions \

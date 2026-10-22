@@ -25,6 +25,22 @@ if [[ ! -f "${suite_env}/.dependencies" || "$(cat "${suite_env}/.dependencies")"
     "${suite_env}/bin/python" -m pip install --disable-pip-version-check -r "${suite_lock}"
     printf '%s\n' "${suite_hash}" > "${suite_env}/.dependencies"
 fi
+# The analysis package's own environment (RESULTS_OVERHAUL R5); the suite runs without it, so a failed build only
+# warns and is retried at the next start.
+analysis_env="${suite_root}/.venv-analysis"
+analysis_lock="${suite_root}/analysis/requirements.lock"
+analysis_hash="$(sha256sum "${analysis_lock}" 2>/dev/null || true)"
+if [[ ! -f "${analysis_lock}" ]]; then
+    printf 'suite_launch.sh: %s is missing; the suite starts without the analysis environment\n' "${analysis_lock}" >&2
+elif [[ ! -f "${analysis_env}/.dependencies" || "$(cat "${analysis_env}/.dependencies")" != "${analysis_hash}" ]]; then
+    if { [[ -x "${analysis_env}/bin/python" ]] || python3.12 -m venv "${analysis_env}"; } \
+        && "${analysis_env}/bin/python" -m pip install --disable-pip-version-check -r "${analysis_lock}" >&2; then
+        printf '%s\n' "${analysis_hash}" > "${analysis_env}/.dependencies"
+    else
+        printf 'suite_launch.sh: the analysis environment %s could not be built; the suite starts without it\n' \
+            "${analysis_env}" >&2
+    fi
+fi
 cd -- "${suite_root}"
 exec env -u QT_PLUGIN_PATH -u QT_QPA_PLATFORM_PLUGIN_PATH -u LD_LIBRARY_PATH \
     PYTHONPATH="${suite_root}/suite" "${suite_env}/bin/python" -m benchmark_suite.deployment "$@"

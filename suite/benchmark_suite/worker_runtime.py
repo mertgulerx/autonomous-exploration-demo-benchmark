@@ -27,6 +27,7 @@ import zlib
 import psutil
 
 from .contracts import ContractError, average_speed
+from .goal_facts import PREEMPTED, Goal, GoalAccumulator
 from .insight import (
     ExploredSnapshots,
     GoalHistory,
@@ -91,6 +92,12 @@ class WorkerRuntime:
         self.insight = InsightSummary()
         self.goal_history = GoalHistory()
         self.explored_snapshots = ExploredSnapshots()
+        # Goal facts and the debug-stream switch (RD-42): feedback and command rows are recorded only
+        # with debug streams on; the accumulator sees every feedback message either way.
+        self.goals = GoalAccumulator()
+        # The same truth value the recorder lists in its manifest (recording.DEBUG_STREAMS).
+        self.debug_streams = bool(worker.config.get("debug_streams"))
+        self.insight_exited = False
 
     def publish_state(self) -> None:
         worker = self.worker
@@ -206,7 +213,6 @@ class WorkerRuntime:
         self.planar_speed = math.hypot(v.linear.x, v.linear.y) if valid else None
         self.angular_speed = v.angular.z if valid else None
         recorder.origin = worker.measurements.movement_simulation_start
-        recorder.clock = worker.clock_value
         row = recorder.row(
             "raw_odometry",
             source,
@@ -233,9 +239,15 @@ class WorkerRuntime:
             x, y, angle = self.world_from_odom
             c, s = math.cos(angle), math.sin(angle)
             row.update(
-                world_x=x + c * p.x - s * p.y, world_y=y + s * p.x + c * p.y, world_yaw=yaw + angle
+                odom_aligned_x_m=x + c * p.x - s * p.y,
+                odom_aligned_y_m=y + s * p.x + c * p.y,
+                odom_aligned_yaw_rad=yaw + angle,
             )
-            self.pose = [row["world_x"], row["world_y"], row["world_yaw"]]
+            self.pose = [
+                row["odom_aligned_x_m"],
+                row["odom_aligned_y_m"],
+                row["odom_aligned_yaw_rad"],
+            ]
         recorder.observation("trajectory", row)
 
     def command(self, topic: str, message: Any) -> None:
@@ -246,6 +258,8 @@ class WorkerRuntime:
         if self.last_commands.get(topic) == values:
             return
         self.last_commands[topic] = values
+        if not self.debug_streams:
+            return
         recorder.observation(
             "commands",
             dict(recorder.row("command"), vx=values[0], vy=values[1], wz=values[2], topic=topic),
@@ -411,6 +425,13 @@ class WorkerRuntime:
                 position = to_world(alignment, p.x, p.y)
             elif message.event == "terminal":
                 self.goal_sequence = None
+            if message.event == "initialized":
+                self.goals.started(message.goal_sequence, stamp)
+            elif message.event in ("terminal", PREEMPTED):
+                status = message.terminal_status if message.event == "terminal" else PREEMPTED
+                ended = self.goals.ended(message.goal_sequence, status)
+                if ended is not None:
+                    self._goal_ended(recorder, ended, stamp)
             self.goal_history.apply(
                 message.event, message.goal_sequence, position, message.terminal_status, stamp
             )
@@ -504,6 +525,12 @@ class WorkerRuntime:
                 return
             feedback = message.feedback
             stamp = feedback.current_pose.header.stamp
+            native_uuid = bytes(message.goal_id.uuid).hex()
+            goal = self.goals.feedback(
+                native_uuid, feedback.distance_remaining, feedback.number_of_recoveries
+            )
+            if not self.debug_streams:
+                return
             row = recorder.row(
                 "native_action_feedback",
                 stamp.sec * 10**9 + stamp.nanosec,
@@ -511,14 +538,55 @@ class WorkerRuntime:
             )
             row.update(
                 event="feedback",
-                native_uuid=bytes(message.goal_id.uuid).hex(),
+                native_uuid=native_uuid,
                 distance_remaining=feedback.distance_remaining,
                 recoveries=feedback.number_of_recoveries,
                 frame=feedback.current_pose.header.frame_id,
                 x=feedback.current_pose.pose.position.x,
                 y=feedback.current_pose.pose.position.y,
             )
-            recorder.observation("navigation", row)
+            # Feedback of no known goal is always kept; a goal's rows are thinned (goal_facts.py).
+            if goal is None or goal.keep_feedback(row["clock_ns"], row):
+                recorder.observation("navigation", row)
+
+    @staticmethod
+    def _goal_ended(recorder: Recorder, goal: Goal, end_clock_ns: int | None) -> None:
+        """Record a goal's facts and its held last feedback row; the caller holds worker.lock."""
+        if goal.held_row is not None:
+            recorder.observation("navigation", goal.held_row)
+            goal.held_row = None
+        recorder.observation(
+            "goal_facts",
+            dict(
+                recorder.row("goal_accumulator", clock_ns=end_clock_ns),
+                **goal.fields(end_clock_ns),
+            ),
+        )
+
+    def close_goals(self, recorder: Recorder) -> None:
+        """Record the goals still open at the stop; called once before ``recorder`` finishes.
+
+        The worker passes its recorder: it may already have dropped its own reference after a storage
+        error while the recorder still finishes.
+        """
+        with self.worker.lock:
+            for goal in self.goals.close():
+                self._goal_ended(recorder, goal, None)
+
+    def check_insight(self) -> None:
+        """Note when the insight node has ended while the run is active (RD-17, ``run_facts``)."""
+        roots = self.worker.insight_scope.roots
+        if roots and all(root.poll() is not None for root in roots):
+            self.insight_exited = True
+
+    def run_facts(self, recorder: Recorder) -> dict[str, Any]:
+        """Facts of the whole run for ``recorder``'s manifest (``run_facts``, dataset schema 10)."""
+        started = bool(recorder.manifest.get("insight", {}).get("started"))
+        return dict(
+            self.goals.facts(),
+            lost_navigation_events=self.navigation_lost,
+            insight_exited_before_stop=self.insight_exited if started else None,
+        )
 
     def sample_resources(self, wall: float) -> None:
         recorder = self.worker.recorder
@@ -528,6 +596,7 @@ class WorkerRuntime:
         # The insight scope is `ros2 run` plus the node it spawns; a full process scan (about 14 ms) runs
         # only while `ros2 run` lives and the node is not yet known.
         insight_scope = self.worker.insight_scope
+        self.check_insight()
         insight = set(insight_scope.live())
         if len(insight) < 2 and any(root.poll() is None for root in insight_scope.roots):
             insight = set(insight_scope.discover())

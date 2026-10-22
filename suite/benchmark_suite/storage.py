@@ -109,6 +109,15 @@ def put_object(workspace: Path, value: Any) -> str:
     return digest
 
 
+def read_object(workspace: Path, digest: str) -> bytes:
+    """Bytes of a raw object (``object_store``), refused when they no longer match their digest."""
+    path = workspace / "objects" / digest[:2] / digest
+    data = path.read_bytes()
+    if hashlib.sha256(data).hexdigest() != digest:
+        raise OSError("Shared object failed integrity check: " + str(path))
+    return data
+
+
 def load_object(workspace: Path, digest: str) -> Any:
     import json
 
@@ -129,3 +138,24 @@ def object_store(directory: Path, data: bytes) -> tuple[str, Path]:
     else:
         atomic_bytes(path, data)
     return digest, path
+
+
+def verify_sums(directory: Path) -> dict[str, Any]:
+    """Check every file of a study export against its ``SHA256SUMS`` (read-only; exports.py writes it)."""
+    directory = directory.resolve()
+    listed: dict[str, str] = {}
+    for line in (directory / "SHA256SUMS").read_text().splitlines():
+        digest, name = line.split("  ", 1)
+        listed[name] = digest
+    present = {p.relative_to(directory).as_posix() for p in directory.rglob("*") if p.is_file()}
+    unlisted = present - set(listed) - {"SHA256SUMS"}
+    changed = [
+        name
+        for name, digest in sorted(listed.items())
+        if not inside(directory, name).is_file() or file_hash(inside(directory, name)) != digest
+    ]
+    if unlisted or changed:
+        raise OSError(
+            f"Export failed verification: {len(changed)} changed or missing, {len(unlisted)} unlisted"
+        )
+    return dict(path=str(directory), files=len(listed), verified=True)

@@ -60,6 +60,16 @@ def execute(connection: Connection, operation: str, payload: dict[str, Any], tok
             from .run_map import build
 
             result = build(payload)
+        elif operation == "study_export":
+            from .exports import export_study
+
+            os.nice(10)
+            result = export_study(payload)
+        elif operation == "run_record":
+            from .run_record import measure
+
+            os.nice(10)  # live runs keep priority (RESULTS_OVERHAUL A2)
+            result = measure(payload)
         else:
             raise ValueError("Unknown analysis operation: " + operation)
         connection.send({"ok": True, "result": result})

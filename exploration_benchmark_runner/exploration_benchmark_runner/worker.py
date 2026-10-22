@@ -76,6 +76,17 @@ from .relay import prefix_frames
 from . import adapters
 from exploration_benchmark_robots.adapters import prepare as prepare_robot
 
+# RunMetrics fields that are None when unmeasured (measurements.py, coverage.py).
+NULLABLE_METRICS = frozenset(
+    {
+        "cpu_percent",
+        "rss_mib",
+        "cpu_average_percent",
+        "rss_average_mib",
+        "cpu_seconds",
+        "coverage_covered_m2",
+    }
+)
 LATCHED = QoSProfile(
     depth=1,
     reliability=ReliabilityPolicy.RELIABLE,
@@ -141,6 +152,7 @@ class Worker:
         self.nav_start_future = None
         self.nav_start_requested_wall = None
         self.clock_value = 0.0
+        self.clock_received = False
         self.stationary_since = None
         self.speed = float("inf")
         self.closed = False
@@ -424,6 +436,8 @@ class Worker:
             from benchmark_suite.recording import Recorder as SuiteRecorder
 
             self.recorder = SuiteRecorder(directory, dict(self.config, spec=self.spec.dictionary()), self.coverage_reference)
+            # Every suite row carries the latest /clock (dataset schema 10).
+            self.recorder.clock_source = lambda: self.clock_value if self.clock_received else None
         else:
             self.recorder = Recorder(directory, dict(self.config, spec=self.spec.dictionary()),
                                      profile, self.config["project_root"], coverage_reference=self.coverage_reference)
@@ -505,6 +519,7 @@ class Worker:
             self.streams[channel] = now
             if channel == "clock":
                 self.clock_value = message.clock.sec + message.clock.nanosec * 1e-9
+                self.clock_received = True
             elif channel == "odom":
                 velocity = message.twist.twist
                 self.speed = max(
@@ -750,7 +765,11 @@ class Worker:
         if self.runtime:
             self.runtime.publish_metrics(snapshot)
             return
-        fields = dict(snapshot)
+        # The message has no null: unmeasured values travel as NaN (the panel shows "—").
+        fields = {
+            name: float("nan") if value is None and name in NULLABLE_METRICS else value
+            for name, value in snapshot.items()
+        }
         fields["coverage_milestones"] = [
             CoverageMilestone(
                 percent=m["percent"],
@@ -1146,6 +1165,8 @@ class Worker:
                     wall_start_unix=self.start_unix
                     + self.measurements.movement_wall_start
                     - self.measurements.wall_start,
+                    # Monotonic wall origin of the run-level RTF (dataset schema 10).
+                    monotonic_ns=round(self.measurements.movement_wall_start * 1e9),
                 )
                 self.detail = "Exploration active"
                 if self.recorder:
@@ -1154,12 +1175,16 @@ class Worker:
                     self.recorder.flush()
         if self.recorder and self.phase == "RUNNING":
             if self.campaign:
-                self.recorder.clock = self.clock_value
                 self.recorder.origin = self.measurements.movement_simulation_start
                 snapshot["explorer_pid"] = self.explorer_identity[0] if self.explorer_identity else None
                 snapshot["explorer_resources_available"] = cpu is not None and rss is not None
                 self.runtime.sample_resources(wall)
             self.recorder.sample(snapshot)
+            # timing-rule-v2: the recorder's windows decide rejection; the engine no longer computes it.
+            if self.campaign and self.recorder.timing.rejected:
+                self.terminal.put(
+                    ("timing_rejection", "RTF below 0.90 for ten wall seconds", -1)
+                )
         self.publish_metrics(snapshot)
 
     def stop(self, outcome, detail="", native_code=-1):
@@ -1169,6 +1194,8 @@ class Worker:
         if self.campaign and recorder and recorder.error:
             outcome, detail = "storage_failure", str(recorder.error)
             self.recorder = None
+        if self.campaign and self.phase == "RUNNING":
+            self.runtime.check_insight()  # an exit in the last second before the stop counts too
         # Close callback input atomically at the trigger. Geometry calculation
         # and process accounting must not admit another map/odometry afterwards.
         with self.lock:
@@ -1227,7 +1254,16 @@ class Worker:
             if self.campaign and "insight" in recorder.manifest:
                 recorder.manifest["insight"].update(self.runtime.insight_manifest())
             snapshot = self.measurements.latest if self.measurements else {}
+            commands = (
+                self.simulation_scope.commands
+                + self.explorer_scope.commands
+                + self.insight_scope.commands
+            )
             try:
+                extra = {}
+                if self.campaign:
+                    self.runtime.close_goals(recorder)
+                    extra["run_facts"] = self.runtime.run_facts(recorder)
                 recorder.finish(
                     self.outcome,
                     self.detail,
@@ -1235,9 +1271,8 @@ class Worker:
                     self.cache.get("map"),
                     self.path,
                     native_code,
-                    self.simulation_scope.commands
-                    + self.explorer_scope.commands
-                    + self.insight_scope.commands,
+                    commands,
+                    **extra,
                 )
             except OSError as error:
                 if not self.campaign:

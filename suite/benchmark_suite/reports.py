@@ -527,8 +527,9 @@ def group_reports(
                             }
                         )
                         if parquet:
+                            # A campaign's attempts may span dataset schemas 9 and 10: read by name.
                             curve = query.execute(
-                                "WITH valid AS (SELECT c.*,floor(c.simulation_elapsed_ns/1e9)::BIGINT AS second FROM read_parquet(?) c JOIN reported s USING(attempt_id) WHERE s.coverage_eligible AND s.comparison_key=? AND s.profile_id=? AND c.valid AND c.status='valid' AND c.simulation_elapsed_ns IS NOT NULL), observed AS (SELECT * FROM valid QUALIFY row_number() OVER(PARTITION BY attempt_id,second ORDER BY clock_ns DESC,receipt_monotonic_ns DESC)=1) SELECT second,quantile_cont(coverage_percent,0.25) AS q25,median(coverage_percent) AS median,quantile_cont(coverage_percent,0.75) AS q75,count(*) AS support FROM observed GROUP BY second ORDER BY second",
+                                "WITH valid AS (SELECT c.*,floor(c.simulation_elapsed_ns/1e9)::BIGINT AS second FROM read_parquet(?,union_by_name=true) c JOIN reported s USING(attempt_id) WHERE s.coverage_eligible AND s.comparison_key=? AND s.profile_id=? AND c.valid AND c.status='valid' AND c.simulation_elapsed_ns IS NOT NULL), observed AS (SELECT * FROM valid QUALIFY row_number() OVER(PARTITION BY attempt_id,second ORDER BY clock_ns DESC,receipt_monotonic_ns DESC)=1) SELECT second,quantile_cont(coverage_percent,0.25) AS q25,median(coverage_percent) AS median,quantile_cont(coverage_percent,0.75) AS q75,count(*) AS support FROM observed GROUP BY second ORDER BY second",
                                 (parquet, *args),
                             ).fetchnumpy()
                             if len(curve["second"]):
@@ -791,7 +792,7 @@ def incident_maps(
             ),
         ):
             observations = query.execute(
-                "SELECT floor(i.x/0.5)*0.5 AS x,floor(i.y/0.5)*0.5 AS y,count(*) AS observations FROM read_parquet(?) i JOIN reported s USING(attempt_id) WHERE s.motion_eligible AND s.profile_id=? AND i.type IN (SELECT unnest(?)) AND i.x IS NOT NULL AND i.y IS NOT NULL GROUP BY ALL",
+                "SELECT floor(i.x/0.5)*0.5 AS x,floor(i.y/0.5)*0.5 AS y,count(*) AS observations FROM read_parquet(?,union_by_name=true) i JOIN reported s USING(attempt_id) WHERE s.motion_eligible AND s.profile_id=? AND i.type IN (SELECT unnest(?)) AND i.x IS NOT NULL AND i.y IS NOT NULL GROUP BY ALL",
                 ([str(path) for path in incident_files], profile_id, kinds),
             ).fetchall()
             if observations:

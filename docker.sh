@@ -50,11 +50,28 @@ build_docker_image() {
     return
   fi
 
+  # Label the image with the repository states it is built from (commits, dirty flags, diff hashes), so
+  # the suite records which explorer build ran (suite/benchmark_suite/provenance.py).
+  if ! command -v python3 >/dev/null 2>&1; then
+    echo "python3 is required to label the image with its source commits." >&2
+    exit 1
+  fi
+  local labels=()
+  local label
+  while IFS= read -r label; do
+    labels+=(--label "${label}")
+  done < <(python3 "${PROJECT_ROOT}/suite/benchmark_suite/provenance.py" labels "${PROJECT_ROOT}" \
+    org.benchmark.runtime.repository.)
+  if [[ ${#labels[@]} -eq 0 ]]; then
+    echo "Could not read the repository states for the image labels." >&2
+    exit 1
+  fi
+
   echo "Building Docker image '${DOCKER_IMAGE}'..."
   if docker --version 2>/dev/null | grep -qi podman; then
-    docker build --format docker --pull -t "${DOCKER_IMAGE}" -f "${DOCKERFILE_PATH}" "${PROJECT_ROOT}"
+    docker build --format docker --pull "${labels[@]}" -t "${DOCKER_IMAGE}" -f "${DOCKERFILE_PATH}" "${PROJECT_ROOT}"
   else
-    docker build --pull -t "${DOCKER_IMAGE}" -f "${DOCKERFILE_PATH}" "${PROJECT_ROOT}"
+    docker build --pull "${labels[@]}" -t "${DOCKER_IMAGE}" -f "${DOCKERFILE_PATH}" "${PROJECT_ROOT}"
   fi
 }
 

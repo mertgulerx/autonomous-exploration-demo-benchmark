@@ -289,7 +289,7 @@ class Coverage:
         ]
         self.latest = dict(
             coverage_percent=float("nan"),
-            coverage_covered_m2=0.0,
+            coverage_covered_m2=None,
             coverage_target_m2=calculator.reference.area,
             coverage_status="pending",
             coverage_map_stamp=float("nan"),
@@ -372,7 +372,9 @@ class Coverage:
         )
         self.latest = dict(
             coverage_percent=percent,
-            coverage_covered_m2=covered * self.calculator.reference.resolution**2,
+            coverage_covered_m2=covered * self.calculator.reference.resolution**2
+            if status != "unavailable"
+            else None,
             coverage_target_m2=self.calculator.reference.area,
             coverage_status=status,
             coverage_map_stamp=source,

@@ -19,10 +19,10 @@ import hashlib
 import json
 import math
 import re
-from typing import Any, Mapping
+from typing import Any, Literal, Mapping
 
 PROTOCOL_VERSION = 1
-DATASET_VERSION = 9  # 9: decisions, frontier_candidates, explored_cells streams (20 October 2026)
+DATASET_VERSION = 10  # 10: receipt clock, odom_aligned_* names, goal_facts (RESULTS_OVERHAUL R2)
 GAZEBO_SEED = 1234
 DEFAULT_LIMIT = 1800.0
 NO_MOVEMENT_LIMIT = 180.0
@@ -213,6 +213,76 @@ class Spawn:
         return {"id": self.id, "name": self.name, "x": self.x, "y": self.y, "yaw": self.yaw}
 
 
+STUDY_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
+# The study of campaigns without a study block (exploratory; RD-29).
+UNASSIGNED = "unassigned"
+EvidenceLevel = Literal["exploratory", "confirmatory"]
+EVIDENCE_LEVELS: tuple[EvidenceLevel, ...] = ("exploratory", "confirmatory")
+SHA256 = re.compile(r"^[0-9a-f]{64}$")
+
+
+@dataclass(frozen=True, slots=True)
+class Study:
+    """The study a campaign belongs to (RESULTS_RESEARCH RD-29, RD-30).
+
+    The researcher sets ``id``, ``evidence_level`` and ``plan``; ``plan_sha256`` (the plan above its
+    deviations log) and ``first_repetition`` (study-wide repetition numbers) are set at submission and
+    kept by a restarted copy, which replaces its source's blocks.
+    """
+
+    id: str
+    evidence_level: EvidenceLevel
+    plan: str | None
+    plan_sha256: str | None = None
+    first_repetition: int = 0
+
+    @classmethod
+    def accepted(cls, value: dict[str, Any]) -> "Study":
+        known_keys(
+            value, {"id", "evidence_level", "plan", "plan_sha256", "first_repetition"}, "study"
+        )
+        identity = text(value.get("id"), "study.id", maximum=64)
+        if not STUDY_ID.match(identity) or identity == UNASSIGNED:
+            raise ContractError(
+                "study.id", "Use letters, digits, '.', '_' or '-' (not 'unassigned'), at most 64"
+            )
+        level = value.get("evidence_level", "exploratory")
+        if level == "exploratory":
+            evidence: EvidenceLevel = "exploratory"
+        elif level == "confirmatory":
+            evidence = "confirmatory"
+        else:
+            raise ContractError("study.evidence_level", "Use exploratory or confirmatory")
+        plan = value.get("plan")
+        if plan is not None:
+            plan = text(plan, "study.plan", maximum=300)
+            if plan.startswith("/") or ".." in plan.split("/") or not plan.endswith(".md"):
+                raise ContractError(
+                    "study.plan", "Name a Markdown plan by its path in the checkout"
+                )
+        if evidence == "confirmatory" and plan is None:
+            raise ContractError("study.plan", "A confirmatory study names its pre-registered plan")
+        digest = value.get("plan_sha256")
+        if digest is not None and (not isinstance(digest, str) or not SHA256.match(digest)):
+            raise ContractError("study.plan_sha256", "Expected a SHA-256 hex digest")
+        return cls(
+            identity,
+            evidence,
+            plan,
+            digest,
+            integer(value.get("first_repetition", 0), "study.first_repetition", 0, 2**31 - 1),
+        )
+
+    def dictionary(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "evidence_level": self.evidence_level,
+            "plan": self.plan,
+            "plan_sha256": self.plan_sha256,
+            "first_repetition": self.first_repetition,
+        }
+
+
 @dataclass(frozen=True, slots=True)
 class CampaignSpec:
     name: str
@@ -227,6 +297,11 @@ class CampaignSpec:
     # A tuning run: set only by tuning.start (submitted specifications reject the key); hidden from lists
     # and replaced by the next tuning run.
     tuning: bool = False
+    study: Study | None = None
+    # Nav2 feedback and command rows (RESULTS_RESEARCH RD-42): a run condition held within a study.
+    debug_streams: bool = False
+    # The Default profile's parameter hash per robot, set at submission (``is_baseline`` in run records).
+    default_parameter_hashes: tuple[tuple[str, str], ...] = ()
 
     @classmethod
     def accepted(cls, value: dict[str, Any]) -> "CampaignSpec":
@@ -243,6 +318,9 @@ class CampaignSpec:
                 "world_time_limits",
                 "exclusions",
                 "source_campaign_id",
+                "study",
+                "debug_streams",
+                "default_parameter_hashes",
             },
             "campaign",
         )
@@ -281,6 +359,15 @@ class CampaignSpec:
             excluded.append(tuple(entry))
         if len(set(excluded)) != len(excluded):
             raise ContractError("exclusions", "Duplicate exclusion")
+        debug_streams = value.get("debug_streams", False)
+        if not isinstance(debug_streams, bool):
+            raise ContractError("debug_streams", "Expected true or false")
+        hashes = mapping(value.get("default_parameter_hashes", {}), "default_parameter_hashes")
+        for robot_id, digest in hashes.items():
+            if not isinstance(digest, str) or not SHA256.match(digest):
+                raise ContractError(
+                    "default_parameter_hashes." + robot_id, "Expected a SHA-256 hex digest"
+                )
         description = value.get("description", "")
         if not isinstance(description, str) or len(description) > 10000:
             raise ContractError("description", "Use at most 10000 characters")
@@ -296,6 +383,11 @@ class CampaignSpec:
             text(value["source_campaign_id"], "source_campaign_id")
             if value.get("source_campaign_id") is not None
             else None,
+            study=Study.accepted(mapping(value["study"], "study"))
+            if value.get("study") is not None
+            else None,
+            debug_streams=debug_streams,
+            default_parameter_hashes=tuple(sorted(hashes.items())),
         )
         if not spec.count:
             raise ContractError("exclusions", "All selected combinations are excluded")
@@ -324,4 +416,11 @@ class CampaignSpec:
             "exclusions": [list(e) for e in self.exclusions],
             **({"source_campaign_id": self.source_campaign_id} if self.source_campaign_id else {}),
             **({"tuning": True} if self.tuning else {}),
+            **({"study": self.study.dictionary()} if self.study else {}),
+            **({"debug_streams": True} if self.debug_streams else {}),
+            **(
+                {"default_parameter_hashes": dict(self.default_parameter_hashes)}
+                if self.default_parameter_hashes
+                else {}
+            ),
         }

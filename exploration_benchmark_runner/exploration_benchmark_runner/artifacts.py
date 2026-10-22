@@ -132,7 +132,7 @@ class Recorder:
         )
         self.writer.writeheader()
         self.manifest = dict(
-            schema_version=5,
+            schema_version=6,  # 6: unmeasured resources are empty (null), not 0
             robot=configuration.get("robot", {"id": "mogi", "metadata": "legacy"}),
             configuration=configuration,
             profile=profile,
@@ -312,7 +312,7 @@ class Recorder:
 
             metrics.update(
                 coverage_percent=float("nan"),
-                coverage_covered_m2=0.0,
+                coverage_covered_m2=None,
                 coverage_target_m2=coverage["reference"]["target_area_m2"],
                 coverage_status="unavailable",
                 coverage_map_stamp=float("nan"),

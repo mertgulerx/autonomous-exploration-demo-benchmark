@@ -32,7 +32,7 @@ import pyarrow.parquet as pq
 import zstandard as zstd
 
 from .contracts import DATASET_VERSION, ContractError, integer, text
-from .schemas import SCHEMAS
+from .schemas import ADDED_FIELDS, LEGACY_FIELDS, SCHEMAS, SCHEMAS_BY_VERSION
 from .storage import atomic_json, file_hash, inside as inside, load_object, sync_directory
 
 
@@ -62,10 +62,52 @@ def validate_file(path: Path, entry: dict[str, Any], kind: str) -> None:
 
 
 def supported_schema(kind: str, schema: pa.Schema) -> bool:
-    expected = SCHEMAS[kind]
-    return schema == expected or (
-        kind == "trajectory" and schema == expected.remove(expected.get_field_index("command_vy"))
+    """Whether a shard has the schema some dataset version wrote for its stream."""
+    for schemas in SCHEMAS_BY_VERSION.values():
+        expected = schemas.get(kind)
+        if expected is None:
+            continue
+        if schema == expected or (
+            kind == "trajectory"
+            and schema == expected.remove(expected.get_field_index("command_vy"))
+        ):
+            return True
+    return False
+
+
+def recorded_version(directory: Path) -> int:
+    """The dataset schema an attempt's files were written with, from their Arrow metadata.
+
+    Versions without their own layout (before 9) read as 9, whose layout they share.
+    """
+    for kind in SCHEMAS:
+        for path in files(directory, kind):
+            metadata = pq.read_schema(path).metadata or {}
+            version = int(metadata.get(b"schema_version", b"0"))
+            return version if version in SCHEMAS_BY_VERSION else 9
+    return 9
+
+
+def stream_relation(connection: Any, kind: str, paths: list[str]) -> str:
+    """SQL for the stream rows of ``paths`` under the current schema's names (one ``?``: the paths).
+
+    One attempt's files share one schema version; shards written before schema 10 are read through
+    ``LEGACY_FIELDS`` and have null ``ADDED_FIELDS``. Recorded files are never rewritten.
+    """
+    names = {
+        column[0]
+        for column in connection.execute(
+            "SELECT * FROM read_parquet(?,union_by_name=true) LIMIT 0", (paths,)
+        ).description
+    }
+    renames = [
+        f'"{old}" AS "{new}"' for old, new in LEGACY_FIELDS.get(kind, {}).items() if old in names
+    ]
+    added = "".join(
+        f', NULL::{sql_type} AS "{name}"' for name, sql_type in ADDED_FIELDS if name not in names
     )
+    star = "*" + (" RENAME (" + ", ".join(renames) + ")" if renames else "")
+    return f"(SELECT {star}{added} FROM read_parquet(?,union_by_name=true))"
 
 
 def validate_attempt(directory: Path) -> dict[str, Any]:
@@ -151,9 +193,11 @@ def observations(directory: Path, kind: str, columns: list[str] | None = None) -
         return pa.Table.from_pylist([], schema=pa.schema([schema.field(c) for c in selected]))
     with duckdb.connect(config={"threads": 1, "memory_limit": "256MB"}) as connection:
         columns_sql = ",".join('"' + name + '"' for name in selected)
+        sources = [str(path) for path in paths]
         return connection.execute(
-            f"SELECT {columns_sql} FROM read_parquet(?) WHERE attempt_id=? ORDER BY receipt_monotonic_ns",
-            ([str(path) for path in paths], directory.name),
+            f"SELECT {columns_sql} FROM {stream_relation(connection, kind, sources)} "
+            "WHERE attempt_id=? ORDER BY receipt_monotonic_ns",
+            (sources, directory.name),
         ).fetch_arrow_table()
 
 
@@ -162,9 +206,11 @@ def iter_rows(directory: Path, kind: str) -> Iterator[dict[str, Any]]:
     if not paths:
         return
     with duckdb.connect(config={"threads": 1, "memory_limit": "256MB"}) as connection:
+        sources = [str(path) for path in paths]
         batches = connection.execute(
-            "SELECT * FROM read_parquet(?) WHERE attempt_id=? ORDER BY clock_ns, receipt_monotonic_ns",
-            ([str(path) for path in paths], directory.name),
+            f"SELECT * FROM {stream_relation(connection, kind, sources)} "
+            "WHERE attempt_id=? ORDER BY clock_ns NULLS FIRST, receipt_monotonic_ns",
+            (sources, directory.name),
         ).fetch_record_batch(4096)
         for batch in batches:
             yield from batch.to_pylist()
@@ -176,13 +222,14 @@ def preview(directory: Path, kind: str, maximum: int = 20000, scope: str | None 
         return pa.Table.from_pylist([], schema=SCHEMAS[kind])
     with duckdb.connect(config={"threads": 1, "memory_limit": "256MB"}) as connection:
         where = "attempt_id=?" + (" AND scope=?" if scope is not None else "")
+        source = stream_relation(connection, kind, [str(path) for path in paths])
         args = (
             [str(path) for path in paths],
             directory.name,
             *((scope,) if scope is not None else ()),
         )
         count = connection.execute(
-            "SELECT count(*) FROM read_parquet(?) WHERE " + where, args
+            "SELECT count(*) FROM " + source + " WHERE " + where, args
         ).fetchone()
         assert count is not None
         stride = max(1, (count[0] + maximum - 1) // maximum)
@@ -199,9 +246,11 @@ def preview(directory: Path, kind: str, maximum: int = 20000, scope: str | None 
             + valid
             + " AS present,lag("
             + valid
-            + ") OVER ordering AS previous_present FROM read_parquet(?) WHERE "
+            + ") OVER ordering AS previous_present FROM "
+            + source
+            + " WHERE "
             + where
-            + " WINDOW ordering AS (ORDER BY clock_ns,receipt_monotonic_ns)), segmented AS (SELECT * EXCLUDE(gap,present,previous_present),sum(CASE WHEN NOT present OR NOT previous_present OR gap<=0 OR gap>? THEN 1 ELSE 0 END) OVER(ORDER BY n) AS presentation_segment FROM raw) SELECT * EXCLUDE(n) FROM segmented WHERE (n-1)%?=0 ORDER BY n",
+            + " WINDOW ordering AS (ORDER BY clock_ns NULLS FIRST,receipt_monotonic_ns)), segmented AS (SELECT * EXCLUDE(gap,present,previous_present),sum(CASE WHEN NOT present OR NOT previous_present OR gap<=0 OR gap>? THEN 1 ELSE 0 END) OVER(ORDER BY n) AS presentation_segment FROM raw) SELECT * EXCLUDE(n) FROM segmented WHERE (n-1)%?=0 ORDER BY n",
             (*args, gap, stride),
         ).fetch_arrow_table()
         return table.replace_schema_metadata(
@@ -371,7 +420,8 @@ def finalize_partial(
     except (OSError, ValueError):
         manifest = {}
     manifest.update(
-        schema_version=DATASET_VERSION,
+        # A recovered attempt keeps the schema it was recorded with (another image may recover it).
+        schema_version=manifest.get("schema_version", DATASET_VERSION),
         phase="FINISHED",
         partial=True,
         outcome=outcome,
@@ -447,16 +497,19 @@ def recover_compactions(workspace: Path) -> None:
 def _compact(
     workspace: Path, campaign_id: str, directories: list[str], target_bytes: int, destination: Path
 ) -> dict[str, Any]:
-    groups: dict[tuple[str, str], list[Path]] = defaultdict(list)
+    # Shards hold one dataset schema each: attempts recorded before schema 10 keep the schema-9 layout
+    # (older attempts were already written as 9), so a campaign resumed on a newer image is not relabelled.
+    groups: dict[tuple[str, str, int], list[Path]] = defaultdict(list)
     sources: list[dict[str, Any]] = []
     for directory in sorted(map(Path, directories)):
         manifest = validate_attempt(directory)
         if (directory / "compacted.json").exists() or not checkpoint_index(directory).exists():
             continue
         identity = manifest.get("identity", {})
-        groups[(identity.get("robot_id", "unknown"), identity.get("world_id", "unknown"))].append(
-            directory
-        )
+        version = recorded_version(directory)
+        groups[
+            (identity.get("robot_id", "unknown"), identity.get("world_id", "unknown"), version)
+        ].append(directory)
         sources.append(
             dict(
                 directory=str(directory),
@@ -465,9 +518,10 @@ def _compact(
             )
         )
     shards: list[dict[str, Any]] = []
-    for (robot, world), attempts in groups.items():
-        for kind in SCHEMAS:
-            partition = destination / robot / world / kind
+    for (robot, world, version), attempts in groups.items():
+        schemas = SCHEMAS_BY_VERSION[version]
+        for kind in schemas:
+            partition = destination / robot / world / f"schema-{version}" / kind
             partition.mkdir(parents=True)
             writer = None
             path = None
@@ -490,6 +544,7 @@ def _compact(
                     bytes=final.stat().st_size,
                     rows=rows,
                     kind=kind,
+                    schema_version=version,
                     attempts=counts,
                 )
                 validate_file(final, entry, kind)
@@ -509,22 +564,22 @@ def _compact(
                         }
                     ) as connection:
                         batches = connection.execute(
-                            "SELECT * FROM read_parquet(?,union_by_name=true) WHERE attempt_id=? ORDER BY clock_ns, receipt_monotonic_ns",
+                            "SELECT * FROM read_parquet(?,union_by_name=true) WHERE attempt_id=? ORDER BY clock_ns NULLS FIRST, receipt_monotonic_ns",
                             ([str(path) for path in paths], directory.name),
                         ).fetch_record_batch(32768)
                         for batch in batches:
                             table = pa.Table.from_batches([batch])
                             if kind == "trajectory" and "command_vy" not in table.column_names:
                                 table = table.add_column(
-                                    SCHEMAS[kind].get_field_index("command_vy"),
+                                    schemas[kind].get_field_index("command_vy"),
                                     "command_vy",
                                     pa.nulls(len(table), pa.float64()),
                                 )
-                            table = table.cast(SCHEMAS[kind])
+                            table = table.cast(schemas[kind])
                             if writer is None:
                                 path = partition / (uuid.uuid4().hex + ".staging")
                                 writer = pq.ParquetWriter(
-                                    path, SCHEMAS[kind], compression="zstd", use_dictionary=True
+                                    path, schemas[kind], compression="zstd", use_dictionary=True
                                 )
                             writer.write_table(table, row_group_size=32768)
                             rows += len(table)
@@ -613,13 +668,16 @@ def query(workspace: Path, params: dict[str, Any]) -> dict[str, Any]:
         return dict(rows=[], total=0, next_offset=None)
     with duckdb.connect(config={"threads": 1, "memory_limit": "256MB"}) as connection:
         arguments = ([str(path) for path in paths], attempt)
+        source = stream_relation(connection, kind, arguments[0])
         count = connection.execute(
-            "SELECT count(*) FROM read_parquet(?) WHERE attempt_id=?", arguments
+            "SELECT count(*) FROM " + source + " WHERE attempt_id=?", arguments
         ).fetchone()
         assert count is not None
         total = count[0]
         table = connection.execute(
-            "SELECT * FROM read_parquet(?) WHERE attempt_id=? ORDER BY receipt_monotonic_ns LIMIT ? OFFSET ?",
+            "SELECT * FROM "
+            + source
+            + " WHERE attempt_id=? ORDER BY receipt_monotonic_ns LIMIT ? OFFSET ?",
             (*arguments, limit, offset),
         ).fetch_arrow_table()
     # JSON replies carry binary columns (chunk states, explored masks) as base64 text.

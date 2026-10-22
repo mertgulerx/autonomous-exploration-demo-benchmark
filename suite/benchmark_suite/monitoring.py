@@ -106,6 +106,33 @@ class ReferenceCells:
         return 0 if self.inclusion[row, column] else OUTSIDE_REFERENCE
 
 
+def path_break(
+    previous: tuple[int, float, float] | None,
+    stamp_ns: int,
+    x: float,
+    y: float,
+    maximum_speed: float,
+    settings: PathSettings,
+) -> str | None:
+    """Why a path breaks between ``previous`` (stamp, x, y) and this sample, or None when it continues.
+
+    Shared by the displayed path and the run record's ground-truth path length (run_record.py).
+    """
+    if previous is None:
+        return None
+    stamp, previous_x, previous_y = previous
+    elapsed = (stamp_ns - stamp) / 1e9
+    if elapsed < 0:
+        return "reversed"
+    if elapsed > settings.gap_seconds:
+        return "gap"
+    if math.hypot(x - previous_x, y - previous_y) > max(
+        settings.jump_floor_m, settings.jump_speed_factor * maximum_speed * elapsed
+    ):
+        return "jump"
+    return None
+
+
 class PhysicalPath:
     """Bounded, sequenced vertices of one attempt's physical path. Callers serialize access."""
 
@@ -139,17 +166,9 @@ class PhysicalPath:
             self._interrupt("invalid")
             return None
         settings = self.settings
-        if self.previous is not None:
-            stamp, previous_x, previous_y = self.previous
-            elapsed = (stamp_ns - stamp) / 1e9
-            if elapsed < 0:
-                self._interrupt("reversed")
-            elif elapsed > settings.gap_seconds:
-                self._interrupt("gap")
-            elif math.hypot(x - previous_x, y - previous_y) > max(
-                settings.jump_floor_m, settings.jump_speed_factor * self.maximum_speed * elapsed
-            ):
-                self._interrupt("jump")
+        reason = path_break(self.previous, stamp_ns, x, y, self.maximum_speed, settings)
+        if reason is not None:
+            self._interrupt(reason)
         self.previous = stamp_ns, x, y
         cell = self.reference.flags(x, y) if self.reference is not None else 0
         self.collision_samples += bool(cell & IN_COLLISION)

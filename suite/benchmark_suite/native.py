@@ -36,6 +36,7 @@ from .contracts import ContractError, resolve_world_time_limits
 from .datasets import finalize_attempt, finalize_partial
 from .monitoring import trim_reply
 from .protocol import Client
+from .provenance import CHECKOUT_ROLE, EXPLORER_ROLE, commit, role_path
 from .storage import atomic_json, file_hash, put_object, load_object
 
 
@@ -326,14 +327,10 @@ class NativeBackend:
             },
         }
         self.runtime["insight"] = insight_identity()
-        for package in (self.root, self.root / "exploration_packages/frontier_exploration_ros2"):
-            result = subprocess.run(
-                ["git", "-C", str(package), "rev-parse", "HEAD"],
-                capture_output=True,
-                text=True,
-                timeout=5,
-            )
-            self.runtime[str(package)] = result.stdout.strip() if result.returncode == 0 else None
+        # Commits keyed by repository role, never by absolute path (comparison key version 2, D-31).
+        self.runtime["commits"] = {
+            role: commit(role_path(self.root, role)) for role in (CHECKOUT_ROLE, EXPLORER_ROLE)
+        }
 
     def preflight(self) -> None:
         if time.monotonic() - self.graphics_checked_at < 1.0:
@@ -362,9 +359,9 @@ class NativeBackend:
         self, attempt: dict[str, Any], experiment: dict[str, Any], campaign: dict[str, Any]
     ) -> NativeWorker:
         accepted = json.loads(experiment["specification"])
+        specification = json.loads(campaign["specification"])
         time_limit = accepted.get("time_limit")
         if time_limit is None:
-            specification = json.loads(campaign["specification"])
             time_limit = dict(resolve_world_time_limits(specification, specification["worlds"]))[
                 experiment["world_id"]
             ]
@@ -437,6 +434,9 @@ class NativeBackend:
             effective_parameters=selected["effective"],
             runtime={"object": runtime_hash, "image": self.runtime["image"]},
             suite_diagnostics=self.diagnostics,
+            # Nav2 feedback and command rows (RESULTS_RESEARCH RD-42); off unless the campaign asks.
+            # The campaign key comes with the study contract (R4); until then it is always off.
+            debug_streams=specification.get("debug_streams") is True,
         )
         return NativeWorker(attempt, WorkerLaunchSpec.from_configuration(config).dictionary())
 

@@ -27,11 +27,13 @@ from exploration_benchmark_runner.coverage import Reference, reference_file
 from exploration_benchmark_robots.catalog import RobotCatalog, resolve_physical_settings
 from exploration_benchmark_robots.preflight import validate_spawn
 
+from .analysis_block import plan_parts, validate
 from .contracts import (
     CampaignSpec,
     ContractError,
     DEFAULT_LIMIT,
     PROFILE_DELETION_LIMIT,
+    Study,
     canonical,
     content_hash,
     integer,
@@ -260,6 +262,8 @@ class Library:
             "world_time_limits",
             "exclusions",
             "source_campaign_id",
+            "study",
+            "debug_streams",
         }
         known_keys(raw, allowed, "campaign")
         accepted = deepcopy(raw)
@@ -314,6 +318,18 @@ class Library:
                     raise ContractError(
                         "worlds." + world_id, str(exc), "reference_mismatch"
                     ) from exc
+        # Facts fixed at submission: the plan's hash and each robot's Default parameter hash.
+        if isinstance(raw.get("study"), dict):
+            study = Study.accepted(raw["study"])
+            accepted["study"] = dict(study.dictionary(), plan_sha256=self.plan_hash(study))
+        accepted["default_parameter_hashes"] = {
+            robot_id: content_hash(
+                self.resolve_profile(robot_id, {"name": "Default", "id": "default-" + robot_id})[
+                    "effective"
+                ]
+            )
+            for robot_id in accepted["robots"]
+        }
         spec = CampaignSpec.accepted(accepted)
         exclusions = set(spec.exclusions)
         for robot_id, profiles in spec.robots:
@@ -335,6 +351,24 @@ class Library:
                         except ValueError as exc:
                             raise ContractError("spawns." + spawn.id, str(exc)) from exc
         return spec
+
+    def plan_hash(self, study: Study) -> str | None:
+        """SHA-256 of a study's plan above its deviations log (RD-29), read from this checkout; its analysis
+        block is checked on the way (RO-15), and a confirmatory plan must hold one."""
+        if study.plan is None:
+            return None
+        path = (self.root / study.plan).resolve()
+        if not path.is_relative_to(self.root.resolve()) or not path.is_file():
+            raise ContractError("study.plan", "Plan not found in the checkout: " + study.plan)
+        plan = plan_parts(path.read_text(encoding="utf-8"))
+        confirmatory = study.evidence_level == "confirmatory"
+        if plan.block is not None:
+            validate(plan.block, confirmatory=confirmatory)
+        elif confirmatory:
+            raise ContractError(
+                "study.plan", "A confirmatory plan holds an analysis block (docs/MEASUREMENTS.md)"
+            )
+        return plan.sha256
 
     def _save(
         self, store: Store, kind: str, owner: str, value: dict[str, Any], family_id: str | None

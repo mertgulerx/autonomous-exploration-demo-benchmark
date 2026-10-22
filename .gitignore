@@ -34,6 +34,7 @@ core.*
 AGENTS.md
 /.venv-suite/
 /.venv-suite-gui/
+/.venv-analysis/
 /results/campaigns/
 /results/performance/
 *.egg-info/

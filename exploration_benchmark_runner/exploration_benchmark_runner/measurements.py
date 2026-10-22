@@ -58,7 +58,10 @@ class Measurements:
         self.motion_origin = self.motion_origin_yaw = None
         self.cpu_sum = self.rss_sum = self.samples = 0
         self.previous_cpu = self.previous_cpu_wall = None
-        self.cpu_seconds = self.cpu = self.rss = self.distance = 0.0
+        # Resource values are None until measured: CPU and RSS until a CPU delta exists, cumulative CPU
+        # until the first sample (D-16, D-19; manual result schema 6, suite dataset schema 10).
+        self.cpu_seconds = self.cpu = self.rss = None
+        self.distance = 0.0
         self.last_position = None
         self.frozen = False
         self.quality = QualityMonitor()
@@ -142,9 +145,9 @@ class Measurements:
         self.latest = dict(
             cpu_percent=self.cpu,
             rss_mib=self.rss,
-            cpu_average_percent=self.cpu_sum / self.samples if self.samples else 0.0,
-            rss_average_mib=self.rss_sum / self.samples if self.samples else 0.0,
-            cpu_seconds=self.cpu_seconds,
+            cpu_average_percent=self.cpu_sum / self.samples if self.samples else None,
+            rss_average_mib=self.rss_sum / self.samples if self.samples else None,
+            cpu_seconds=self.cpu_seconds if self.samples else None,
             distance_m=self.distance,
             simulation_elapsed=(
                 max(0.0, simulation - self.movement_simulation_start)

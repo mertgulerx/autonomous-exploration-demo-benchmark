@@ -756,6 +756,9 @@ void ExplorationControlPanel::metricsReceived(const interfaces::msg::RunMetrics&
   }
   const auto cpu = m.frozen ? m.cpu_average_percent : m.cpu_percent;
   const auto rss = m.frozen ? m.rss_average_mib : m.rss_mib;
+  // Unmeasured values arrive as NaN (manual result schema 6) and show as a dash, never as 0.
+  const auto measured = [](double value, int decimals, const QString& unit)
+  { return std::isfinite(value) ? QString::number(value, 'f', decimals) + unit : QString("—"); };
   QStringList flags;
   for (const auto& flag : m.quality_flags)
   {
@@ -805,21 +808,21 @@ void ExplorationControlPanel::metricsReceived(const interfaces::msg::RunMetrics&
   }
   const QString coverage_tooltip =
       QString("Coverage: current SLAM free space against the fixed world reference.\n"
-              "Covered: %1 m² / Target: %2 m²\nMap source age: %3 simulation seconds\n"
+              "Covered: %1 / Target: %2 m²\nMap source age: %3 simulation seconds\n"
               "First reached times use the first robot movement, without interpolation.\n"
               "Coverage quality: %4")
-          .arg(m.coverage_covered_m2, 0, 'f', 2)
+          .arg(measured(m.coverage_covered_m2, 2, " m²"))
           .arg(m.coverage_target_m2, 0, 'f', 2)
           .arg(m.coverage_map_age, 0, 'f', 2)
           .arg(coverage_flags.empty() ? QString::fromStdString(m.coverage_status)
                                       : coverage_flags.join(", "));
   const QString text =
       QString(
-          "CPU%1: %2%    RAM%1: %3 MiB    Distance: %4 m\nSimulation (from first move): %5 s    "
+          "CPU%1: %2    RAM%1: %3    Distance: %4 m\nSimulation (from first move): %5 s    "
           "RTF: %6\nTiming: %7    Outcome: %8")
           .arg(m.frozen ? " (avg)" : "")
-          .arg(cpu, 0, 'f', 1)
-          .arg(rss, 0, 'f', 1)
+          .arg(measured(cpu, 1, "%"))
+          .arg(measured(rss, 1, " MiB"))
           .arg(m.distance_m, 0, 'f', 2)
           .arg(m.simulation_elapsed, 0, 'f', 1)
           .arg(m.rtf, 0, 'f', 2)

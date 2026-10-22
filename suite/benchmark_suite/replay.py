@@ -122,6 +122,7 @@ def window(workspace: Path, attempt_id: str, start_ns: int, end_ns: int) -> dict
             if not paths:
                 return []
             selected = ",".join('"' + name + '"' for name in columns)
+            # One attempt's files share a schema, and these columns are unchanged since schema 9.
             table = connection.execute(
                 f"SELECT {selected} FROM read_parquet(?) WHERE attempt_id=? AND {where} "
                 "ORDER BY clock_ns, receipt_monotonic_ns",

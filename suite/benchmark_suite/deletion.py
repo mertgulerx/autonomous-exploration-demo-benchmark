@@ -129,8 +129,14 @@ def plan(store: Store, ids: list[str], current: str | None) -> list[dict[str, An
     return plans
 
 
-def delete_rows(store: Store, plans: list[dict[str, Any]], request_id: str) -> None:
-    """Remove every row the campaigns own and leave a tombstone; runs in the command transaction."""
+def delete_rows(
+    store: Store, plans: list[dict[str, Any]], request_id: str, keep_provenance: str | None = None
+) -> None:
+    """Remove every row the campaigns own and leave a tombstone; runs in the command transaction.
+
+    Provenance rows no run record or surviving attempt names go too, except the running engine's
+    ``keep_provenance``.
+    """
     now = time.time_ns()
     for entry in plans:
         identity = entry["campaign_id"]
@@ -141,6 +147,7 @@ def delete_rows(store: Store, plans: list[dict[str, Any]], request_id: str) -> N
             (identity,),
         )
         store.db.execute("DELETE FROM events WHERE campaign_id=?", (identity,))
+        store.db.execute("DELETE FROM run_records WHERE campaign_id=?", (identity,))
         store.db.execute("DELETE FROM attempts WHERE campaign_id=?", (identity,))
         store.db.execute("DELETE FROM experiments WHERE campaign_id=?", (identity,))
         store.db.execute("DELETE FROM reports WHERE campaign_id=?", (identity,))
@@ -162,6 +169,15 @@ def delete_rows(store: Store, plans: list[dict[str, Any]], request_id: str) -> N
             {"name": entry["name"], "attempts": entry["attempts"], "request_id": request_id},
             identity,
         )
+    # An attempt names its engine's provenance in its run record and, before the record exists, in its
+    # attempt.reserved event; rows neither names belong only to deleted campaigns.
+    store.db.execute(
+        "DELETE FROM provenance WHERE id IS NOT ? AND id NOT IN "
+        "(SELECT provenance_id FROM run_records WHERE provenance_id IS NOT NULL) AND id NOT IN "
+        "(SELECT json_extract(payload,'$.provenance_id') FROM events WHERE kind='attempt.reserved' "
+        "AND json_extract(payload,'$.provenance_id') IS NOT NULL)",
+        (keep_provenance,),
+    )
 
 
 class Remover:

@@ -21,7 +21,7 @@ from pathlib import Path
 import queue
 import threading
 import time
-from typing import Any
+from typing import Any, Callable
 import uuid
 
 import numpy as np
@@ -32,6 +32,10 @@ from .contracts import DATASET_VERSION
 from .schemas import SCHEMAS
 from .storage import atomic_bytes, atomic_json, file_hash, object_store, put_object, sync_directory
 from .timing import TimingPolicy
+
+TIMING_RULE = "timing-rule-v2"  # the recorder's windows decide rejection (docs/MEASUREMENTS.md)
+# Streams recorded only when a campaign turns debug streams on (RESULTS_RESEARCH RD-42).
+DEBUG_STREAMS = ("navigation_feedback", "commands")
 
 INSIGHT_KINDS = frozenset({"decisions", "frontier_candidates", "explored_cells"})
 QUEUE_SIZE = 8192
@@ -72,7 +76,9 @@ class Recorder:
         self.resource_previous: tuple[float, float, float] | None = None
         self.resource_integral_cpu = self.resource_integral_rss = self.resource_duration = 0.0
         self.origin: float | None = None
-        self.clock = 0.0
+        # The worker's latest /clock in seconds, or None before the first message (dataset schema 10:
+        # every row's receipt clock, and the clock of rows without a source stamp; D-21).
+        self.clock_source: Callable[[], float | None] = lambda: None
         self.segments: list[dict[str, Any]] = []
         self.manifest = dict(
             schema_version=DATASET_VERSION,
@@ -112,6 +118,8 @@ class Recorder:
                 trajectory_maximum_hz=20,
                 flush_wall_seconds=5,
             ),
+            timing_rule=TIMING_RULE,
+            debug_streams=list(DEBUG_STREAMS) if configuration.get("debug_streams") else [],
         )
         self.thread = threading.Thread(
             target=self._write, args=(deepcopy(self.manifest),), name="suite-recorder", daemon=False
@@ -161,12 +169,14 @@ class Recorder:
     ) -> dict[str, Any]:
         receipt = receipt_monotonic_ns or time.monotonic_ns()
         motion_sim = self.origin
-        clock = clock_ns if clock_ns is not None else nanoseconds(self.clock)
+        receipt_clock = nanoseconds(self.clock_source())
+        clock = clock_ns if clock_ns is not None else receipt_clock
         return dict(
             self.identity,
             source=source,
             source_ns=source_ns,
             clock_ns=clock,
+            receipt_clock_ns=receipt_clock,
             receipt_monotonic_ns=receipt,
             receipt_utc_ns=receipt_utc_ns or time.time_ns(),
             valid=valid,
@@ -229,7 +239,9 @@ class Recorder:
             self.resource_previous = None
             row.update(cpu_percent=None, rss_mib=None)
         self.enqueue("resources", safe(row))
-        self.timing.update(time.monotonic(), self.clock)
+        clock = self.clock_source()
+        if clock is not None:
+            self.timing.update(time.monotonic(), clock)
         self.enqueue(
             "quality",
             dict(
@@ -242,6 +254,7 @@ class Recorder:
                     dict(
                         brief_drops=self.timing.brief_drops,
                         threshold=0.90,
+                        rule=TIMING_RULE,
                         clock_reset=self.timing.reset_observed,
                     ),
                     allow_nan=False,
@@ -300,9 +313,11 @@ class Recorder:
         path_message: Any,
         native_code: int,
         commands: list[Any],
+        run_facts: dict[str, Any] | None = None,
     ) -> None:
         self.frozen = True
         self.manifest.update(
+            run_facts=safe(run_facts or {}),
             phase="FINALIZING",
             outcome=outcome,
             detail=detail,

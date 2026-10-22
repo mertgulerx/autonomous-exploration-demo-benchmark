@@ -14,6 +14,7 @@
 
 from collections.abc import Callable
 from dataclasses import replace
+from functools import partial
 import json
 from pathlib import Path
 import queue
@@ -30,6 +31,8 @@ from .contracts import (
     DATASET_VERSION,
     ContractError,
     PROTOCOL_VERSION,
+    STUDY_ID,
+    UNASSIGNED,
     canonical,
     content_hash,
     integer,
@@ -37,14 +40,26 @@ from .contracts import (
     mapping,
     text,
 )
+from . import provenance
 from .deletion import Remover, campaign_ids, delete_rows, plan
 from .monitoring import MONITOR_LAYERS
 from .protocol import PendingRequest, Server
 from .replay import WINDOW_LIMIT_NS, ReplayWindows
 from .run_map import RunMaps
+from .run_records import RunRecords
+from .exports import Exports, studies_root
+from .files import BUILDERS, TABLE_SUFFIXES, BackgroundReads, text as file_text
 from .storage import atomic_json, file_hash, sync_directory
-from .store import TUNING_CAMPAIGN, Store
-from .timing import TimingPolicy
+from .store import ACTIVE_STATES, TUNING_CAMPAIGN, Store
+from .studies import (
+    attempt_record,
+    last_repetition,
+    provenance_document,
+    read_study,
+    runs_page,
+    studies_page,
+)
+from .timelines import timeline, traces
 
 READ_METHODS = frozenset(
     {
@@ -75,9 +90,24 @@ READ_METHODS = READ_METHODS | {
     "results.map",
     "replay.window",
     "campaign.repeat",
+    "study.export_status",
+    "studies.list",
+    "study.get",
+    "files.list",
+    "files.table",
+    "files.log",
+    "results.timeline",
+    "study.traces",
 }
-ACTIVE_STATES = ("RUNNING", "RETRYING", "PAUSING", "PAUSED", "STOPPING", "BLOCKED", "REPORTING")
 COPY_SUFFIX = re.compile(r" \(copy (\d+)\)$")
+
+
+def study_identity(value: Any, field: str) -> str:
+    """A study ID as requests name it: a ``contracts.Study`` ID or ``unassigned``."""
+    identity = text(value, field, maximum=64)
+    if identity != UNASSIGNED and not STUDY_ID.match(identity):
+        raise ContractError(field, "Unknown study identity")
+    return identity
 
 
 def is_tuning(specification: dict[str, Any]) -> bool:
@@ -95,6 +125,9 @@ class Engine:
     ):
         self.store = Store(workspace)
         self.workspace = self.store.workspace
+        # Code identity and run environment of this engine (provenance.py); run records name it.
+        self.reservations = 0  # attempts reserved by this engine process (runs_since_engine_start)
+        self.provenance_id = self.store.put_provenance(provenance.document(backend.root))
         self.backend, self.library = backend, library
         self.resolve = resolve or CampaignSpec.accepted
         if not backend.synthetic and resolve is None:
@@ -102,7 +135,6 @@ class Engine:
             raise ValueError("Native workers require catalog and dependency preflight")
         self.active: dict[str, WorkerHandle] = {}
         self.metrics: dict[str, dict[str, Any]] = {}
-        self.timing: dict[str, TimingPolicy] = {}
         self.parallel_exposed: set[str] = set()
         self.current: str | None = None
         self.queue_enabled = False
@@ -119,6 +151,9 @@ class Engine:
         self.removal: tuple[str, Remover] | None = None
         self.run_maps = RunMaps(self.workspace)
         self.replay_windows = ReplayWindows(self.workspace)
+        self.run_records = RunRecords(self.store, self.workspace, self.provenance_id)
+        self.exports = Exports(self.store, self.workspace)
+        self.reads = BackgroundReads()
         if library:
             library.bind(self.store)
         self._recover()
@@ -227,6 +262,8 @@ class Engine:
                         "terminal_ns=?,cleanup_ns=? WHERE id=?",
                         (time.time_ns(), time.time_ns(), attempt["id"]),
                     )
+                    # Its files are incomplete: a stub record (MEASUREMENTS, run-record-v1).
+                    self.run_records.stub(self.store.attempt(attempt["id"]), None)
                     self.store.db.execute(
                         "UPDATE experiments SET state='NOT_DONE',held=0 WHERE id=?",
                         (attempt["experiment_id"],),
@@ -239,8 +276,10 @@ class Engine:
                     )
                     self._record_artifacts(attempt, manifest)
         for campaign in self.store.rows(
-            "SELECT id,state,specification FROM campaigns WHERE state IN "
-            "('RUNNING','RETRYING','PAUSING','PAUSED','STOPPING','BLOCKED','REPORTING')"
+            "SELECT id,state,specification FROM campaigns WHERE state IN ("
+            + ",".join("?" * len(ACTIVE_STATES))
+            + ")",
+            ACTIVE_STATES,
         ):
             if campaign["state"] == "STOPPING" or is_tuning(json.loads(campaign["specification"])):
                 self.store.set_state(campaign["id"], "STOPPED")
@@ -331,13 +370,46 @@ class Engine:
                 else {"source": "synthetic", "robots": [], "worlds": []}
             )
         if method == "campaign.preview":
-            spec = self.resolve(mapping(params.get("specification"), "specification"))
+            spec = self._in_study(
+                self.resolve(mapping(params.get("specification"), "specification"))
+            )
             return {
                 "count": spec.count,
                 "expected_minimum_attempts": spec.count,
                 "specification": spec.dictionary(),
                 "timing_retry": "One final sequential replacement",
             }
+        if method == "studies.list":
+            known_keys(params, {"offset", "limit"}, "params")
+            return studies_page(self.store.db, params.get("offset", 0), params.get("limit", 100))
+        if method in ("study.export", "study.export_status", "study.get"):
+            study_id = study_identity(params.get("study_id"), "study_id")
+            if method == "study.get":
+                known_keys(params, {"study_id"}, "params")
+                reply = self.reads.get(
+                    ("study.get", study_id),
+                    partial(read_study, self.workspace / "suite.sqlite3", study_id),
+                    dict(study_id=study_id),
+                )
+                if reply["state"] == "ready":
+                    reply["export_status"] = self.exports.status(study_id)
+                return reply
+            if method == "study.export_status":
+                export_id = params.get("export_id")
+                return self.exports.status(
+                    study_id,
+                    None if export_id is None else text(export_id, "export_id", maximum=64),
+                )
+            # RO-10: never beside runs, compaction, a report or a deletion (they write what it reads).
+            busy = bool(
+                self.active
+                or self.current
+                or self.queue_enabled
+                or self.job
+                or self.removal
+                or self.report_import
+            )
+            return self.exports.start(study_id, busy=busy)
         if method == "campaign.repeat":
             identity = text(params.get("campaign_id"), "campaign_id")
             campaign = self.store.campaign(identity)
@@ -349,8 +421,11 @@ class Engine:
             specification.update(name=specification["name"] + " copy", source_campaign_id=identity)
             return {"specification": specification, "source_campaign_id": identity}
         if method == "campaign.submit":
-            spec = self.resolve(mapping(params.get("specification"), "specification"))
+            spec = self._in_study(
+                self.resolve(mapping(params.get("specification"), "specification"))
+            )
             identity = self.store.submit(spec)
+            self._note_repetitions(spec)
             return {
                 "campaign_id": identity,
                 "experiments": spec.count,
@@ -369,6 +444,12 @@ class Engine:
         if method == "campaign.delete":
             # The maintainer's GUI action: all or nothing; rows go in this transaction with a
             # tombstone, files follow in tick (deletion.py).
+            if self.exports.job is not None:
+                raise ContractError(
+                    "campaign_ids",
+                    "A study export is reading the data; delete when it ends",
+                    "conflict",
+                )
             entries = plan(self.store, campaign_ids(params.get("campaign_ids")), self.current)
             blocked = [
                 entry
@@ -383,7 +464,8 @@ class Engine:
                     "conflict",
                 )
             deletable = [entry for entry in entries if entry["deletable"]]
-            delete_rows(self.store, deletable, operation_id)
+            self.run_records.cancel([entry["campaign_id"] for entry in deletable])
+            delete_rows(self.store, deletable, operation_id, self.provenance_id)
             return {
                 "operation_id": operation_id,
                 "deleted": [entry["campaign_id"] for entry in deletable],
@@ -633,8 +715,22 @@ class Engine:
             campaign = self.store.campaign(identity)
             campaign["specification"] = json.loads(campaign["specification"])
             return {"campaign": campaign, "counters": self.store.counters(identity)}
+        if method == "results.query" and params.get("table") == "runs":
+            if params.get("cursor") is not None or params.get("summary", False) is not False:
+                raise ContractError("table", "Run pages take no cursor or summary")
+            return runs_page(
+                self.store.db,
+                mapping(params.get("filters", {}), "filters"),
+                params.get("offset", 0),
+                params.get("limit", 100),
+                params.get("sort_by"),
+                params.get("sort_descending", False),
+            )
         if method == "results.query":
-            return self.store.query(
+            include = params.get("include", [])
+            if include not in ([], ["study"]) or (include and params.get("table") != "campaigns"):
+                raise ContractError("include", "Choose study for campaign pages")
+            page = self.store.query(
                 params.get("table", "experiments"),
                 mapping(params.get("filters", {}), "filters"),
                 params.get("offset", 0),
@@ -644,6 +740,22 @@ class Engine:
                 sort_by=params.get("sort_by"),
                 sort_descending=params.get("sort_descending", False),
             )
+            if include:
+                identities = [row["id"] for row in page["rows"]]
+                studies = {
+                    row["id"]: row
+                    for row in self.store.rows(
+                        "SELECT id,json_extract(specification,'$.study.id') study_id,"
+                        "json_extract(specification,'$.study.evidence_level') evidence_level "
+                        f"FROM campaigns WHERE id IN ({','.join('?' * len(identities))})",
+                        tuple(identities),
+                    )
+                }
+                for row in page["rows"]:
+                    found = studies.get(row["id"]) or {}
+                    row["study_id"] = found.get("study_id") or UNASSIGNED
+                    row["evidence_level"] = found.get("evidence_level") or "exploratory"
+            return page
         if method == "results.get":
             table = params.get("table")
             if table not in ("attempts", "experiments"):
@@ -656,7 +768,54 @@ class Engine:
             for field in ("specification", "configuration", "metrics"):
                 if row.get(field):
                     row[field] = json.loads(row[field])
+            # Optional parts (R4b): the attempt's run record and the provenance it names; null until built.
+            include = params.get("include", [])
+            if (
+                not isinstance(include, list)
+                or not all(type(part) is str for part in include)
+                or not set(include) <= {"record", "provenance"}
+                or len(set(include)) != len(include)
+                or (include and table != "attempts")
+            ):
+                raise ContractError("include", "Choose record and provenance for an attempt")
+            if include:
+                record = attempt_record(self.store.db, row["id"])
+                if "record" in include:
+                    row["record"] = record
+                if "provenance" in include:
+                    row["provenance"] = provenance_document(
+                        self.store.db, record["provenance_id"] if record else None
+                    )
             return row
+        if method == "results.timeline":
+            # The run view's time series of a finished run (timelines.py), built off the engine loop.
+            known_keys(params, {"attempt_id"}, "params")
+            identity = text(params.get("attempt_id"), "attempt_id")
+            attempt = self.store.attempt(identity)
+            if attempt["discarded"] or not attempt["directory"]:
+                raise ContractError("attempt_id", "Measurements were discarded", "discarded")
+            if identity in self.active or attempt["phase"] != "FINISHED":
+                raise ContractError(
+                    "attempt_id", "Run in progress; its view opens when it has finished", "conflict"
+                )
+            return self.reads.get(
+                ("results.timeline", identity),
+                partial(timeline, Path(attempt["directory"])),
+                dict(attempt_id=identity),
+            )
+        if method == "study.traces":
+            known_keys(params, {"study_id", "world_id", "spawn_id", "robot_id"}, "params")
+            study_id = study_identity(params.get("study_id"), "study_id")
+            world = text(params.get("world_id"), "world_id")
+            spawn, robot = (
+                None if params.get(key) is None else text(params.get(key), key)
+                for key in ("spawn_id", "robot_id")
+            )
+            return self.reads.get(
+                ("study.traces", study_id, world, spawn, robot),
+                partial(traces, self.workspace / "suite.sqlite3", study_id, world, spawn, robot),
+                dict(study_id=study_id, world_id=world, spawn_id=spawn, robot_id=robot),
+            )
         if method == "results.map":
             # Coverage and path map of a finished run, built off the engine loop (run_map.py).
             known_keys(params, {"attempt_id", "after_sequence"}, "params")
@@ -752,6 +911,8 @@ class Engine:
             )
         if method == "logs.read":
             return self._logs(params)
+        if method in ("files.list", "files.table", "files.log"):
+            return self._files(method, params)
         if method == "command.status":
             identity = text(params.get("request_id"), "request_id")
             command = self.store.one("SELECT * FROM commands WHERE request_id=?", (identity,))
@@ -765,6 +926,57 @@ class Engine:
     def _last_sequence(self) -> int:
         return int(
             self.store.db.execute("SELECT COALESCE(MAX(sequence),0) FROM events").fetchone()[0]
+        )
+
+    def _files(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
+        """File viewer reads (files.py): a finished run's directory or a study's exports directory."""
+        known_keys(params, {"root", "id", "path", "offset", "limit", "search"}, "params")
+        if params.get("root") == "attempt":
+            identity = text(params.get("id"), "id", maximum=64)
+            attempt = self.store.attempt(identity)
+            if attempt["discarded"] or not attempt["directory"]:
+                raise ContractError("id", "Measurements were discarded", "discarded")
+            if identity in self.active or attempt["phase"] != "FINISHED":
+                raise ContractError(
+                    "id", "Run in progress; its files open when it has finished", "conflict"
+                )
+            root = Path(attempt["directory"])
+        elif params.get("root") == "study":
+            identity = study_identity(params.get("id"), "id")
+            root = studies_root(self.workspace) / identity
+            if not root.is_dir():
+                raise ContractError("id", "The study has no exports yet", "not_found")
+        else:
+            raise ContractError("root", "Choose attempt or study")
+        relative = params.get("path", "")
+        if not isinstance(relative, str) or len(relative) > 1024 or relative.startswith("/"):
+            raise ContractError("path", "Use a path relative to the run's or study's directory")
+        if method == "files.table" and not relative.endswith(TABLE_SUFFIXES):
+            raise ContractError("path", "Tables are Parquet or CSV files")
+        offset = integer(params.get("offset", 0), "offset", 0, 2**63 - 1)
+        if method == "files.log":
+            limit = integer(params.get("limit", 65536), "limit", 1, 262144)
+        else:
+            limit = integer(params.get("limit", 100), "limit", 1, 250)
+        search = params.get("search")
+        if search is not None:
+            if method != "files.log":
+                raise ContractError("search", "Search applies to files.log")
+            if (
+                not isinstance(search, str)
+                or not 0 < len(search) <= 200
+                or any(c in search for c in ("\n", "\r", "\x00"))
+            ):
+                raise ContractError("search", "Search for one line of 1–200 characters")
+        build = (
+            partial(file_text, root, relative, offset, limit, search)
+            if search is not None
+            else partial(BUILDERS[method], root, relative, offset, limit)
+        )
+        return self.reads.get(
+            (method, str(root), relative, offset, limit, search),
+            build,
+            dict(root=params["root"], id=identity, path=relative, offset=offset),
         )
 
     def _logs(self, params: dict[str, Any]) -> dict[str, Any]:
@@ -862,6 +1074,27 @@ class Engine:
             identity,
         )
 
+    def _in_study(self, spec: CampaignSpec) -> CampaignSpec:
+        """Number a new campaign's repetitions after the study's existing ones (RD-30).
+
+        Blocks are (robot, world, spawn, repetition) in the study's namespace, so a later campaign of the
+        study only adds blocks. A restarted copy keeps its source's numbers (``campaign.restart_copy``).
+        """
+        if spec.study is None:
+            return spec
+        last = last_repetition(self.store.db, spec.study.id)
+        first = 0 if last is None else last + 1
+        return replace(spec, study=replace(spec.study, first_repetition=first))
+
+    def _note_repetitions(self, spec: CampaignSpec) -> None:
+        """Keep a study's highest repetition, so deleting its campaigns never frees a block ID."""
+        if spec.study is not None:
+            self.store.db.execute(
+                "INSERT INTO study_repetitions VALUES(?,?) ON CONFLICT(study_id) DO UPDATE SET "
+                "last_repetition=MAX(last_repetition,excluded.last_repetition)",
+                (spec.study.id, spec.study.first_repetition + spec.repetitions - 1),
+            )
+
     def _discard(self, attempt: dict[str, Any]) -> None:
         directory = Path(attempt["directory"]).resolve()
         if directory != (self.workspace / "attempts" / attempt["id"]).resolve():
@@ -870,6 +1103,16 @@ class Engine:
         if directory.parent.exists():
             sync_directory(directory.parent)
         with self.store.transaction():
+            # The stub reads the attempt's reservation event, which the next statements delete.
+            campaign = self.store.campaign(attempt["campaign_id"])
+            self.run_records.stub(
+                dict(attempt, outcome="manual_discard", detail="", terminal_ns=time.time_ns()),
+                "campaign_stop"
+                if campaign["state"] in ("STOPPING", "STOPPED")
+                else "experiment_restart"
+                if attempt["restart_intent"]
+                else "experiment_stop",
+            )
             self.store.db.execute("DELETE FROM artifacts WHERE attempt_id=?", (attempt["id"],))
             self.store.db.execute(
                 "DELETE FROM events WHERE attempt_id=? "
@@ -924,12 +1167,19 @@ class Engine:
             self.store.db.execute(
                 "UPDATE experiments SET state='ACTIVE' WHERE id=?", (experiment["id"],)
             )
+            # The engine provenance and run order of the attempt (run record fields, MEASUREMENTS).
             self.store.event(
                 "attempt.reserved",
-                {"slot": slot, "retry": retry},
+                {
+                    "slot": slot,
+                    "retry": retry,
+                    "provenance_id": self.provenance_id,
+                    "runs_since_engine_start": self.reservations,
+                },
                 experiment["campaign_id"],
                 identity,
             )
+        self.reservations += 1
         directory.mkdir(parents=True, exist_ok=False)
         return self.store.attempt(identity)
 
@@ -946,7 +1196,6 @@ class Engine:
         try:
             worker = self.backend.start(attempt, experiment, campaign)
             self.active[attempt["id"]] = worker
-            self.timing[attempt["id"]] = TimingPolicy()
             with self.store.transaction():
                 self.store.db.execute(
                     "UPDATE attempts SET pid=?,pid_created=?,started_ns=? WHERE id=?",
@@ -1025,6 +1274,7 @@ class Engine:
                     attempt["id"],
                 )
             if outcome == "engine_interruption":
+                self.run_records.stub(self.store.attempt(attempt["id"]), None)
                 # The experiment returns to Not done until Resume (docs/MEASUREMENTS.md), as for
                 # an interrupted attempt without a finished manifest; an interrupted sequential
                 # replacement keeps its retry_queue entry and runs again as a replacement.
@@ -1143,6 +1393,8 @@ class Engine:
     def tick(self) -> None:
         self._advance_deletions()
         self.run_maps.poll()
+        self.run_records.poll(self.current)
+        self.exports.poll()
         if self.report_import is not None:
             try:
                 self._import_report()
@@ -1173,11 +1425,8 @@ class Engine:
             for event in worker.poll():
                 kind = event.get("kind")
                 if kind == "metrics":
+                    # Timing rejection is the worker's (timing-rule-v2, the recorder's windows).
                     self.metrics[identity] = event
-                    if not self.backend.synthetic and attempt["phase"] == "RUNNING":
-                        policy = self.timing[identity]
-                        if policy.update(event["wall_monotonic"], event["clock"]):
-                            worker.stop("timing_rejection", "RTF below 0.90 for ten wall seconds")
                 elif kind == "state":
                     phase = event["phase"]
                     if phase in ("STARTING", "READY", "RUNNING", "STOPPING", "FINALIZING"):
@@ -1206,7 +1455,6 @@ class Engine:
                 self._finish(self.store.attempt(identity))
                 del self.active[identity]
                 self.metrics.pop(identity, None)
-                self.timing.pop(identity, None)
                 self.parallel_exposed.discard(identity)
         if not self.current:
             if self.queue_enabled:
@@ -1240,6 +1488,8 @@ class Engine:
             return
         if campaign["state"] not in ("RUNNING", "RETRYING"):
             return
+        if self.exports.job is not None:
+            return  # an export reads the store and the attempts' files: no new runs until it ends
         spec = json.loads(campaign["specification"])
         occupied = {self.store.attempt(identity)["slot"] for identity in self.active}
         slots = range(1 if campaign["state"] == "RETRYING" else spec["concurrency"])
@@ -1274,15 +1524,18 @@ class Engine:
             (self.current,),
         )
         if not self.active and remaining and remaining["count"] == 0:
+            # Once: the record gate below may keep the campaign here for several ticks.
             self.store.db.execute(
-                "UPDATE campaigns SET execution_finished_ns=?,report_state='NOT_REQUESTED' WHERE id=?",
+                "UPDATE campaigns SET execution_finished_ns=?,report_state='NOT_REQUESTED' "
+                "WHERE id=? AND execution_finished_ns IS NULL",
                 (time.time_ns(), self.current),
             )
             if self.backend.synthetic or is_tuning(spec):
                 # A tuning run keeps its attempt directory as recorded until the next tuning run.
                 self.store.set_state(self.current, "FINISHED")
                 self.current = None
-            else:
+            elif not self.run_records.pending(self.current) and self.exports.job is None:
+                # Compaction removes the segments the record job reads: records first.
                 self._begin_finalization(self.current)
         elif not self.active:
             held = self.store.one(
@@ -1305,7 +1558,15 @@ class Engine:
                 "A campaign is running; a tuning run can start when the engine is idle",
                 "conflict",
             )
+        if self.exports.job is not None:
+            raise ContractError(
+                "specification",
+                "A study export is running; start the tuning run when it ends",
+                "conflict",
+            )
         spec = self.resolve(mapping(params.get("specification"), "specification"))
+        if spec.study is not None:
+            raise ContractError("study", "A tuning run belongs to no study")
         single = (
             len(spec.robots) == 1
             and len(spec.robots[0][1]) == 1
@@ -1333,7 +1594,8 @@ class Engine:
                 "conflict",
             )
         self.backend.preflight()
-        delete_rows(self.store, entries, operation_id)
+        self.run_records.cancel([entry["campaign_id"] for entry in entries])
+        delete_rows(self.store, entries, operation_id, self.provenance_id)
         identity = self.store.submit(spec)
         self.current = identity
         self.store.set_state(identity, "RUNNING")
@@ -1636,7 +1898,10 @@ class Engine:
         if self.server:
             self.server.close()
         self.run_maps.close()
+        self.run_records.close()
+        self.exports.close()
         self.replay_windows.close()
+        self.reads.close()
         if self.job is not None:
             self.job.close()
             self.job = None

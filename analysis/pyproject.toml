@@ -1,0 +1,55 @@
+# Copyright 2026 Mert Güler
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+
+# The analysis package: statistics, tables and figures from a frozen study export (RESULTS_OVERHAUL R5).
+# Its environment is .venv-analysis, built by suite_launch.sh from requirements.lock (the full closure).
+
+[build-system]
+requires = ["setuptools==80.9.0", "wheel==0.45.1"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "benchmark-analysis"
+version = "1.0.0"
+description = "Statistics, tables and figures from frozen exploration benchmark study exports"
+requires-python = ">=3.12"
+license = "Apache-2.0"
+authors = [{name = "Mert Güler", email = "support.mertgulerx@gmail.com"}]
+dependencies = [
+    "numpy==2.2.6",
+    "scipy==1.15.3",
+    "pyarrow==20.0.0",
+    "matplotlib==3.10.3",
+    "Pillow==11.2.1",
+    "PyYAML==6.0.2",
+    "daltonlens==0.1.5",
+]
+
+[tool.setuptools.packages.find]
+include = ["benchmark_analysis*"]
+
+[tool.setuptools.package-data]
+benchmark_analysis = ["*.mplstyle"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 100
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+
+[[tool.mypy.overrides]]
+module = ["scipy.*", "pyarrow.*", "daltonlens.*", "mpl_toolkits.*"]
+ignore_missing_imports = true
