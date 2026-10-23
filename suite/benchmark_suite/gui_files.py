@@ -19,7 +19,8 @@ Left, the root ("Study exports", or a run its run view's Files button chose), a 
 a Parquet or CSV table in pages of 100 rows with the export codebook's units under the column names
 (``files.table``), text and logs in 64 KiB windows with search (``files.log``; zstd and gzip logs decompressed by
 the engine), JSON and YAML as text (JSON indented once the whole file is loaded), PDFs, images and ``.npz`` maps
-read from the host path the listing names (off the GUI thread), and any other file as its size and SHA-256 with
+read from the host path the listing names (read off the GUI thread; a map is decoded and another file hashed on
+it, at most 16 MiB), and any other file as its size and SHA-256 with
 "Open externally". The engine builds these reads off its loop and answers ``loading`` first, so each is polled;
 a reply for an earlier root, folder or file is dropped.
 """
@@ -85,8 +86,9 @@ ICONS = {
     "map": "map",
 }
 WINDOW = 65536  # a log window (64 KiB)
+RUN_ROOTS = 5  # run directories kept in the root select
 NUMERIC = re.compile(
-    r"^(TINYINT|SMALLINT|INTEGER|BIGINT|HUGEINT|U?INT\d*|FLOAT|DOUBLE|DECIMAL.*|REAL)$", re.I
+    r"^(U?(TINYINT|SMALLINT|INTEGER|BIGINT|HUGEINT)|U?INT\d*|FLOAT|DOUBLE|DECIMAL.*|REAL)$", re.I
 )
 
 
@@ -216,8 +218,20 @@ class Entries(Themed):
         paths = [e["path"] for e in self.entries]
         index = paths.index(self.current) if self.current in paths else -1
         if key in (QtCore.Qt.Key.Key_Down, QtCore.Qt.Key.Key_Up) and self.entries:
+            # the arrows move the highlight (a file opens as it is reached; a folder waits for Enter)
+            start = (
+                index
+                if index >= 0
+                else (-1 if key == QtCore.Qt.Key.Key_Down else len(self.entries))
+            )
             step = 1 if key == QtCore.Qt.Key.Key_Down else -1
-            self.opened.emit(self.entries[(index + step) % len(self.entries)])
+            entry = self.entries[(start + step) % len(self.entries)]
+            self.current = str(entry["path"])
+            if entry.get("type") != "directory":
+                self.opened.emit(entry)
+            self.update()
+        elif key in (QtCore.Qt.Key.Key_Return, QtCore.Qt.Key.Key_Enter) and index >= 0:
+            self.opened.emit(self.entries[index])
         else:
             super().keyPressEvent(event)
 
@@ -282,15 +296,23 @@ class FolderCard(Card):
         OverlayScrollBar(themes, self.area)
         self.foot = TextLine(themes, "", FOOT, "text.secondary", self)
         self.total = 0
+        self.error = ""  # why the folder could not be listed; shown instead of the count
         self.area.verticalScrollBar().valueChanged.connect(lambda _: self._count())
         self.area.verticalScrollBar().rangeChanged.connect(lambda *_: self._count())
 
+    def set_error(self, reason: str) -> None:
+        self.total, self.error = 0, reason
+        self._count()
+
     def set_total(self, total: int) -> None:
-        self.total = total
+        self.total, self.error = total, ""
         QtCore.QTimer.singleShot(0, self._count)  # once the list has its height in the scroll area
 
     def _count(self) -> None:
         """ "16 of 31 entries · scroll for more": the rows in view of the folder's entries."""
+        if self.error:
+            self.foot.setText(self.error)
+            return
         shown = len(self.entries.entries)
         viewport = self.area.viewport().height()
         start = self.area.verticalScrollBar().value() // 34
@@ -359,7 +381,9 @@ class DataModel(TableModel):
             if value is None:
                 return Cell("null", "mono", token="text.tertiary")  # ``td.nul``
             text = json.dumps(value) if isinstance(value, bool) else str(value)
-            return Cell(text, "mono", tooltip=text if len(text) > 24 else "")
+            return Cell(
+                text, "mono", tooltip=text if len(text) > 8 else ""
+            )  # shortened values read whole
         if role == QtCore.Qt.ItemDataRole.DisplayRole:
             return "null" if value is None else str(value)
         return None
@@ -370,7 +394,7 @@ class DataModel(TableModel):
         return super().headerData(section, orientation, role)
 
 
-IDENTITY = re.compile(r"^[0-9a-f-]{16,}$")
+IDENTITY = re.compile(r"^(?=.*[a-f])[0-9a-f-]{16,}$")  # hashes and UUIDs; never a number
 
 
 def column_width(name: str, unit: str, values: Sequence[str]) -> int:
@@ -703,12 +727,13 @@ class ImageView(Themed):
 
 def map_image(data: bytes) -> tuple[QtGui.QImage | None, str]:
     """A ``.npz`` file's arrays listed, and its first two-dimensional array drawn in greys (as stored)."""
-    with np.load(io.BytesIO(data), allow_pickle=False) as arrays:
-        notes = [
-            f"{name}: {arrays[name].dtype} {' × '.join(map(str, arrays[name].shape))}"
-            for name in arrays.files
-        ]
-        grid = next((arrays[name] for name in arrays.files if arrays[name].ndim == 2), None)
+    loaded = np.load(io.BytesIO(data), allow_pickle=False)
+    if not isinstance(loaded, np.lib.npyio.NpzFile):
+        raise ValueError("not an .npz archive")
+    with loaded as arrays:
+        found = {name: arrays[name] for name in arrays.files}  # each array decompressed once
+    notes = [f"{name}: {a.dtype} {' × '.join(map(str, a.shape))}" for name, a in found.items()]
+    grid = next((a for a in found.values() if a.ndim == 2), None)
     if grid is None:
         return None, "\n".join(notes)
     values = grid.astype(np.float64)
@@ -798,6 +823,13 @@ class FilesTab(QtWidgets.QWidget):
         self.poll.setInterval(POLL_MS)
         self.poll.timeout.connect(self._repeat)
         self.loaded_text = ""
+        self.jump = False  # the study root's first listing opens the newest export
+        self.units_folder = ""  # the export folder whose codebook.csv gave ``units``
+        self.table_reply: Mapping[str, Any] | None = (
+            None  # the shown table page (redrawn with its units)
+        )
+        self.search_from: int | None = None  # where an unfinished search goes on (its scan cap)
+        self.search_needle = ""  # the text that search was for
         self.folder.root.currentIndexChanged.connect(self._root_picked)
         self.folder.crumb.chosen.connect(self.open_folder)
         self.folder.entries.opened.connect(self._entry)
@@ -819,7 +851,9 @@ class FilesTab(QtWidgets.QWidget):
     def show_run(self, attempt_id: str, label: str) -> None:
         """A run's directory as the root (the run view's Files button)."""
         root = Root("attempt", attempt_id, "Run · " + label, "run " + attempt_id[:8])
-        roots = [r for r in self.roots if r.identity != attempt_id] + [root]
+        runs = [r for r in self.roots if r.kind == "attempt" and r.identity != attempt_id]
+        # the study root and the last few runs viewed (the select does not grow over a session)
+        roots = [r for r in self.roots if r.kind != "attempt"] + runs[-(RUN_ROOTS - 1) :] + [root]
         self._set_roots(roots, root)
 
     def _set_roots(self, roots: list[Root], chosen: Root | None) -> None:
@@ -833,16 +867,25 @@ class FilesTab(QtWidgets.QWidget):
             select.setCurrentIndex(roots.index(chosen))
         select.blockSignals(False)
         if chosen != self.root:
-            self.root = chosen
-            self.host_root = None
-            self.units = {}
-            self.open_folder("")
+            self._change_root(chosen)
 
     def _root_picked(self, index: int) -> None:
         if 0 <= index < len(self.roots) and self.roots[index] != self.root:
-            self.root = self.roots[index]
-            self.host_root = None
-            self.open_folder("")
+            self._change_root(self.roots[index])
+
+    def _change_root(self, root: Root | None) -> None:
+        """A new root: nothing of the old one stays (its file, units, entries and pending replies)."""
+        self.root, self.host_root, self.units, self.units_folder = root, None, {}, ""
+        self.file, self.file_token, self.loaded_text = None, uuid.uuid4().hex, ""
+        self.entries = []
+        self.folder.entries.current = ""
+        self.folder.entries.set_entries([])
+        self.viewer.stack.setCurrentIndex(IMAGE)
+        self.viewer.image.set_image(None, "")
+        self.viewer.set_head("", "Choose a file")
+        # a study root opens on its newest finished export once, when it is chosen
+        self.jump = root is not None and root.kind == "study"
+        self.open_folder("")
 
     # requests
 
@@ -892,23 +935,29 @@ class FilesTab(QtWidgets.QWidget):
                 {"path": self.path, "offset": reply["next_offset"], "limit": 250},
             )
             return
-        # The study root opens on its newest export (folders named by their UTC time)
-        if self.root is not None and self.root.kind == "study" and self.path in ("", "exports"):
-            folders = [e for e in entries if e.get("type") == "directory"]
-            wanted = (
-                "exports"
-                if self.path == ""
-                else (max(e["name"] for e in folders) if folders else None)
-            )
-            if wanted is not None and any(e["name"] == wanted for e in folders):
+        # The study root opens once on its newest finished export (folders named by their UTC time; a staging
+        # or partial folder is still being written); the crumb then reaches every folder
+        if self.jump and self.root is not None and self.root.kind == "study":
+            folders = [
+                str(e["name"])
+                for e in entries
+                if e.get("type") == "directory"
+                and not str(e["name"]).endswith(".staging")
+                and ".partial-" not in str(e["name"])
+            ]
+            wanted = "exports" if self.path == "" else max(folders, default=None)
+            if self.path in ("", "exports") and wanted is not None and wanted in folders:
+                self.jump = self.path == ""  # into exports/, then once into the newest export
                 self.open_folder(f"{self.path}/{wanted}".lstrip("/"))
-            return
+                return
+            self.jump = False
         if (
             self.root is not None
             and self.root.kind == "study"
             and self.path.startswith("exports/")
-            and not self.units
+            and self.units_folder != self.path
         ):
+            self.units, self.units_folder = {}, self.path
             codebook = f"{self.path}/codebook.csv"
             if any(e.get("path") == codebook for e in entries):
                 self._request(
@@ -934,6 +983,13 @@ class FilesTab(QtWidgets.QWidget):
                 "files.table",
                 {"path": f"{self.path}/codebook.csv", "offset": reply["next_offset"], "limit": 250},
             )
+        elif (
+            self.table_reply is not None
+            and (self.file or {}).get("kind") == "table"
+            and str((self.file or {}).get("path", "")).rpartition("/")[0] == self.units_folder
+        ):
+            # a table of this folder opened before its codebook arrived gets its units
+            self._table(self.table_reply)
 
     def _entry(self, entry: Mapping[str, Any]) -> None:
         if entry.get("type") == "directory":
@@ -946,6 +1002,7 @@ class FilesTab(QtWidgets.QWidget):
     def open_file(self, entry: dict[str, Any]) -> None:
         self.file = entry
         self.file_token = uuid.uuid4().hex
+        self.search_from, self.table_reply = None, None
         self.folder.entries.current = str(entry.get("path"))
         self.folder.entries.update()
         kind, name, path = str(entry.get("kind")), str(entry.get("name")), str(entry.get("path"))
@@ -967,7 +1024,12 @@ class FilesTab(QtWidgets.QWidget):
             viewer.stack.setCurrentIndex(PDF if kind == "pdf" else IMAGE)
             viewer.pdf.pages.clear("Reading…")
             viewer.image.set_image(None, "Reading…")
-            if self.host_root is not None:
+            if (
+                self.host_root is None
+            ):  # the listing that names the folder's host path has not arrived
+                viewer.pdf.pages.clear("Waiting for the folder listing; open the file again")
+                viewer.image.set_image(None, "Waiting for the folder listing; open the file again")
+            else:
                 self.transport.submit(
                     f"files-tab-bytes:{self.file_token}",
                     "local.read_bytes",
@@ -984,6 +1046,7 @@ class FilesTab(QtWidgets.QWidget):
             )
 
     def _more_text(self) -> None:
+        self.search_from = None  # the window moves on: a search goes on after it
         if self.file is not None:
             self._request(
                 "text",
@@ -998,22 +1061,30 @@ class FilesTab(QtWidgets.QWidget):
 
     def _search_further(self, needle: str) -> None:
         if self.file is not None:
+            if needle != self.search_needle:  # another search starts after the loaded text again
+                self.search_from, self.search_needle = None, needle
+            offset = self.viewer.text.end_offset
+            if self.search_from is not None and self.search_from > offset:
+                offset = self.search_from
             self._request(
                 "found",
                 self.file_token,
                 "files.log",
                 {
                     "path": str(self.file.get("path")),
-                    "offset": self.viewer.text.end_offset,
+                    "offset": offset,
                     "limit": WINDOW,
                     "search": needle,
                 },
             )
 
     def _table(self, reply: Mapping[str, Any]) -> None:
+        self.table_reply = reply
         name = str((self.file or {}).get("name"))
         table = name.rsplit(".", 1)[0]
-        units = self.units.get(table, {})
+        # the codebook describes the tables beside it, not a raw file of the same name further down
+        folder = str((self.file or {}).get("path", "")).rpartition("/")[0]
+        units = self.units.get(table, {}) if folder == self.units_folder else {}
         self.viewer.table.set_page(reply, units)
         columns = len(reply.get("columns") or [])
         self.viewer.set_head(
@@ -1025,6 +1096,8 @@ class FilesTab(QtWidgets.QWidget):
     def _text(self, reply: Mapping[str, Any], *, replace: bool) -> None:
         text = str(reply.get("text") or "")
         offset = int(reply.get("offset") or 0)
+        if not replace and self.loaded_text and offset != self.viewer.text.end_offset:
+            return  # a window for an earlier position (a search moved the view meanwhile)
         if replace or not self.loaded_text:
             self.loaded_text, start = text, offset
         else:
@@ -1063,7 +1136,7 @@ class FilesTab(QtWidgets.QWidget):
         elif kind == "map":
             try:
                 grid, note = map_image(data)
-            except (ValueError, OSError) as exc:
+            except Exception as exc:  # noqa: BLE001 (a damaged or foreign file: zip, format, value errors)
                 grid, note = None, f"The map could not be read: {exc}"
             self.viewer.image.set_image(grid, note)
         else:
@@ -1104,9 +1177,18 @@ class FilesTab(QtWidgets.QWidget):
             self._text(result, replace=False)
         elif kind == "found":
             if result.get("match_offset") is None:
-                self.viewer.text.count.setText("No match in the rest of the text")
+                reached = result.get("searched_to")
+                if isinstance(reached, int) and not result.get("end"):
+                    # the engine stops each search at its scan cap: the next search goes on from there
+                    self.search_from = reached
+                    text = f"No match up to {size_text(reached)}; search again to go on"
+                else:
+                    self.search_from = None
+                    text = "No match in the rest of the text"
+                self.viewer.text.count.setText(text)
                 self.viewer.text.bar.relayout()
             else:
+                self.search_from = None
                 self._text(result, replace=True)
         return True
 
@@ -1121,8 +1203,9 @@ class FilesTab(QtWidgets.QWidget):
 
     def _failed(self, kind: str, reason: str) -> None:
         if kind == "list":
+            self.jump = False
             self.folder.entries.set_entries([])
-            self.folder.foot.setText(reason)
+            self.folder.set_error(reason)
         elif kind in ("table", "text", "found", "bytes"):
             name = str((self.file or {}).get("name"))
             self.viewer.set_head(name, "Not readable: " + reason)

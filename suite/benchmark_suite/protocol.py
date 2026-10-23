@@ -18,13 +18,14 @@ import json
 import os
 from pathlib import Path
 import queue
+import re
 import socket
 import struct
 import threading
 from typing import Any
 import uuid
 
-from .contracts import PROTOCOL_VERSION, ContractError, canonical, mapping
+from .contracts import COMPATIBLE_PROTOCOLS, PROTOCOL_VERSION, ContractError, canonical, mapping
 
 MAX_MESSAGE = 4 * 1024 * 1024
 
@@ -184,16 +185,36 @@ class Client:
         self.lock = threading.Lock()
         self.connections: set[socket.socket] = set()
         self.closed = False
+        self.version = PROTOCOL_VERSION  # an older engine's version once it asks for one (COMPATIBLE_PROTOCOLS)
 
     def call(
         self, method: str, params: dict[str, Any] | None = None, request_id: str | None = None
     ) -> Any:
         request = {
-            "protocol_version": PROTOCOL_VERSION,
+            "protocol_version": self.version,
             "request_id": request_id or str(uuid.uuid4()),
             "method": method,
             "params": params or {},
         }
+        response = self._exchange(request)
+        error = response.get("error", {}) if not response.get("ok") else {}
+        wanted = re.fullmatch(r"Use protocol version (\d+)", str(error.get("message", "")))
+        if error.get("code") == "version_mismatch" and wanted:
+            version = int(wanted.group(1))
+            if version in COMPATIBLE_PROTOCOLS and version != self.version:
+                # refused before anything ran, so the same request ID is sent again unchanged
+                self.version = version
+                response = self._exchange(dict(request, protocol_version=version))
+        if not response.get("ok"):
+            error = response.get("error", {})
+            raise ContractError(
+                error.get("field", method),
+                error.get("message", "Request failed"),
+                error.get("code", "runtime_error"),
+            )
+        return response["result"]
+
+    def _exchange(self, request: dict[str, Any]) -> dict[str, Any]:
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
             with self.lock:
                 if self.closed:
@@ -211,14 +232,7 @@ class Client:
             finally:
                 with self.lock:
                     self.connections.discard(connection)
-        if not response.get("ok"):
-            error = response.get("error", {})
-            raise ContractError(
-                error.get("field", method),
-                error.get("message", "Request failed"),
-                error.get("code", "runtime_error"),
-            )
-        return response["result"]
+        return response
 
     def close(self) -> None:
         with self.lock:

@@ -264,6 +264,8 @@ class Library:
             "source_campaign_id",
             "study",
             "debug_streams",
+            # an accepted campaign (Validate, then Add to queue; exported YAML) carries it: recomputed below
+            "default_parameter_hashes",
         }
         known_keys(raw, allowed, "campaign")
         accepted = deepcopy(raw)
@@ -321,7 +323,16 @@ class Library:
         # Facts fixed at submission: the plan's hash and each robot's Default parameter hash.
         if isinstance(raw.get("study"), dict):
             study = Study.accepted(raw["study"])
-            accepted["study"] = dict(study.dictionary(), plan_sha256=self.plan_hash(study))
+            digest = self.plan_hash(study)
+            # an accepted campaign names the hash the researcher validated: a plan changed since is refused
+            if study.plan_sha256 is not None and study.plan_sha256 != digest:
+                raise ContractError(
+                    "study.plan_sha256",
+                    "The plan changed above its Deviations heading since the campaign was validated; "
+                    "validate it again (in a campaign file, remove study.plan_sha256 first)",
+                    "plan_changed",
+                )
+            accepted["study"] = dict(study.dictionary(), plan_sha256=digest)
         accepted["default_parameter_hashes"] = {
             robot_id: content_hash(
                 self.resolve_profile(robot_id, {"name": "Default", "id": "default-" + robot_id})[

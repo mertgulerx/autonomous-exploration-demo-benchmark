@@ -560,8 +560,8 @@ TOTAL = TextStyle(13, 600, 18, tabular=True)
 STAT_VALUE = TextStyle(22, 600, 26, tabular=True)
 STAT_KEY = TextStyle(12.5, 400, 18)
 FAILURES_TIP = (
-    "Startup, runtime, storage, engine-interruption and unresolved timing outcomes; excluded from "
-    "campaign reports."
+    "Startup, runtime, storage, engine-interruption and unresolved timing outcomes; left out of the "
+    "study's statistics and counted."
 )
 ACCOUNTING = (
     ("executed", "Attempts", "All executions, including retries and discarded attempts."),
@@ -587,7 +587,7 @@ ACCOUNTING = (
     (
         "stopped",
         "Stopped",
-        "Runs stopped from the Monitor; data kept, excluded from campaign reports.",
+        "Runs stopped from the Monitor; data kept, left out of the study's statistics and counted.",
     ),
 )
 
@@ -1452,9 +1452,8 @@ def confirm_deletion(
     noun = "campaign" if count == 1 else "campaigns"
     card = Consequences(themes, f"Delete {count} {noun} and all their results?")
     summary = (
-        f"{plural(sum(c['experiments'] for c in deletable), 'experiment')}, "
-        f"{plural(sum(c['attempts'] for c in deletable), 'run')} and "
-        f"{plural(sum(c['reports'] for c in deletable), 'report revision')}; at least "
+        f"{plural(sum(c['experiments'] for c in deletable), 'experiment')} and "
+        f"{plural(sum(c['attempts'] for c in deletable), 'run')}; at least "
     )
     card.add_sentence(
         [

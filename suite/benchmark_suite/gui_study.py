@@ -466,7 +466,9 @@ STATS_COLUMNS = (
     ("estimand", "Estimand", ColumnStyle("text", padding_left=20, width=250)),
     ("stratum", "Stratum", ColumnStyle("text", width=170)),
     ("profile", "Profile", ColumnStyle("text", width=140)),
-    ("value", "Value as written", ColumnStyle("text", width=None)),
+    # the primary population, or the sensitivity set or execution mode an entry is computed on
+    ("population", "Population", ColumnStyle("text", width=150)),
+    ("value", "Value (4 significant digits)", ColumnStyle("text", width=None)),
     ("n", "n", ColumnStyle("number", width=56)),
     ("role", "Role", ColumnStyle("text", padding_right=20, width=110)),
 )
@@ -477,25 +479,42 @@ def stat_number(value: Any) -> str:
     return f"{found:.4g}" if found is not None else "—"
 
 
+def bound_text(interval: Mapping[str, Any], side: str) -> str:
+    """One bound: "> L" where the data put it beyond the limit (as the tables print it), "—" when absent."""
+    if interval.get(f"{side}_beyond_limit"):
+        return "> L"
+    return stat_number(interval.get(side))
+
+
 def interval_text(interval: Any) -> str:
-    """ "[lo, hi] 95 % Wilson" as the entry states it."""
+    """ "[lo, hi] 95 % Wilson" as the entry states it, its note after it (a reduced level, a bound > L)."""
     if not isinstance(interval, Mapping):
         return ""
-    lower, upper = number(interval.get("lower")), number(interval.get("upper"))
-    if lower is None or upper is None:
+    if (
+        interval.get("lower") is None
+        and interval.get("upper") is None
+        and not (interval.get("lower_beyond_limit") or interval.get("upper_beyond_limit"))
+    ):
         return ""
     level = number(interval.get("level"))
     method = str(interval.get("method") or "")
     tail = f" {level * 100:.4g} % {method}".rstrip() if level else ""
-    return f" [{lower:.4g}, {upper:.4g}]{tail}"
+    note = f" ({interval['note']})" if interval.get("note") else ""
+    return f" [{bound_text(interval, 'lower')}, {bound_text(interval, 'upper')}]{tail}{note}"
 
 
 def value_text(entry: Mapping[str, Any]) -> str:
     """An entry's main values from its own fields, formatted only (no value is computed here); the kinds with
     nested results (reliability, timing) are read in the file."""
     if "km_median" in entry or "rmst" in entry:
+        # a computed median that is null was not reached by L (the curve stays above one half)
+        median = (
+            "> L"
+            if "km_median" in entry and entry["km_median"] is None
+            else stat_number(entry.get("km_median"))
+        )
         return (
-            f"KM median {stat_number(entry.get('km_median'))}{interval_text(entry.get('km_median_interval'))}"
+            f"KM median {median}{interval_text(entry.get('km_median_interval'))}"
             f" · RMST {stat_number(entry.get('rmst'))}{interval_text(entry.get('rmst_interval'))}"
         )
     if "difference" in entry:
@@ -518,7 +537,9 @@ def stats_rows(
 ) -> list[dict[str, Any]]:
     """``stats.json`` entries as written, one row each."""
     rows = []
-    for entry in document.get("entries") or []:
+    entries = document.get("entries") or []
+    robots = len({entry.get("robot_id") for entry in entries if entry.get("robot_id")}) > 1
+    for entry in entries:
         estimand = str(entry.get("estimand", ""))
         for part in ("endpoint", "comparison"):
             if entry.get(part):
@@ -527,7 +548,7 @@ def stats_rows(
             estimand += f" at {duration(entry['horizon_s'])}"
         stratum = " · ".join(
             name(kind, entry.get(f"{kind}_id"))
-            for kind in ("world", "spawn")
+            for kind in (("robot", "world", "spawn") if robots else ("world", "spawn"))
             if entry.get(f"{kind}_id")
         )
         n = entry.get("n_pairs", entry.get("n"))
@@ -539,6 +560,7 @@ def stats_rows(
                 profile=name("profile", entry.get("profile_id"))
                 if entry.get("profile_id")
                 else "—",
+                population=str(entry.get("population") or "—"),  # its ID in stats.json
                 value=value_text(entry),
                 n=str(n) if isinstance(n, int) else "—",
                 role=str(entry.get("role") or "—"),
@@ -663,11 +685,16 @@ class TracesView(Themed):
         self.message = "Choose a world"
 
     def set_reply(
-        self, reply: Mapping[str, Any], world: str, profile_name: Callable[[str], str]
+        self,
+        reply: Mapping[str, Any],
+        world: str,
+        profile_name: Callable[[str], str],
+        order: Sequence[str] | None = None,
     ) -> None:
+        """``order``: the study's other profiles in F1's colour order (``TracesChart.set_runs``)."""
         runs = list(reply.get("runs") or [])
         self.message = "" if runs else "No reported run of this study in " + world
-        self.chart.set_runs(runs)
+        self.chart.set_runs(runs, order)
         profiles: dict[str, dict[str, Any]] = {}
         for run in runs:
             profiles.setdefault(str(run.get("profile_id")), run)
@@ -700,10 +727,15 @@ class TracesView(Themed):
         else:
             self.caption.append(("", "no exclusions in this world"))
         self.caption.append(("", "click a line to open its run"))
-        times = [0.0, axis.split / 3, 2 * axis.split / 3, axis.split]
-        self.support = [(sum(run_end(r) > t for r in runs), t) for t in times]
         self._layout()
         self.update()
+
+    def _support(self) -> None:
+        """Runs still exploring at four times of the chart's current axis (it changes with the width)."""
+        runs = self.chart.runs
+        axis = self.chart.axis()
+        times = [0.0, axis.split / 3, 2 * axis.split / 3, axis.split]
+        self.support = [(sum(run_end(r) > t for r in runs), t) for t in times] if runs else []
 
     def set_message(self, text: str) -> None:
         self.message = text
@@ -716,6 +748,7 @@ class TracesView(Themed):
         top = 52 + 36 + 14
         # the plot's padding above, and 15 px between the axis labels and the support row
         self.chart.setGeometry(20, top, width - 40, max(0, height - top - 40 - 15))
+        self._support()
 
     def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
         super().resizeEvent(event)
@@ -990,6 +1023,7 @@ class AnalysisState:
     current: bool = False
     outputs: dict[str, str] = field(default_factory=dict)
     sidecars: dict[str, dict[str, Any]] = field(default_factory=dict)
+    sidecar_errors: dict[str, str] = field(default_factory=dict)  # sidecars that could not be read
     refusal: dict[str, Any] | None = None
     refusal_ns: int | None = None
     unreadable: str | None = (
@@ -1021,7 +1055,9 @@ class StudyTab(QtWidgets.QWidget):
         self.analysis = AnalysisState()
         self.kinds: list[OutputKind] = []
         self.current = -1
-        self.variants: dict[str, int] = {}  # kind code -> chosen variant
+        self.variants: dict[
+            str, str
+        ] = {}  # kind code -> chosen variant ("R_90"), kept across analyses
         self.worlds: list[str] = []
         self.world = 0  # the traces' stratum, an index into strata()
         self.stratum: dict[
@@ -1058,6 +1094,8 @@ class StudyTab(QtWidgets.QWidget):
     def set_detail(self, detail: Mapping[str, Any]) -> None:
         """A ``study.get`` reply (ready): the card's facts, then the study's analyses."""
         changed = detail.get("study_id") != self.detail.get("study_id")
+        if changed:
+            self.poll.stop()
         self.detail = dict(detail)
         export = newest_export(detail)
         if changed or (export or {}).get("sums_sha256") != (self.export or {}).get("sums_sha256"):
@@ -1239,8 +1277,9 @@ class StudyTab(QtWidgets.QWidget):
         outputs = self.analysis.outputs
         variants = kind.variant_files(outputs)
         if variants:
-            default = next((i for i, f in enumerate(variants) if variant_of(kind, f) == "R_90"), 0)
-            chosen = variants[min(self.variants.get(kind.code, default), len(variants) - 1)]
+            keys = [variant_of(kind, f) for f in variants]
+            wanted = self.variants.get(kind.code, "R_90")
+            chosen = variants[keys.index(wanted) if wanted in keys else 0]
             return [chosen, *[f for f in kind.then if f in outputs]]
         return [f for f in kind.files if f in outputs]
 
@@ -1307,7 +1346,18 @@ class StudyTab(QtWidgets.QWidget):
         kind, _, rest = tag.removeprefix("study-tab-").partition(":")
         if self._stale(kind, rest.partition(":")[0]):
             return True
+        path = rest.partition(":")[2]
         if kind == "list":  # no analysis directory yet
+            self.refresh_card()
+            self._rows()
+        elif kind == "sidecar":
+            self.analysis.sidecar_errors[path] = error  # shown whenever its view opens
+            self._show_counts()
+        elif kind == "stats":
+            self.viewer.stats_model.replace([])
+            self.viewer.caption.set_parts([("", "stats.json could not be read: " + error)])
+        elif kind == "refusal":
+            self.analysis.refusal = dict(reason="the refusal file could not be read: " + error)
             self.refresh_card()
             self._rows()
         elif kind == "index":
@@ -1321,8 +1371,17 @@ class StudyTab(QtWidgets.QWidget):
     def _listed(self, entries: Sequence[Mapping[str, Any]]) -> None:
         export = self.export or {}
         hash8 = str(export.get("sums_sha256") or "")[:8]
+        # the directory a running analysis has claimed is empty until it finishes: not an analysis yet
+        job = self.jobs.job(str(self.detail.get("study_id"))) if self.jobs is not None else None
+        writing = (
+            "-" + job.export if job and job.kind == "analysis" and job.state == "running" else None
+        )
         analyses = [
-            e for e in entries if e.get("directory") and ANALYSIS_NAME.match(str(e.get("name")))
+            e
+            for e in entries
+            if e.get("directory")
+            and ANALYSIS_NAME.match(str(e.get("name")))
+            and not (writing and str(e.get("name")).endswith(writing))
         ]
         current = [e for e in analyses if str(e["name"]).endswith("-" + hash8)]
         chosen = max(current or analyses, key=lambda e: e.get("modified_ns") or 0, default=None)
@@ -1400,11 +1459,14 @@ class StudyTab(QtWidgets.QWidget):
             self.world = index
             self.stratum = strata[index][1] if 0 <= index < len(strata) else {}
         else:
-            self.variants[kind.code] = index
+            files = kind.variant_files(self.analysis.outputs)
+            if 0 <= index < len(files):
+                self.variants[kind.code] = variant_of(kind, files[index])
         self._open_view()
 
     def _open_view(self) -> None:
         kind = self.kinds[self.current]
+        self.poll.stop()  # a pending traces poll belongs to the view being left
         self.view_token = uuid.uuid4().hex
         self.chip_records = {}
         viewer = self.viewer
@@ -1490,8 +1552,13 @@ class StudyTab(QtWidgets.QWidget):
             return
         files = self._files(kind)
         sidecar = self.analysis.sidecars.get(sidecar_of(files[0])) if files else None
+        error = self.analysis.sidecar_errors.get(sidecar_of(files[0])) if files else None
         self.viewer.caption.set_parts(
-            n_line((sidecar or {}).get("counts")) if sidecar else [("", "Reading the sidecar…")]
+            n_line((sidecar or {}).get("counts"))
+            if sidecar
+            else [("", "The sidecar could not be read: " + error)]
+            if error
+            else [("", "Reading the sidecar…")]
         )
         if sidecar:
             title = self._title(kind, files, sidecar)
@@ -1601,13 +1668,31 @@ class StudyTab(QtWidgets.QWidget):
                 str(result.get("reason") or "The traces could not be read")
             )
             return
-        keys = {run.get("comparison_key") for run in result.get("runs") or []}
-        if len(keys) > 1:  # runs that are not comparable, which the analysis refuses too
+        runs = result.get("runs") or []
+        keys = {run.get("comparison_key") for run in runs}
+        limits = {run.get("time_limit_s") for run in runs}
+        if (
+            len(keys) > 1 or len(limits) > 1
+        ):  # runs that are not comparable, which the analysis refuses too
+            what = f"{len(keys)} comparison keys" if len(keys) > 1 else f"{len(limits)} time limits"
             self.viewer.traces.set_message(
-                f"The runs of {world} hold {len(keys)} comparison keys, so they are not drawn together"
+                f"The runs of {world} hold {what}, so they are not drawn together"
             )
             return
-        self.viewer.traces.set_reply(result, world, lambda profile: self.names("profile", profile))
+        # F1's colours: the study's other profiles by parameter hash, the same in every world
+        profiles = [
+            profile
+            for _, profile in sorted(
+                {
+                    (str(r.get("parameter_hash")), str(r.get("profile_id")))
+                    for r in self.records.values()
+                    if r.get("is_final") and not r.get("is_baseline")
+                }
+            )
+        ]
+        self.viewer.traces.set_reply(
+            result, world, lambda profile: self.names("profile", profile), profiles or None
+        )
 
     def _describe_trace(self, run: Mapping[str, Any]) -> str:
         repetition = run.get("repetition")

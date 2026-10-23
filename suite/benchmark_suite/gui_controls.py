@@ -114,17 +114,6 @@ OUTCOME_BADGES: Mapping[str, tuple[Tone, str]] = MappingProxyType(
         "manual_discard": ("bad", "cx"),
     }
 )
-REPORT_BADGES: Mapping[str, tuple[Tone, str]] = MappingProxyType(
-    {
-        "QUEUED": ("neutral", "clock"),
-        "COMPACTING": ("running", "loader"),
-        "COMMITTING": ("running", "loader"),
-        "RUNNING": ("running", "loader"),
-        "INDEXING": ("running", "loader"),
-        "FINISHED": ("ok", "ccheck"),
-        "FAILED": ("bad", "cx"),
-    }
-)
 HEALTH_BADGES: Mapping[str, tuple[Tone, str]] = MappingProxyType(
     {"healthy": ("ok", "ccheck"), "flags": ("warn", "alert"), "pending": ("neutral", "clock")}
 )
@@ -137,7 +126,6 @@ BADGE_KINDS: Mapping[str, Mapping[str, tuple[Tone, str]]] = MappingProxyType(
         "attempt": ATTEMPT_BADGES,
         "outcome": OUTCOME_BADGES,
         "experiment": EXPERIMENT_BADGES,
-        "report": REPORT_BADGES,
         "health": HEALTH_BADGES,
     }
 )
@@ -146,7 +134,7 @@ BADGE_KINDS: Mapping[str, Mapping[str, tuple[Tone, str]]] = MappingProxyType(
 def badge_look(
     kind: str, value: str | None, *, word: str | None = None, muted: bool = False
 ) -> BadgeLook | None:
-    """The badge of a campaign state, attempt phase, outcome, experiment state, report state or health value;
+    """The badge of a campaign state, attempt phase, outcome, experiment state or health value;
     None for a kind or value the design does not draw as a badge. ``muted`` gives excluded outcomes the
     neutral fill and secondary text of Results rows."""
     found = BADGE_KINDS.get(kind, {}).get(value) if value is not None else None

@@ -177,7 +177,7 @@ Spanning **225 m² (2,400 sq ft)**.
 <table width="74%" align="center">
   <tr>
     <td width="50%" align="center">
-      <img src="https://raw.githubusercontent.com/mertgulerx/autonomous-exploration-demo-benchmark/main/results/bookstore-sqm225/Chart_AllMetrics.png" alt="bookstore-sqm225/Chart_AllMetrics.png" width="100%" />
+      <img src="https://raw.githubusercontent.com/mertgulerx/autonomous-exploration-demo-benchmark/main/results/outdated/bookstore-sqm225/Chart_AllMetrics.png" alt="bookstore-sqm225/Chart_AllMetrics.png" width="100%" />
     </td>
   </tr>
 </table>
@@ -185,7 +185,7 @@ Spanning **225 m² (2,400 sq ft)**.
 <table width="74%" align="center">
   <tr>
     <td width="50%" align="center">
-      <img src="https://raw.githubusercontent.com/mertgulerx/autonomous-exploration-demo-benchmark/main/results/bookstore-sqm225/Chart_Time.png" alt="bookstore-sqm225/Chart_Time.png" width="100%" />
+      <img src="https://raw.githubusercontent.com/mertgulerx/autonomous-exploration-demo-benchmark/main/results/outdated/bookstore-sqm225/Chart_Time.png" alt="bookstore-sqm225/Chart_Time.png" width="100%" />
     </td>
   </tr>
 </table>
@@ -193,7 +193,7 @@ Spanning **225 m² (2,400 sq ft)**.
 <table width="74%" align="center">
   <tr>
     <td width="50%" align="center">
-      <img src="https://raw.githubusercontent.com/mertgulerx/autonomous-exploration-demo-benchmark/main/results/bookstore-sqm225/Chart_Distance.png" alt="bookstore-sqm225/Chart_Distance.png" width="100%" />
+      <img src="https://raw.githubusercontent.com/mertgulerx/autonomous-exploration-demo-benchmark/main/results/outdated/bookstore-sqm225/Chart_Distance.png" alt="bookstore-sqm225/Chart_Distance.png" width="100%" />
     </td>
   </tr>
 </table>
@@ -201,7 +201,7 @@ Spanning **225 m² (2,400 sq ft)**.
 <table width="74%" align="center">
   <tr>
     <td width="50%" align="center">
-      <img src="https://raw.githubusercontent.com/mertgulerx/autonomous-exploration-demo-benchmark/main/results/bookstore-sqm225/Chart_SingleCoreCPU.png" alt="bookstore-sqm225/Chart_SingleCoreCPU.png" width="100%" />
+      <img src="https://raw.githubusercontent.com/mertgulerx/autonomous-exploration-demo-benchmark/main/results/outdated/bookstore-sqm225/Chart_SingleCoreCPU.png" alt="bookstore-sqm225/Chart_SingleCoreCPU.png" width="100%" />
     </td>
   </tr>
 </table>
@@ -209,7 +209,7 @@ Spanning **225 m² (2,400 sq ft)**.
 <table width="74%" align="center">
   <tr>
     <td width="50%" align="center">
-      <img src="https://raw.githubusercontent.com/mertgulerx/autonomous-exploration-demo-benchmark/main/results/bookstore-sqm225/Chart_RAM.png" alt="bookstore-sqm225/Chart_RAM.png" width="100%" />
+      <img src="https://raw.githubusercontent.com/mertgulerx/autonomous-exploration-demo-benchmark/main/results/outdated/bookstore-sqm225/Chart_RAM.png" alt="bookstore-sqm225/Chart_RAM.png" width="100%" />
     </td>
   </tr>
 </table>
@@ -269,7 +269,7 @@ Spanning **1,500 m² (16,000 sq ft)**.
 <table width="74%" align="center">
   <tr>
     <td width="50%" align="center">
-      <img src="https://raw.githubusercontent.com/mertgulerx/autonomous-exploration-demo-benchmark/main/results/warehouse-sqm1500/Chart_AllMetrics.png" alt="warehouse-sqm1500/Chart_AllMetrics.png" width="100%" />
+      <img src="https://raw.githubusercontent.com/mertgulerx/autonomous-exploration-demo-benchmark/main/results/outdated/warehouse-sqm1500/Chart_AllMetrics.png" alt="warehouse-sqm1500/Chart_AllMetrics.png" width="100%" />
     </td>
   </tr>
 </table>
@@ -277,7 +277,7 @@ Spanning **1,500 m² (16,000 sq ft)**.
 <table width="74%" align="center">
   <tr>
     <td width="50%" align="center">
-      <img src="https://raw.githubusercontent.com/mertgulerx/autonomous-exploration-demo-benchmark/main/results/warehouse-sqm1500/Chart_Time.png" alt="warehouse-sqm1500/Chart_Time.png" width="100%" />
+      <img src="https://raw.githubusercontent.com/mertgulerx/autonomous-exploration-demo-benchmark/main/results/outdated/warehouse-sqm1500/Chart_Time.png" alt="warehouse-sqm1500/Chart_Time.png" width="100%" />
     </td>
   </tr>
 </table>
@@ -285,7 +285,7 @@ Spanning **1,500 m² (16,000 sq ft)**.
 <table width="74%" align="center">
   <tr>
     <td width="50%" align="center">
-      <img src="https://raw.githubusercontent.com/mertgulerx/autonomous-exploration-demo-benchmark/main/results/warehouse-sqm1500/Chart_Distance.png" alt="warehouse-sqm1500/Chart_Distance.png" width="100%" />
+      <img src="https://raw.githubusercontent.com/mertgulerx/autonomous-exploration-demo-benchmark/main/results/outdated/warehouse-sqm1500/Chart_Distance.png" alt="warehouse-sqm1500/Chart_Distance.png" width="100%" />
     </td>
   </tr>
 </table>
@@ -293,7 +293,7 @@ Spanning **1,500 m² (16,000 sq ft)**.
 <table width="74%" align="center">
   <tr>
     <td width="50%" align="center">
-      <img src="https://raw.githubusercontent.com/mertgulerx/autonomous-exploration-demo-benchmark/main/results/warehouse-sqm1500/Chart_SingleCoreCPU.png" alt="warehouse-sqm1500/Chart_SingleCoreCPU.png" width="100%" />
+      <img src="https://raw.githubusercontent.com/mertgulerx/autonomous-exploration-demo-benchmark/main/results/outdated/warehouse-sqm1500/Chart_SingleCoreCPU.png" alt="warehouse-sqm1500/Chart_SingleCoreCPU.png" width="100%" />
     </td>
   </tr>
 </table>
@@ -301,7 +301,7 @@ Spanning **1,500 m² (16,000 sq ft)**.
 <table width="74%" align="center">
   <tr>
     <td width="50%" align="center">
-      <img src="https://raw.githubusercontent.com/mertgulerx/autonomous-exploration-demo-benchmark/main/results/warehouse-sqm1500/Chart_RAM.png" alt="warehouse-sqm1500/Chart_RAM.png" width="100%" />
+      <img src="https://raw.githubusercontent.com/mertgulerx/autonomous-exploration-demo-benchmark/main/results/outdated/warehouse-sqm1500/Chart_RAM.png" alt="warehouse-sqm1500/Chart_RAM.png" width="100%" />
     </td>
   </tr>
 </table>
@@ -356,7 +356,7 @@ The `Corridor` environment demonstrates exploration challenges in a **confusing 
 <table width="74%" align="center">
   <tr>
     <td width="50%" align="center">
-      <img src="https://raw.githubusercontent.com/mertgulerx/autonomous-exploration-demo-benchmark/main/results/corridor/Chart_AllMetrics.png" alt="corridor/Chart_AllMetrics.png" width="100%" />
+      <img src="https://raw.githubusercontent.com/mertgulerx/autonomous-exploration-demo-benchmark/main/results/outdated/corridor/Chart_AllMetrics.png" alt="corridor/Chart_AllMetrics.png" width="100%" />
     </td>
   </tr>
 </table>
@@ -364,7 +364,7 @@ The `Corridor` environment demonstrates exploration challenges in a **confusing 
 <table width="74%" align="center">
   <tr>
     <td width="50%" align="center">
-      <img src="https://raw.githubusercontent.com/mertgulerx/autonomous-exploration-demo-benchmark/main/results/corridor/Chart_Time.png" alt="corridor/Chart_Time.png" width="100%" />
+      <img src="https://raw.githubusercontent.com/mertgulerx/autonomous-exploration-demo-benchmark/main/results/outdated/corridor/Chart_Time.png" alt="corridor/Chart_Time.png" width="100%" />
     </td>
   </tr>
 </table>
@@ -372,7 +372,7 @@ The `Corridor` environment demonstrates exploration challenges in a **confusing 
 <table width="74%" align="center">
   <tr>
     <td width="50%" align="center">
-      <img src="https://raw.githubusercontent.com/mertgulerx/autonomous-exploration-demo-benchmark/main/results/corridor/Chart_Distance.png" alt="corridor/Chart_Distance.png" width="100%" />
+      <img src="https://raw.githubusercontent.com/mertgulerx/autonomous-exploration-demo-benchmark/main/results/outdated/corridor/Chart_Distance.png" alt="corridor/Chart_Distance.png" width="100%" />
     </td>
   </tr>
 </table>
@@ -380,7 +380,7 @@ The `Corridor` environment demonstrates exploration challenges in a **confusing 
 <table width="74%" align="center">
   <tr>
     <td width="50%" align="center">
-      <img src="https://raw.githubusercontent.com/mertgulerx/autonomous-exploration-demo-benchmark/main/results/corridor/Chart_SingleCoreCPU.png" alt="corridor/Chart_SingleCoreCPU.png" width="100%" />
+      <img src="https://raw.githubusercontent.com/mertgulerx/autonomous-exploration-demo-benchmark/main/results/outdated/corridor/Chart_SingleCoreCPU.png" alt="corridor/Chart_SingleCoreCPU.png" width="100%" />
     </td>
   </tr>
 </table>
@@ -388,7 +388,7 @@ The `Corridor` environment demonstrates exploration challenges in a **confusing 
 <table width="74%" align="center">
   <tr>
     <td width="50%" align="center">
-      <img src="https://raw.githubusercontent.com/mertgulerx/autonomous-exploration-demo-benchmark/main/results/corridor/Chart_RAM.png" alt="corridor/Chart_RAM.png" width="100%" />
+      <img src="https://raw.githubusercontent.com/mertgulerx/autonomous-exploration-demo-benchmark/main/results/outdated/corridor/Chart_RAM.png" alt="corridor/Chart_RAM.png" width="100%" />
     </td>
   </tr>
 </table>

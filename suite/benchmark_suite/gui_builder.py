@@ -74,10 +74,12 @@ class StepCards(QtWidgets.QWidget):
 
     def relayout(self) -> None:
         width = self.width()
-        top = self.execution.natural_height()
-        height = max(top + 16 + self.study.natural_height(), self.summary.natural_height())
-        self.setMinimumHeight(height)
         side = self.side.resolve(420, 340, width - 16 - 520)
+        # the Campaign and Study cards' width: their rows may stack below a narrow one
+        cards = int(width - side - 16)
+        top = self.execution.natural_height(cards)
+        height = max(top + 16 + self.study.natural_height(cards), self.summary.natural_height())
+        self.setMinimumHeight(height)
         place(self.execution, 0, 0, width - side - 16, top)
         place(self.study, 0, top + 16, width - side - 16, height - top - 16)
         place(self.summary, width - side, 0, side, height)
@@ -137,6 +139,7 @@ class CampaignBuilder(QtWidgets.QWidget):
         execution_page = StepCards(themes, self.execution, self.study_form, self.summary)
         # The studies a campaign can join (studies.list): ID -> row (evidence levels, plan, last repetition)
         self.studies: dict[str, dict[str, Any]] = {}
+        self.last_kind = UNASSIGNED_STUDY  # the Study card's kind before the latest change
         self.studies_tag = ""
         self.plan_tag = ""
         self.plan_timer = QtCore.QTimer(self)
@@ -281,10 +284,18 @@ class CampaignBuilder(QtWidgets.QWidget):
         self.update_summary()
 
     def study_kind(self, kind: int) -> None:
-        """Choosing Existing study takes the shown study's level and plan (its select may not change)."""
+        """Choosing Existing study takes the shown study's level and plan (its select may not change); leaving
+        it for a new study drops them, so a new study never inherits another one's plan."""
+        previous, self.last_kind = self.last_kind, kind
         if kind == EXISTING_STUDY:
             self.study_picked(self.study_form.existing.currentIndex())
         else:
+            if (
+                previous == EXISTING_STUDY
+            ):  # also through Unassigned: a later new study starts clean
+                self.study_form.evidence.set_index(0)
+                self.study_form.plan.setText("")
+            self.read_plan()  # the hash follows the kind (none for Unassigned)
             self.invalidate()
 
     def study_picked(self, index: int) -> None:
@@ -292,17 +303,43 @@ class CampaignBuilder(QtWidgets.QWidget):
         row = self.studies.get(str(self.study_form.existing.itemData(index) or ""))
         if row is not None:
             levels = row.get("evidence_levels") or []
-            self.study_form.evidence.set_index(1 if "confirmatory" in levels else 0)
+            level = row.get("evidence_level") or (
+                "confirmatory" if "confirmatory" in levels else ""
+            )
+            self.study_form.evidence.set_index(1 if level == "confirmatory" else 0)
             self.study_form.plan.setText(str(row.get("plan") or ""))
         self.invalidate()
 
+    def validated_first(self, identity: str) -> int | None:
+        """The first repetition (0-based) the engine assigned to this study at the last Validate, while the form
+        still equals what was validated: it also knows studies whose campaigns were deleted."""
+        study = (self.validated or {}).get("study")
+        try:
+            unchanged = self.validated_design is not None and self.design() == self.validated_design
+        except ValueError:
+            unchanged = False
+        if unchanged and isinstance(study, dict) and study.get("id") == identity:
+            first = study.get("first_repetition")
+            return first if isinstance(first, int) else None
+        return None
+
+    def known_study(self, identity: str) -> bool:
+        """The study has blocks already (listed, or numbered past 1 by the engine)."""
+        return identity in self.studies or bool(self.validated_first(identity))
+
     def study_range(self) -> str:
-        """ "· study repetitions 1–5": the numbers this campaign's repetitions take in its study (RD-30)."""
+        """ "· study repetitions 1–5": the numbers this campaign's repetitions take in its study (RD-30); the
+        engine's numbers once validated, the studies list's estimate before."""
         identity = self.study_id()
         if identity is None:
             return ""
+        validated = self.validated_first(identity)
         last = (self.studies.get(identity) or {}).get("last_repetition")
-        first = (last + 1 if isinstance(last, int) else 0) + 1
+        first = (
+            validated + 1
+            if validated is not None
+            else (last + 1 if isinstance(last, int) else 0) + 1
+        )
         return f"· study repetitions {first}–{first + self.repetitions.value() - 1}"
 
     def choose_plan(self) -> None:
@@ -323,6 +360,7 @@ class CampaignBuilder(QtWidgets.QWidget):
         submission, from its own checkout)."""
         plan = self.study_form.plan.text().strip()
         if not plan or self.study_form.kind.index() == UNASSIGNED_STUDY:
+            self.plan_tag = ""  # a read still in flight no longer sets the hash
             self.study_form.set_hash("")
             return
         self.plan_tag = "builder-plan-" + uuid.uuid4().hex
@@ -380,13 +418,15 @@ class CampaignBuilder(QtWidgets.QWidget):
         form = self.study_form
         identity = self.study_id()
         kind = form.kind.index()
-        if kind == UNASSIGNED_STUDY or identity is None:
+        if kind == UNASSIGNED_STUDY:
             study = "Unassigned"
+        elif identity is None:
+            study = "ID missing"
         else:
-            study = f"{identity} · " + ("existing" if identity in self.studies else "new")
+            study = f"{identity} · " + ("existing" if self.known_study(identity) else "new")
         evidence = (
             "—"
-            if kind == UNASSIGNED_STUDY
+            if kind == UNASSIGNED_STUDY or identity is None
             else form.evidence.segments[form.evidence.index()].text()
         )
         return (
@@ -668,6 +708,7 @@ class CampaignBuilder(QtWidgets.QWidget):
         else:
             form.kind.set_index(UNASSIGNED_STUDY)
             form.plan.setText("")
+        self.last_kind = form.kind.index()
         self.invalidate()
         self.show_step(0)
 
@@ -740,6 +781,7 @@ class CampaignBuilder(QtWidgets.QWidget):
             self.validated = specification
             self.validated_design = design
             self.pending_design = None
+            self.update_summary()  # the study range now has the engine's numbers
             self.show_accepted(specification, result.get("timing_retry"))
             if imported:  # the import lands on step 1, away from the accepted campaign card
                 self.set_message(
@@ -756,6 +798,7 @@ class CampaignBuilder(QtWidgets.QWidget):
                 "Campaign added to the queue. Open Campaigns and press Start to execute.",
                 "success",
             )
+            self.load_studies()  # the study's numbering moved on
             self.transport.received.emit("submit", result)
         elif tag == self.import_tag:
             from .yaml_io import load_mapping
@@ -818,7 +861,7 @@ class CampaignBuilder(QtWidgets.QWidget):
             timing_retry,
             self.labels("worlds"),
             self.spawn_label,
-            lambda identity: identity in self.studies,
+            self.known_study,
         )
         maps = {}
         for world in facts.worlds:

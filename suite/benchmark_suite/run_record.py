@@ -34,7 +34,17 @@ import pyarrow.parquet as pq
 
 from .contracts import average_speed, content_hash
 from .datasets import files, iter_rows, materialize_manifest, recorded_version
-from .explorer_log import ClockMap, decision_rows, match, parse, read_text
+from .explorer_log import (
+    ClockMap,
+    Structured,
+    cancels_by_dispatch,
+    decision_rows,
+    gate_rows,
+    goals_by_dispatch,
+    match,
+    parse,
+    read_text,
+)
 from .goal_facts import PREEMPTED, GoalAccumulator
 from .monitoring import PathSettings, base_pose, path_break
 from .run_map import GROUND_TRUTH_OFFSET, finite, triple
@@ -45,6 +55,8 @@ RUN_RECORD_VERSION = 1
 ELIGIBILITY_VERSION = "eligibility-v2"
 REPORT_POLICY = "reported-outcomes-v2"
 DERIVED_VERSION = 1
+# Goal statuses the explorer itself causes (a cancel request or a replacement goal).
+ENDED_BY_EXPLORER = frozenset({"canceled", "preempted"})
 MILESTONES = (25, 50, 75, 90, 95)
 STALL_DELTA_PP = 0.1  # stall-v1 (RESULTS_RESEARCH RD-18)
 MOTION_GAP_NS = 500_000_000  # eligibility-v2: largest interval between valid trajectory rows
@@ -725,8 +737,11 @@ def _goal_rows(
     manifest: dict[str, Any],
     clocks: tuple[int | None, int | None, int | None],
     log_format: int,
+    cancels: dict[int, Structured],
 ) -> list[dict[str, Any]]:
-    """The ``goals`` table (RD-28): measured goal facts with the explorer's dispatch fields."""
+    """The ``goals`` table (RD-28): measured goal facts with the explorer's dispatch fields and, from log
+    format 2, for a goal the explorer ended (canceled or preempted), the reason of its last cancel or
+    replace line with that line's gate value."""
     origin_ns, activation_ns, end_ns = clocks
     alignment = triple(
         ((manifest.get("coverage") or {}).get("alignment") or {}).get("world_from_map")
@@ -746,6 +761,12 @@ def _goal_rows(
             )
         near = list(_near(positions, start, end))
         dispatch = pairs.get(sequence)
+        # the explorer's reason, only for a goal its cancel or replacement ended (not one Nav2 finished)
+        ended = (
+            cancels.get(dispatch.dispatch_id)
+            if dispatch and dispatch.dispatch_id is not None and fact["status"] in ENDED_BY_EXPLORER
+            else None
+        )
         rows.append(
             dict(
                 goal_sequence=sequence,
@@ -774,8 +795,8 @@ def _goal_rows(
                 dispatch_x=dispatch.dispatch_x if dispatch else None,
                 dispatch_y=dispatch.dispatch_y if dispatch else None,
                 frontier_size=dispatch.frontier_size if dispatch else None,
-                cancel_reason=None,
-                gate_value=None,
+                cancel_reason=ended.fields.get("reason") if ended else None,
+                gate_value=ended.number("gate_value") if ended else None,
                 log_format=log_format,
             )
         )
@@ -930,8 +951,8 @@ def measure(payload: dict[str, Any]) -> dict[str, Any]:
         quality_flags=sorted(quality_flags),
         event_clock_valid=version >= 10,
     )
-    # The explorer log: exit facts, and dispatches paired with Nav2 goals (parser v1). Rejected goals take
-    # part in the pairing, so a rejected dispatch never pairs with the next goal.
+    # The explorer log: exit facts, and dispatches paired with Nav2 goals (the parser of suite image 27 reads log formats 1
+    # and 2). Rejected goals take part in the pairing, so a rejected dispatch never pairs with the next goal.
     log = parse(read_text(directory))
     clock = ClockMap(
         (
@@ -983,6 +1004,7 @@ def measure(payload: dict[str, Any]) -> dict[str, Any]:
                 manifest,
                 (origin_ns, activation_ns, end_ns),
                 log.version,
+                cancels_by_dispatch(log),
             ),
             GOALS_SCHEMA,
         ),
@@ -992,6 +1014,11 @@ def measure(payload: dict[str, Any]) -> dict[str, Any]:
             decision_rows(log, clock, origin_ns, activation_ns),
             DECISIONS_SCHEMA,
         ),
-        _write_table(directory, "gate_evaluations", [], GATES_SCHEMA),
+        _write_table(
+            directory,
+            "gate_evaluations",
+            gate_rows(log, clock, origin_ns, activation_ns, goals_by_dispatch(pairs)),
+            GATES_SCHEMA,
+        ),
     ]
     return dict(fields=record, derived=derived, cost=dict(cpu_s=time.process_time() - started))

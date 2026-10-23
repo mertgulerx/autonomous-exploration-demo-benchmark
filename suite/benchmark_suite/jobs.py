@@ -52,10 +52,6 @@ def execute(connection: Connection, operation: str, payload: dict[str, Any], tok
 
             commit_compaction(payload)
             result = {"committed": True}
-        elif operation == "report":
-            from .reports import generate
-
-            result = generate(payload)
         elif operation == "run_map":
             from .run_map import build
 

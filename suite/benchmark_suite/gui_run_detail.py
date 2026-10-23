@@ -112,6 +112,9 @@ class RunMapState:
     attempt_id: str | None = None
     cursor: PathCursor = field(default_factory=PathCursor)
     first: dict[str, Any] = field(default_factory=dict)
+    ready: bool = (
+        False  # the whole map arrived; anything else is asked again when the run is reopened
+    )
 
 
 class RunMapLoader(QtCore.QObject):
@@ -138,7 +141,7 @@ class RunMapLoader(QtCore.QObject):
         return self.state.attempt_id
 
     def show_attempt(self, identity: str | None, empty_text: str = "") -> None:
-        if identity == self.state.attempt_id and identity is not None:
+        if identity == self.state.attempt_id and identity is not None and self.state.ready:
             return
         self.clear()
         self.state.attempt_id = identity
@@ -219,6 +222,7 @@ class RunMapLoader(QtCore.QObject):
             tail = result.get("tail")
             self.layers.tail = (float(tail[0]), float(tail[1])) if tail else None
             self.layers.pose = self.end_pose()
+            self.state.ready = True
             self.status.emit(self.summary(result), True)
         self.view.set_layers(self.layers)
 
@@ -434,7 +438,7 @@ class TimeAxis:
         return [(self.left, self.linear_end), (self.linear_end + self.GAP, self.right)]
 
     def ticks(self) -> list[float]:
-        count = int(round(self.split / self.step))
+        count = math.floor(self.split / self.step + 1e-9)  # never a tick past L
         return [index * self.step for index in range(count + 1)]
 
 
@@ -543,11 +547,24 @@ class RunCharts(Themed):
         return TimeAxis.of(self.end_s(), self.limit_s(), left, right)
 
     def carried_forward(self) -> bool:
-        """A completed run's final value is carried forward to L (the defined carry-forward, RD-6)."""
+        """A completed run's final value is carried forward to L (the defined carry-forward, RD-6), from its
+        last sample, never across a final gap (as F1 and the traces)."""
+        completion = number(self.record.get("completion_s"))
+        last = next(
+            (
+                number(row[0])
+                for row in reversed(rows_of((self.timeline or {}).get("coverage"), 3))
+                if number(row[0]) is not None and number(row[1]) is not None
+            ),
+            None,
+        )
         return (
             self.record.get("outcome") == "completed"
             and self.record.get("completion_event") is True
             and self.limit_s() is not None
+            and completion is not None
+            and last is not None
+            and completion - last <= GAP_S
         )
 
     def goal_counts(self) -> tuple[int, int, int, int]:
@@ -609,7 +626,7 @@ class RunCharts(Themed):
         if rows_of(timeline.get("gates"), 4):
             dispatches += [
                 (lambda p, x, y: self._gate_swatch(p, x, y, False), "Gate kept goal"),
-                (lambda p, x, y: self._gate_swatch(p, x, y, True), "Gate switched"),
+                (lambda p, x, y: self._gate_swatch(p, x, y, True), "Gain exhausted"),
             ]
         dp = [
             (lambda p, x, y: self._line_swatch(p, x, y, "data.analysis", 1.6), "Pool"),
@@ -849,6 +866,13 @@ class RunCharts(Themed):
         x = axis.x(axis.limit)
         painter.drawLine(QtCore.QPointF(x, top), QtCore.QPointF(x, bottom))
 
+    def _clip(self, painter: QtGui.QPainter, axis: TimeAxis, height: int) -> None:
+        """Data stays on its plot: rows before the time origin (pre-motion coverage, goals sent before the
+        first movement) are cut at the axis' left edge, never drawn over the value labels."""
+        painter.setClipRect(
+            QtCore.QRectF(axis.left - 2.5, -4, axis.right - axis.left + 9, height + 8)
+        )
+
     def _baseline(self, painter: QtGui.QPainter, axis: TimeAxis, height: int) -> None:
         painter.fillRect(
             QtCore.QRectF(axis.left, height - 1.5, axis.linear_end - axis.left, 1),
@@ -863,14 +887,19 @@ class RunCharts(Themed):
 
     def _coverage(self, painter: QtGui.QPainter, axis: TimeAxis, height: int) -> None:
         y = self._frame(painter, axis, height, 14, 6, 100, (0, 25, 50, 75, 100), lambda v: f"{v:g}")
+        self._clip(painter, axis, height)
         coverage = self.color("data.coverage")
         timeline = self.timeline or {}
         segments: list[list[QtCore.QPointF]] = [[]]
         samples: list[tuple[float, float]] = []  # the drawn samples, (s, %)
         previous: float | None = None
+        # A thinned series (every k-th sample) carries its gaps as null rows from the engine
+        # (timelines.thinned_coverage), so its own spacing is never a gap; an unthinned one gets the 2 s rule.
+        thinned = int((timeline.get("every_kth") or {}).get("coverage") or 1) > 1
+        gap = math.inf if thinned else GAP_S
         for row in rows_of(timeline.get("coverage"), 3):
             t, value = number(row[0]), number(row[1])
-            if t is None or value is None or (previous is not None and t - previous > GAP_S):
+            if t is None or value is None or (previous is not None and t - previous > gap):
                 if segments[-1]:
                     segments.append([])
                 if t is None or value is None:
@@ -912,6 +941,9 @@ class RunCharts(Themed):
             painter.setPen(dashed)
             painter.drawLine(end, QtCore.QPointF(axis.x(axis.limit), end.y()))
             completion = number(self.record.get("completion_s"))
+            painter.setClipping(
+                False
+            )  # the label may reach past the plot's edge, as before the clip
             self._label(
                 painter,
                 end.x() + 8,
@@ -951,6 +983,7 @@ class RunCharts(Themed):
             )
 
     def _goals(self, painter: QtGui.QPainter, axis: TimeAxis, height: int) -> None:
+        self._clip(painter, axis, height)
         self._limit(painter, axis, 2, height - 2)
         self._baseline(painter, axis, height)
         goals = (self.timeline or {}).get("goals")
@@ -971,6 +1004,7 @@ class RunCharts(Themed):
             painter.drawRoundedRect(QtCore.QRectF(x0 + 0.8, 8, max(2.0, x1 - x0 - 1.6), 16), 2, 2)
 
     def _dispatches(self, painter: QtGui.QPainter, axis: TimeAxis, height: int) -> None:
+        self._clip(painter, axis, height)
         self._limit(painter, axis, 2, height - 2)
         self._baseline(painter, axis, height)
         timeline = self.timeline or {}
@@ -986,7 +1020,12 @@ class RunCharts(Themed):
             if seconds is None:
                 continue
             x = axis.x(seconds)
-            if result == "switched":
+            # log format 2: "exhausted" (the explorer cancels the goal, or waits out the minimum interval)
+            # and "keep"/"keep_small_cluster"; an "unavailable" gate decides nothing (the snapshot does), so
+            # it gets no mark
+            if result == "unavailable":
+                continue
+            if result == "exhausted":
                 painter.setPen(QtCore.Qt.PenStyle.NoPen)
                 painter.setBrush(self.color("text.ink"))
                 painter.drawRoundedRect(QtCore.QRectF(x - 1.6, 26, 3.2, 10), 1, 1)
@@ -1025,6 +1064,7 @@ class RunCharts(Themed):
         y = self._frame(
             painter, axis, height, 6, 6, maximum, (0, maximum / 2, maximum), lambda v: f"{v:g}"
         )
+        self._clip(painter, axis, height)
         if not timeline.get("analysis_recorded") or not rows:
             self._note(painter, axis, height, "No explorer insight was recorded for this run")
             return
@@ -1060,6 +1100,7 @@ class RunCharts(Themed):
         if not any(series):
             self._note(painter, axis, height - 14, "No speed samples were recorded")
             return
+        self._clip(painter, axis, height)
         odometry = QtGui.QPen(self.color("text.secondary"), 1.5)
         odometry.setDashPattern([3 / 1.5, 2 / 1.5])
         ground = QtGui.QPen(self.color("data.path"), 1.5)
@@ -1295,13 +1336,14 @@ def provenance_columns(
 
 
 def value_at(samples: Sequence[tuple[float, float]], seconds: float, fallback: float) -> float:
-    """The drawn coverage line's value at ``seconds``: the sample there, else the straight segment between its
-    neighbours; ``fallback`` outside the samples."""
+    """The drawn coverage line's value at ``seconds``: the sample there (times are sent to the millisecond),
+    else the straight segment between its neighbours; ``fallback`` outside the samples."""
+    near = min(samples, key=lambda sample: abs(sample[0] - seconds), default=None)
+    if near is not None and abs(near[0] - seconds) <= 5e-4:
+        return near[1]
     for (t0, v0), (t1, v1) in zip(samples, samples[1:]):
         if t0 <= seconds <= t1:
             return v0 if t1 == t0 else v0 + (v1 - v0) * (seconds - t0) / (t1 - t0)
-    if samples and abs(samples[-1][0] - seconds) < 1e-6:
-        return samples[-1][1]
     return fallback
 
 

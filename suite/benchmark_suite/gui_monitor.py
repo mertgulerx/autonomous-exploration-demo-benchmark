@@ -164,6 +164,32 @@ VALUE_COLUMNS = (72.0, 64.0, 72.0)  # ``.m3``: 16 px apart, right-aligned
 WAIT_WIDTH = 256.0
 
 
+def record_metrics(record: dict[str, Any]) -> dict[str, Any]:
+    """A finished run's final values for its replay, from its run record (results come from records since
+    R7, RD-44): what the measurements show before the first replay frame and the coverage milestones on the
+    timeline; values the record does not hold stay unavailable."""
+    elapsed = record.get("elapsed_s")
+    return {
+        "coverage_percent": record.get("coverage_final_pct"),
+        "coverage_covered_m2": record.get("covered_m2"),
+        "coverage_target_m2": record.get("reference_free_m2"),
+        "distance_m": record.get("odom_distance_m"),
+        "simulation_elapsed": elapsed,
+        "motion_started": record.get("motion_started", elapsed is not None),
+        "quality_flags": list(record.get("quality_flags") or []),
+        # reached (its time), right-censored (not reached), or absent when the record holds neither
+        "coverage_milestones": [
+            {
+                "percent": share,
+                "reached": record.get(f"t{share}_event") is True,
+                "simulation_elapsed": record.get(f"t{share}_s"),
+            }
+            for share in (25, 50, 75, 90, 95)
+            if record.get(f"t{share}_event") is not None
+        ],
+    }
+
+
 class WorkerCard(Themed, CssBox):
     """``.wk``: a 72 px card (padding 0 20, radius 8; the selected one with a 2 px ink edge): the worker tag,
     robot (14/600), attempt badge and the experiment in ``text.secondary``; at the right Coverage, Sim time
@@ -702,7 +728,7 @@ class RunCard(Card):
             button.setEnabled(False)
         self.stop = Button(themes, "Stop run", icon="stop", variant="danger", parent=self)
         self.stop.setToolTip(
-            "End the selected run; its data is kept and campaign reports exclude it"
+            "End the selected run; its data is kept and the study's statistics leave it out"
         )
         self.stop.setEnabled(False)
         # Map & metrics and Decisions share the map pane (only its right column changes).
@@ -859,7 +885,7 @@ def confirm_stop_run(modal: ModalHost, themes: ThemeManager, context: str) -> bo
     card.add_bullets(
         [
             bullet("The run ends as ", stopped, "; its recorded data is kept for inspection."),
-            bullet("It is excluded from campaign reports and statistics and is not run again."),
+            bullet("The study's statistics leave it out (counted), and it is not run again."),
             bullet("The campaign continues with the next experiment."),
         ]
     )
@@ -1441,7 +1467,9 @@ class MonitorPage(QtWidgets.QWidget):
         """Replay a finished attempt chosen on Results: its attempt and experiment rows first."""
         self.pending_replay = attempt_id
         self.transport.submit(
-            "replay-attempt:" + attempt_id, "results.get", {"table": "attempts", "id": attempt_id}
+            "replay-attempt:" + attempt_id,
+            "results.get",
+            {"table": "attempts", "id": attempt_id, "include": ["record"]},
         )
 
     def _replay_lookup_failed(self, error: str) -> None:
@@ -1453,7 +1481,7 @@ class MonitorPage(QtWidgets.QWidget):
         run = {
             "attempt": attempt,
             "experiment": experiment,
-            "metrics": attempt.get("metrics") or {},
+            "metrics": record_metrics(attempt.get("record") or {}),
         }
         self.close_monitor()
         self.selected_attempt = None

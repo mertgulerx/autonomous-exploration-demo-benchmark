@@ -32,8 +32,12 @@ def duration(seconds: Any) -> str:
     return f"{hours}:{minutes:02d}:{seconds:02d}" if hours else f"{minutes}:{seconds:02d}"
 
 
+# Values whose words differ from their names: REPORTING kept its name when the report stage went (RO-13, R7)
+WORDS = {"REPORTING": "Finalizing"}
+
+
 def humanize(value: str) -> str:
-    return value.replace("_", " ").strip().capitalize()
+    return WORDS.get(value) or value.replace("_", " ").strip().capitalize()
 
 
 def finite(value: object) -> bool:

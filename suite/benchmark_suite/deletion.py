@@ -23,6 +23,8 @@ from collections.abc import Iterator
 import json
 import os
 from pathlib import Path
+import re
+import sqlite3
 import time
 from typing import Any
 import uuid
@@ -241,3 +243,63 @@ class Remover:
             path.rmdir()
         except FileNotFoundError:
             pass
+
+
+DIGEST = re.compile(r"[0-9a-f]{64}")
+HEX_RUN = re.compile(r"[0-9a-f]{64,}")
+
+
+def digests_in(text: str) -> set[str]:
+    """Every 64-character window of every hex run in ``text`` (a digest inside a longer run counts too)."""
+    return {run[i : i + 64] for run in HEX_RUN.findall(text) for i in range(len(run) - 63)}
+
+
+def referenced_digests(workspace: Path, database: sqlite3.Connection) -> set[str]:
+    """Every SHA-256 the store or an attempt's JSON files name: the objects anything may still read.
+
+    Deliberately broad (any 64-hex text in any row or attempt JSON file counts), so an object is collected
+    only when nothing could name it; a hash that is not an object's keeps nothing alive but costs nothing.
+    """
+    found: set[str] = set()
+    tables = [
+        row[0]
+        for row in database.execute("SELECT name FROM sqlite_master WHERE type='table'")
+        if not str(row[0]).startswith("sqlite_")
+    ]
+    for table in tables:
+        for row in database.execute(f'SELECT * FROM "{table}"'):
+            for value in row:
+                if isinstance(value, str) and len(value) >= 64:
+                    found.update(digests_in(value))
+    attempts = workspace / "attempts"
+    if attempts.is_dir():
+        for path in attempts.glob("*/*.json"):
+            found.update(digests_in(path.read_text(encoding="utf-8", errors="replace")))
+    return found
+
+
+def collect_objects(workspace: Path, database: sqlite3.Connection) -> tuple[int, int]:
+    """Remove the shared objects (``objects/<xx>/<digest>[.json]``) nothing names any more, and the empty
+    folders they leave: (objects removed, bytes freed). The engine calls it after a deletion, in its own
+    thread and only while no run, finalization, export or removal is under way, so no new reference can
+    appear meanwhile (RESULTS_OVERHAUL §9, RD-44; R7)."""
+    root = workspace / "objects"
+    if not root.is_dir():
+        return 0, 0
+    keep = referenced_digests(workspace, database)
+    removed = freed = 0
+    for folder in sorted(root.iterdir()):
+        if not folder.is_dir() or folder.is_symlink():
+            continue
+        for path in sorted(folder.iterdir()):
+            digest = path.name.removesuffix(".json")
+            if path.is_symlink() or not path.is_file() or not DIGEST.fullmatch(digest):
+                continue  # only content objects are ever collected
+            if digest not in keep:
+                freed += os.lstat(path).st_blocks * 512
+                path.unlink()
+                removed += 1
+        if not any(folder.iterdir()):
+            folder.rmdir()
+        sync_directory(folder.parent)
+    return removed, freed

@@ -14,11 +14,11 @@
 
 """Comparison key: the stratum within which profiles are compared and paired.
 
-Version 1 is the hash the report job computes (``report_data.comparison_identity``). Version 2
-(docs/MEASUREMENTS.md, "Comparison key version 2"; D-31) hashes the same parts, but the runtime identity keys
-checkout commits by repository role instead of by absolute path, so the same code run from another directory
-or host forms the same stratum. Runtime identities recorded from 22 October 2026 already use roles; for them
-both versions give the same key.
+Version 1 is the hash the retired report job computed (``report_data.comparison_identity``, removed in R7).
+Version 2 (docs/MEASUREMENTS.md, "Comparison key version 2"; D-31) hashes the same parts, but the runtime
+identity keys checkout commits by repository role instead of by absolute path, so the same code run from
+another directory or host forms the same stratum. Runtime identities recorded from 22 October 2026 already
+use roles; for them both versions give the same key.
 """
 
 from collections.abc import Mapping

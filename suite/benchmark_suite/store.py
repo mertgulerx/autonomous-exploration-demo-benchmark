@@ -44,6 +44,7 @@ TUNING_CAMPAIGN = "coalesce(json_extract(specification,'$.tuning'),0)=1"
 # Operational database version: 1 until the Results overhaul; 2 adds provenance and run records.
 STORE_VERSION = 2
 # Campaign states that own execution or recovery (the engine reads them at start).
+BUSY_TIMEOUT_MS = 5000  # how long a statement waits for another connection's lock
 ACTIVE_STATES = ("RUNNING", "RETRYING", "PAUSING", "PAUSED", "STOPPING", "BLOCKED", "REPORTING")
 # Campaign states whose runs or recovery need the engine image that recorded them: the store is not
 # upgraded while a campaign is in one of them.
@@ -165,8 +166,6 @@ ATTENTION_RANK = (
 CAMPAIGN_SORT_KEYS = frozenset(
     {"name", "state", "count", "report_state", "created_ns", "attention"}
 )
-# Metrics copied into attempt summaries (``results.query`` with ``summary``).
-SUMMARY_METRICS = ("coverage_percent", "simulation_elapsed", "distance_m")
 
 
 def upgrade_blockers(workspace: Path) -> int:
@@ -255,7 +254,7 @@ class Store:
             self.db.execute("PRAGMA foreign_keys=ON")
             self.db.execute("PRAGMA journal_mode=WAL")
             self.db.execute("PRAGMA synchronous=FULL")
-            self.db.execute("PRAGMA busy_timeout=5000")
+            self.db.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
             version = self._version()
             if version == 1:
                 self._upgrade_from_1()
@@ -601,10 +600,6 @@ class Store:
             selection = ",".join(("a." if table == "attempts" else "") + field for field in fields)
             if table == "attempts":
                 selection += ",e.robot_id,e.world_id,e.profile_id,e.profile_name,e.spawn_id,e.spawn_name,e.repetition"
-                # Values a run table shows without the metrics document; null when not recorded.
-                selection += "".join(
-                    f",json_extract(a.metrics,'$.{key}') {key}" for key in SUMMARY_METRICS
-                )
         page_where, page_arguments, page_offset = where, list(arguments), offset
         backwards = False
         if cursor is not None:
@@ -643,11 +638,13 @@ class Store:
             f"SELECT COUNT(*) FROM {count_source}{where}", arguments
         ).fetchone()[0]
         for row in rows:
+            # The terminal metrics document is the worker's, not a result: results come from run records
+            # (RESULTS_OVERHAUL §9, RD-44; R7).
+            row.pop("metrics", None)
             for key in (
                 "specification",
                 "configuration",
                 "snapshot",
-                "metrics",
                 "paths",
                 "summary",
             ):

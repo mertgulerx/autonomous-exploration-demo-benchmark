@@ -297,18 +297,21 @@ def studies_page(database: sqlite3.Connection, offset: Any = 0, limit: Any = 100
     ):
         if identity in studies:
             studies[identity].update(runs=runs, final_runs=finals)
-    # The plan of each study's newest campaign, and the last repetition a new campaign continues after
-    # (kept in study_repetitions when campaigns are deleted; none for unassigned campaigns, which do not pair).
-    for identity, plan, digest in database.execute(
-        "SELECT sid,plan,digest FROM (SELECT COALESCE(json_extract(specification,'$.study.id'),?) sid,"
+    # The plan and evidence level of each study's newest campaign, and the last repetition a new campaign
+    # continues after (kept in study_repetitions when campaigns are deleted; none for unassigned campaigns,
+    # which do not pair).
+    for identity, plan, digest, level in database.execute(
+        "SELECT sid,plan,digest,level FROM (SELECT COALESCE(json_extract(specification,'$.study.id'),?) sid,"
         "json_extract(specification,'$.study.plan') plan,json_extract(specification,'$.study.plan_sha256') "
-        "digest,ROW_NUMBER() OVER (PARTITION BY COALESCE(json_extract(specification,'$.study.id'),?) "
+        "digest,COALESCE(json_extract(specification,'$.study.evidence_level'),'exploratory') level,"
+        "ROW_NUMBER() OVER (PARTITION BY COALESCE(json_extract(specification,'$.study.id'),?) "
         f"ORDER BY created_ns DESC,id DESC) n FROM campaigns WHERE NOT ({TUNING_CAMPAIGN})) WHERE n=1",
         (UNASSIGNED, UNASSIGNED),
     ):
         studies[identity].update(
             plan=plan,
             plan_sha256=digest,
+            evidence_level=level,
             last_repetition=None if identity == UNASSIGNED else last_repetition(database, identity),
         )
     rows = sorted(studies.values(), key=lambda s: (-s["last_activity_ns"], s["study_id"]))

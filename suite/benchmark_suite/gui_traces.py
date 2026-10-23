@@ -66,16 +66,24 @@ class TracesChart(Themed):
         self.describe: Callable[[dict[str, Any]], str] = lambda run: str(run.get("attempt_id"))
         self.setMouseTracking(True)
 
-    def set_runs(self, runs: Sequence[dict[str, Any]]) -> None:
+    def set_runs(
+        self, runs: Sequence[dict[str, Any]], profiles: Sequence[str] | None = None
+    ) -> None:
+        """``profiles``: the study's other profiles in F1's colour order (by parameter hash), so a profile keeps
+        its colour in every world; without it, this reply's."""
         self.runs = list(runs)
-        others = sorted(
-            {
-                (str(r.get("parameter_hash")), str(r.get("profile_id")))
-                for r in runs
-                if not r.get("is_baseline")
-            }
-        )
-        self.colours = {profile: index for index, (_, profile) in enumerate(others)}
+        if profiles is None:
+            profiles = [
+                profile
+                for _, profile in sorted(
+                    {
+                        (str(r.get("parameter_hash")), str(r.get("profile_id")))
+                        for r in runs
+                        if not r.get("is_baseline")
+                    }
+                )
+            ]
+        self.colours = {profile: index for index, profile in enumerate(profiles)}
         self.hovered = -1
         self.update()
 
@@ -100,28 +108,51 @@ class TracesChart(Themed):
         return TRACE_TOP + plot * (1 - value / 100)
 
     def lines(self, axis: TimeAxis) -> list[list[list[QtCore.QPointF]]]:
-        """Each run's segments (a stretch without samples over 2 s breaks its line)."""
+        """Each run's segments: a stretch without samples over 2 s breaks its line (a thinned run carries those
+        stretches as null rows from the engine, so its own spacing is never one); a run that never moved is its
+        pre-motion coverage held from 0 to L, as F1 draws it (nothing when that value is unavailable)."""
         found = []
         for run in self.runs:
+            held = self.held(run)
+            if held is not None:
+                end = axis.limit if self.limit() is not None else axis.split
+                y = self.value_y(held)
+                found.append([[QtCore.QPointF(axis.x(0.0), y), QtCore.QPointF(axis.x(end), y)]])
+                continue
+            gap = math.inf if int(number(run.get("every_kth")) or 1) > 1 else GAP_S
             segments: list[list[QtCore.QPointF]] = [[]]
             previous: float | None = None
             for t, value in run.get("samples") or []:
                 seconds, coverage = number(t), number(value)
                 if seconds is None or coverage is None:
+                    if segments[-1]:
+                        segments.append([])
+                    previous = None
                     continue
-                if previous is not None and seconds - previous > GAP_S and segments[-1]:
+                if previous is not None and seconds - previous > gap and segments[-1]:
                     segments.append([])
                 segments[-1].append(QtCore.QPointF(axis.x(seconds), self.value_y(coverage)))
                 previous = seconds
             found.append([segment for segment in segments if segment])
         return found
 
+    @staticmethod
+    def held(run: Mapping[str, Any]) -> float | None:
+        """A reported run that never moved: its pre-motion coverage, held (no line of its own otherwise)."""
+        if run.get("outcome") != "no_movement" or run.get("samples"):
+            return None
+        return number(run.get("pre_motion_coverage_pct"))  # unavailable stays unavailable, never 0
+
     def _nearest(self, position: QtCore.QPointF) -> int:
         axis = self.axis()
         best, chosen = 6.0, -1
         for index, segments in enumerate(self.lines(axis)):
             for segment in segments:
-                for a, b in zip(segment, segment[1:]):
+                # a sample alone between two gaps is a point to hit
+                pairs = (
+                    zip(segment, segment[1:]) if len(segment) > 1 else [(segment[0], segment[0])]
+                )
+                for a, b in pairs:
                     distance = _distance(position, a, b)
                     if distance < best:
                         best, chosen = distance, index
@@ -204,12 +235,25 @@ class TracesChart(Themed):
             colour.setAlphaF(1.0 if hovered else 0.55)
             pen = QtGui.QPen(colour, 2.6 if hovered else 1.2)
             pen.setJoinStyle(QtCore.Qt.PenJoinStyle.RoundJoin)
+            if self.held(run) is not None:
+                pen.setDashPattern([1, 2.5])  # dotted: held, not recorded progress (F1)
             painter.setPen(pen)
             painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
             for segment in segments:
+                if len(segment) == 1:  # a sample alone between two gaps
+                    painter.drawPoint(segment[0])
                 painter.drawPolyline(QtGui.QPolygonF(segment))
             end = segments[-1][-1]
-            if run.get("outcome") == "completed" and limit is not None:
+            samples = run.get("samples") or []
+            last = number(samples[-1][0]) if samples else None
+            completion = number(run.get("completion_s"))
+            if (
+                run.get("outcome") == "completed"
+                and limit is not None
+                and last is not None
+                and completion is not None
+                and completion - last <= GAP_S  # never across a final gap (F1: only from the end)
+            ):
                 carried = self.colour(run)
                 carried.setAlphaF(0.9 if hovered else 0.35)
                 width = 2.6 if hovered else 1.2

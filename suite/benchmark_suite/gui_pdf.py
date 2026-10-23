@@ -102,7 +102,12 @@ class PdfPages(Themed):
         ]
 
     def fit(self, *_: object) -> None:
-        height = 18.0
+        if any(
+            isValid(s.document) and s.document.status() == QPdfDocument.Status.Error
+            for s in self.sheets
+        ):
+            self.message = "A produced PDF could not be read (damaged or not a PDF)"
+        height = 18.0 + (28.0 if self.message and self.ready() else 0.0)
         for sheet in self.ready():
             sizes = self.page_sizes(sheet)
             if sizes:
@@ -129,7 +134,8 @@ class PdfPages(Themed):
 
     def paintEvent(self, event: QtGui.QPaintEvent) -> None:
         painter = QtGui.QPainter(self)
-        if self.message:
+        top = 18.0
+        if self.message:  # above the readable sheets, if any
             draw_text(
                 painter,
                 20,
@@ -138,8 +144,9 @@ class PdfPages(Themed):
                 BODY,
                 self.color("text.secondary"),
             )
-            return
-        top = 18.0
+            if not self.ready():
+                return
+            top += 28.0
         for sheet in self.ready():
             sizes = self.page_sizes(sheet)
             if not sizes:

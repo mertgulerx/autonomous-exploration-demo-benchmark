@@ -112,6 +112,19 @@ def stream_relation(connection: Any, kind: str, paths: list[str]) -> str:
 
 def validate_attempt(directory: Path) -> dict[str, Any]:
     manifest = cast(dict[str, Any], json.loads((directory / "manifest.json").read_bytes()))
+    compacted = directory / "compacted.json"
+    # its segments and their index went at the commit (R7): the shards are the data
+    if compacted.exists():
+        replacement = json.loads(compacted.read_bytes())
+        root = compacted_root(directory, replacement)
+        dataset_index = inside(root, replacement["index"])
+        if file_hash(dataset_index) != replacement["sha256"]:
+            raise OSError("Compacted dataset index hash mismatch")
+        dataset = json.loads(dataset_index.read_bytes())
+        for entry in replacement.get("shards", dataset["shards"]):
+            if manifest.get("identity", {}).get("attempt_id") in entry["attempts"]:
+                validate_file(inside(root, entry["path"]), entry, entry["kind"])
+        return manifest
     index = checkpoint_index(directory)
     if (
         index.name == "segments.json"
@@ -126,23 +139,10 @@ def validate_attempt(directory: Path) -> dict[str, Any]:
         ):
             raise OSError("Successful native attempt is missing its measurement checkpoint index")
         return manifest
-    segments = json.loads(index.read_bytes())["segments"]
-    compacted = directory / "compacted.json"
-    if compacted.exists():
-        replacement = json.loads(compacted.read_bytes())
-        root = compacted_root(directory, replacement)
-        dataset_index = inside(root, replacement["index"])
-        if file_hash(dataset_index) != replacement["sha256"]:
-            raise OSError("Compacted dataset index hash mismatch")
-        dataset = json.loads(dataset_index.read_bytes())
-        for entry in replacement.get("shards", dataset["shards"]):
-            if manifest.get("identity", {}).get("attempt_id") in entry["attempts"]:
-                validate_file(inside(root, entry["path"]), entry, entry["kind"])
-    else:
-        for entry in segments:
-            if entry["kind"] not in SCHEMAS:
-                raise OSError("Unknown checkpoint dataset kind")
-            validate_file(inside(directory, entry["path"]), entry, entry["kind"])
+    for entry in json.loads(index.read_bytes())["segments"]:
+        if entry["kind"] not in SCHEMAS:
+            raise OSError("Unknown checkpoint dataset kind")
+        validate_file(inside(directory, entry["path"]), entry, entry["kind"])
     return manifest
 
 
@@ -173,7 +173,8 @@ def files(directory: Path, kind: str) -> list[Path]:
         ]
     index = checkpoint_index(directory)
     if not index.exists():
-        return []
+        # a commit writes compacted.json before it removes the index: one written meanwhile is read
+        return files(directory, kind) if compacted.exists() else []
     return [
         inside(directory, entry["path"])
         for entry in json.loads(index.read_bytes())["segments"]
@@ -653,6 +654,13 @@ def commit_compaction(reference: dict[str, Any]) -> None:
     atomic_json(
         index_path.parent / "commit.json", dict(phase="COMMITTED", index_sha256=reference["sha256"])
     )
+    # Committed: each attempt's checkpoint index lists segments that are gone (RD-44, R7). Readers take the
+    # attempt's data from compacted.json; an interruption before this only leaves the stale index.
+    for source in index["sources"]:
+        directory = inside(root / "attempts", Path(source["directory"]).name)
+        for name in ("segments.json", "recovery.json"):  # the recorded index and a recovered one
+            (directory / name).unlink(missing_ok=True)
+        sync_directory(directory)
 
 
 def query(workspace: Path, params: dict[str, Any]) -> dict[str, Any]:

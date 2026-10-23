@@ -21,7 +21,10 @@ import math
 import re
 from typing import Any, Literal, Mapping
 
-PROTOCOL_VERSION = 1
+PROTOCOL_VERSION = 2  # 2: reports.generate removed (RESULTS_OVERHAUL R7)
+# Versions whose requests mean the same here (2 only removed a method): the engine accepts both, and a client
+# falls back to 1 for an engine image built before R7 (it may still run a campaign while the GUI is newer).
+COMPATIBLE_PROTOCOLS = frozenset({1, 2})
 DATASET_VERSION = 10  # 10: receipt clock, odom_aligned_* names, goal_facts (RESULTS_OVERHAUL R2)
 GAZEBO_SEED = 1234
 DEFAULT_LIMIT = 1800.0
@@ -30,9 +33,8 @@ HIDDEN_GROUPS = frozenset({"Suppression", "QoS", "Visualization", "Benchmark Int
 # Most campaigns or profiles one deletion request may name; the GUI checks the same bounds.
 CAMPAIGN_DELETION_LIMIT = 100
 PROFILE_DELETION_LIMIT = 250
-# Campaign reports draw figures and statistics from these final outcomes only; every report states how many
-# runs it excluded and why (docs/MEASUREMENTS.md, "Reported population").
-REPORT_POLICY_VERSION = "reported-outcomes-v1"
+# The final outcomes the outcome bar counts as reported (reported-outcomes-v1's rule, docs/MEASUREMENTS.md
+# "Reported population"); run records and study exports use reported-outcomes-v2 (run_record.report_class).
 REPORTED_OUTCOMES = frozenset({"completed", "time_limit", "no_movement"})
 STOPPED_OUTCOMES = frozenset({"manual_stop"})
 
@@ -50,10 +52,7 @@ def average_speed(distance_m: Any, elapsed_seconds: Any) -> float | None:
 
 
 def report_exclusion(outcome: str | None) -> str | None:
-    """None when campaign reports include the outcome, otherwise "stopped" or "failure".
-
-    reports.py applies the same rule in SQL (the ``reported`` view and the ``report_exclusions`` reasons).
-    """
+    """None when the outcome is a reported one, otherwise "stopped" or "failure" (the Campaigns outcome bar)."""
     if outcome in REPORTED_OUTCOMES:
         return None
     return "stopped" if outcome in STOPPED_OUTCOMES else "failure"

@@ -181,7 +181,9 @@ class Transport(QtCore.QThread):
                     path = Path(params["path"])
                     if path.stat().st_size > 4 * 1024 * 1024:
                         raise ValueError("Import exceeds 4 MiB")
-                    result = {"text": path.read_text()}
+                    result = {
+                        "text": path.read_text(encoding="utf-8")
+                    }  # as the engine reads plans and YAML
                 elif method == "local.read_image":
                     path = Path(params["path"])
                     if path.stat().st_size > 8 * 1024 * 1024:

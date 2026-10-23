@@ -22,7 +22,7 @@ import re
 import shutil
 import sqlite3
 import time
-from typing import Any, TextIO
+from typing import Any
 import uuid
 
 from .backends import Backend, WorkerHandle
@@ -30,6 +30,7 @@ from .contracts import (
     CampaignSpec,
     DATASET_VERSION,
     ContractError,
+    COMPATIBLE_PROTOCOLS,
     PROTOCOL_VERSION,
     STUDY_ID,
     UNASSIGNED,
@@ -50,7 +51,7 @@ from .run_records import RunRecords
 from .exports import Exports, studies_root
 from .files import BUILDERS, TABLE_SUFFIXES, BackgroundReads, text as file_text
 from .storage import atomic_json, file_hash, sync_directory
-from .store import ACTIVE_STATES, TUNING_CAMPAIGN, Store
+from .store import ACTIVE_STATES, BUSY_TIMEOUT_MS, TUNING_CAMPAIGN, Store
 from .studies import (
     attempt_record,
     last_repetition,
@@ -101,6 +102,9 @@ READ_METHODS = READ_METHODS | {
     "study.traces",
 }
 COPY_SUFFIX = re.compile(r" \(copy (\d+)\)$")
+COLLECT_RETRY_S = (
+    30.0  # a busy database is asked again for the object collection and VACUUM after this
+)
 
 
 def study_identity(value: Any, field: str) -> str:
@@ -114,6 +118,15 @@ def study_identity(value: Any, field: str) -> str:
 def is_tuning(specification: dict[str, Any]) -> bool:
     """Whether a stored campaign specification is a tuning run (``CampaignSpec.tuning``)."""
     return specification.get("tuning") is True
+
+
+def previewed(specification: dict[str, Any]) -> dict[str, Any]:
+    """A preview checks the plan as it is now: a plan hash the specification carries (an exported or accepted
+    campaign) is the engine's to set again here, and is compared only at submission."""
+    study = specification.get("study")
+    if not isinstance(study, dict) or "plan_sha256" not in study:
+        return specification
+    return dict(specification, study={k: v for k, v in study.items() if k != "plan_sha256"})
 
 
 class Engine:
@@ -144,12 +157,15 @@ class Engine:
         self.job_id: str | None = None
         self.job_stage = ""
         self.pending_compactions: list[dict[str, Any]] = []
-        self.report_import: TextIO | None = None
-        self.report_reference: dict[str, Any] | None = None
         self.requests: queue.Queue[PendingRequest] = queue.Queue(maxsize=128)
         self.server: Server | None = None
         # Campaign deletion whose files are being removed: (campaign ID, remover).
         self.removal: tuple[str, Remover] | None = None
+        # a deletion finished: collect orphan objects and VACUUM when idle (set at start when one finished after
+        # the last collection); a busy database is tried again after COLLECT_RETRY_S
+        self.collect_pending = False
+        self.collect_retry_at = 0.0
+        self.collected = (0, 0)  # objects and bytes removed by an attempt that has not finished yet
         self.run_maps = RunMaps(self.workspace)
         self.replay_windows = ReplayWindows(self.workspace)
         self.run_records = RunRecords(self.store, self.workspace, self.provenance_id)
@@ -167,6 +183,7 @@ class Engine:
             "UPDATE deletions SET state='REMOVING',detail='' WHERE state='FAILED'"
         )
         for report in self.store.rows(
+            # QUEUED, RUNNING and INDEXING: report rows of engines before R7
             "SELECT * FROM reports WHERE state IN ('QUEUED','COMPACTING','COMMITTING','RUNNING','INDEXING')"
         ):
             specification = json.loads(report["specification"])
@@ -175,11 +192,19 @@ class Engine:
                 specification.get("pid"),
                 specification.get("pid_created"),
             )
-            self._remove_report_output(report)
+            self._remove_report_output(report)  # a legacy report's partial files (before R7)
             self.store.db.execute(
-                "UPDATE reports SET state='INTERRUPTED',detail='Engine restart; regenerate after Resume' WHERE id=?",
+                "UPDATE reports SET state='INTERRUPTED',detail='Engine restart; finalized again after Resume' "
+                "WHERE id=?",
                 (report["id"],),
             )
+        # a deletion that finished after the last collection (an engine stopped before its idle tick)
+        self.collect_pending = bool(
+            self.store.one(
+                "SELECT 1 FROM deletions WHERE state='DELETED' AND finished_ns>COALESCE((SELECT "
+                "MAX(utc_ns) FROM events WHERE kind IN ('objects.collected','objects.collect_failed')),0)"
+            )
+        )
         unfinished = self.store.rows("SELECT * FROM attempts WHERE phase!='FINISHED'")
         if not self.backend.synthetic:
             from .datasets import recover_compactions
@@ -293,10 +318,12 @@ class Engine:
         try:
             if (
                 type(request.get("protocol_version")) is not int
-                or request.get("protocol_version") != PROTOCOL_VERSION
+                or request.get("protocol_version") not in COMPATIBLE_PROTOCOLS
             ):
                 raise ContractError(
-                    "protocol_version", "Use protocol version 1", "version_mismatch"
+                    "protocol_version",
+                    f"Use protocol version {PROTOCOL_VERSION}",
+                    "version_mismatch",
                 )
             request_id = text(request.get("request_id"), "request_id")
             method = text(request.get("method"), "method")
@@ -372,7 +399,7 @@ class Engine:
             )
         if method == "campaign.preview":
             spec = self._in_study(
-                self.resolve(mapping(params.get("specification"), "specification"))
+                self.resolve(previewed(mapping(params.get("specification"), "specification")))
             )
             return {
                 "count": spec.count,
@@ -401,14 +428,9 @@ class Engine:
                     study_id,
                     None if export_id is None else text(export_id, "export_id", maximum=64),
                 )
-            # RO-10: never beside runs, compaction, a report or a deletion (they write what it reads).
+            # RO-10: never beside runs, finalization (compaction) or a deletion (they write what it reads).
             busy = bool(
-                self.active
-                or self.current
-                or self.queue_enabled
-                or self.job
-                or self.removal
-                or self.report_import
+                self.active or self.current or self.queue_enabled or self.job or self.removal
             )
             return self.exports.start(study_id, busy=busy)
         if method == "campaign.repeat":
@@ -485,45 +507,6 @@ class Engine:
             self._move_queued(identity, direction)
             self.store.event("campaign.reordered", {"direction": direction}, identity)
             return {"operation_id": operation_id, "completed": True, "campaign_id": identity}
-        if method == "reports.generate":
-            from .analysis import DetectorSettings
-            from dataclasses import asdict
-
-            identity = text(params.get("campaign_id"), "campaign_id")
-            campaign = self.store.campaign(identity)
-            if self.current or self.active or self.job or campaign["state"] != "FINISHED":
-                raise ContractError(
-                    "campaign_id",
-                    "Reports require finished execution and an idle engine",
-                    "conflict",
-                )
-            if is_tuning(json.loads(campaign["specification"])):
-                raise ContractError("campaign_id", "A tuning run has no report", "conflict")
-            settings = DetectorSettings.accept(params.get("detectors"))
-            report_id, token = str(uuid.uuid4()), uuid.uuid4().hex
-            self.store.db.execute(
-                "INSERT INTO reports(id,campaign_id,state,specification,created_ns) VALUES(?,?,?,?,?)",
-                (
-                    report_id,
-                    identity,
-                    "QUEUED",
-                    canonical(
-                        dict(
-                            token=token,
-                            kind="campaign_report",
-                            schema_version=DATASET_VERSION,
-                            detectors=asdict(settings),
-                        )
-                    ),
-                    time.time_ns(),
-                ),
-            )
-            self.current, self.job_id = identity, report_id
-            self.store.db.execute(
-                "UPDATE campaigns SET report_state='QUEUED' WHERE id=?", (identity,)
-            )
-            self.store.set_state(identity, "REPORTING")
-            return dict(accepted=True, operation_id=operation_id, report_id=report_id)
         if method == "reports.get":
             from .datasets import inside
 
@@ -644,7 +627,7 @@ class Engine:
                     raise ContractError(
                         "campaign_id", "No longer in the catalog: " + ", ".join(missing), "conflict"
                     )
-            idle = not (self.current or self.active or self.job or self.report_import)
+            idle = not (self.current or self.active or self.job)
             if idle:
                 self.backend.preflight()
             name = self._copy_name(source["name"])
@@ -690,7 +673,7 @@ class Engine:
             }
         if method == "attempt.stop":
             # Ends one run as manual_stop: its data is kept, the experiment is resolved and not run
-            # again, and reports exclude it (REPORT_POLICY_VERSION).
+            # again, and study exports leave it out (run_record.report_class, reported-outcomes-v2).
             known_keys(params, {"attempt_id"}, "params")
             identity = text(params.get("attempt_id"), "attempt_id")
             if identity not in self.active:
@@ -773,7 +756,8 @@ class Engine:
             )
             if row is None:
                 raise ContractError("id", "No result with this identity", "not_found")
-            for field in ("specification", "configuration", "metrics"):
+            row.pop("metrics", None)  # results come from the run record (RD-44; R7)
+            for field in ("specification", "configuration"):
                 if row.get(field):
                     row[field] = json.loads(row[field])
             # Optional parts (R4b): the attempt's run record and the provenance it names; null until built.
@@ -1397,33 +1381,78 @@ class Engine:
                 self.store.event(
                     "campaign.files_removed", {"freed_bytes": remover.freed_bytes}, identity
                 )
+            self.collect_pending = True
+
+    def _collect(self) -> None:
+        """After deletions: the shared objects nothing names any more, then VACUUM and a WAL checkpoint (RD-44,
+        R7). Only while nothing runs, finalizes, exports or removes, in this thread, so no reference appears
+        meanwhile. The database never waits for a reader here: a busy or locked one is tried again after
+        ``COLLECT_RETRY_S``; any other failure is reported once (``objects.collect_failed``) and dropped."""
+        from .deletion import collect_objects
+
+        if (
+            not self.collect_pending
+            or time.monotonic() < self.collect_retry_at
+            or self.active
+            or self.current
+            or self.job
+            or self.removal
+            or self.exports.job is not None
+            or self.store.one("SELECT 1 FROM deletions WHERE state='REMOVING' LIMIT 1")
+        ):
+            return
+        started = time.monotonic()
+        try:
+            removed, freed = collect_objects(self.workspace, self.store.db)
+            self.collected = (self.collected[0] + removed, self.collected[1] + freed)
+            self.store.db.execute("PRAGMA busy_timeout=0")
+            try:
+                self.store.db.execute("VACUUM")
+                # in WAL mode the rewritten pages reach the database file only at a checkpoint
+                busy = self.store.db.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()[0]
+            finally:
+                self.store.db.execute(f"PRAGMA busy_timeout={BUSY_TIMEOUT_MS}")
+        except sqlite3.OperationalError as error:
+            if error.sqlite_errorcode not in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED):
+                self._collect_failed(str(error))
+            else:
+                self.collect_retry_at = time.monotonic() + COLLECT_RETRY_S
+            return
+        except OSError as error:
+            self._collect_failed(str(error))
+            return
+        if busy:  # a reader held the log: the file shrinks at a later attempt
+            self.collect_retry_at = time.monotonic() + COLLECT_RETRY_S
+            return
+        self.collect_pending = False
+        (removed, freed), self.collected = self.collected, (0, 0)
+        self.store.event(
+            "objects.collected",
+            {
+                "objects": removed,
+                "freed_bytes": freed,
+                "seconds": round(time.monotonic() - started, 3),
+            },
+        )
+
+    def _collect_failed(self, detail: str) -> None:
+        self.collect_pending, self.collected = False, (0, 0)
+        self.store.event("objects.collect_failed", {"detail": detail})
 
     def tick(self) -> None:
         self._advance_deletions()
+        self._collect()
         self.run_maps.poll()
         self.run_records.poll(self.current)
         self.exports.poll()
-        if self.report_import is not None:
-            try:
-                self._import_report()
-            except (OSError, ValueError, KeyError) as error:
-                self._report_failure(
-                    str(error), storage=isinstance(error, OSError) and error.errno in (28, 122)
-                )
-            return
         if self.job is not None:
             try:
                 self._poll_job()
             except (OSError, ValueError, KeyError) as error:
-                self._report_failure(
+                self._finalization_failure(
                     str(error), storage=isinstance(error, OSError) and error.errno in (28, 122)
                 )
             return
-        if self.current and self.job_id:
-            report = self.store.one("SELECT * FROM reports WHERE id=?", (self.job_id,))
-            if report and report["state"] == "QUEUED":
-                self._start_report(report)
-                return
         for identity, worker in tuple(self.active.items()):
             attempt = self.store.attempt(identity)
             if attempt["discard_intent"]:
@@ -1560,7 +1589,7 @@ class Engine:
     def _start_tuning(self, params: dict[str, Any], operation_id: str) -> dict[str, Any]:
         """tuning.start: one run that starts at once, is hidden from lists and replaces the previous one
         (plans/SUITE_TUNING_RUN.md). Refused while anything owns execution or the queue runs."""
-        if self.current or self.active or self.job or self.report_import or self.queue_enabled:
+        if self.current or self.active or self.job or self.queue_enabled:
             raise ContractError(
                 "specification",
                 "A campaign is running; a tuning run can start when the engine is idle",
@@ -1619,7 +1648,7 @@ class Engine:
         identity, token = str(uuid.uuid4()), uuid.uuid4().hex
         specification = {
             "token": token,
-            "kind": "campaign_report",
+            "kind": "campaign_finalization",
             "schema_version": DATASET_VERSION,
         }
         with self.store.transaction():
@@ -1663,7 +1692,7 @@ class Engine:
             )
             if self.current:
                 self.store.set_state(
-                    self.current, "FINISHED", "Execution complete; analysis process could not start"
+                    self.current, "FINISHED", "Execution complete; finalization could not start"
                 )
             self.current, self.job_id = None, None
             return
@@ -1686,7 +1715,7 @@ class Engine:
         assert report is not None
         campaign_id = report["campaign_id"]
         if not result["ok"]:
-            self._report_failure(result["detail"], storage=result.get("errno") in (28, 122))
+            self._finalization_failure(result["detail"], storage=result.get("errno") in (28, 122))
             return
         if self.job_stage == "recover_commit":
             token = json.loads(report["specification"])["token"]
@@ -1738,93 +1767,32 @@ class Engine:
                 )
             self._start_job("commit", reference, json.loads(report["specification"])["token"])
         elif self.job_stage == "commit":
-            self._start_report(report)
-        else:
-            from .datasets import inside
+            self._finish_finalization(report)
 
-            reference = result["result"]
-            index = inside(self.workspace, reference["index"])
-            manifest = inside(self.workspace, reference["manifest"])
-            if (
-                file_hash(index) != reference["sha256"]
-                or file_hash(manifest) != reference["manifest_sha256"]
-            ):
-                raise OSError("Generated report failed integrity validation")
-            self.report_reference = reference
-            self.report_import = index.open(encoding="utf-8")
-            self.store.db.execute(
-                "UPDATE reports SET state='INDEXING',path=? WHERE id=?",
-                (str(manifest), self.job_id),
-            )
-
-    def _start_report(self, report: dict[str, Any]) -> None:
-        specification = json.loads(report["specification"])
-        self.store.db.execute("UPDATE reports SET state='RUNNING' WHERE id=?", (report["id"],))
-        self.store.db.execute(
-            "UPDATE campaigns SET report_state='RUNNING' WHERE id=?", (report["campaign_id"],)
-        )
-        self._start_job(
-            "report",
-            dict(
-                workspace=str(self.workspace),
-                campaign_id=report["campaign_id"],
-                report_id=report["id"],
-                detectors=specification.get("detectors", {}),
-            ),
-            specification["token"],
-        )
-
-    def _import_report(self) -> None:
-        from .datasets import inside
-
-        assert self.report_import is not None
-        campaign_id = self.current
-        assert campaign_id is not None
-        finished = False
+    def _finish_finalization(self, report: dict[str, Any]) -> None:
+        """Compacted and committed: the campaign is FINISHED (RESULTS_OVERHAUL A16; no report stage since R7).
+        The attempts' checkpoint indexes went with their segments (``commit_compaction``): their artifact rows
+        go too."""
+        campaign_id = report["campaign_id"]
         with self.store.transaction():
-            for _ in range(100):
-                line = self.report_import.readline()
-                if not line:
-                    finished = True
-                    break
-                entry = json.loads(line)
-                path = inside(self.workspace, entry["path"])
-                if file_hash(path) != entry["sha256"]:
-                    raise OSError("Report artifact failed integrity validation")
-                self.store.db.execute(
-                    "INSERT OR IGNORE INTO artifacts VALUES(?,?,?,?,?,?,?,?,?,?)",
-                    (
-                        str(uuid.uuid4()),
-                        campaign_id,
-                        entry.get("attempt_id"),
-                        entry["kind"],
-                        str(path),
-                        entry["sha256"],
-                        entry["bytes"],
-                        None,
-                        time.time_ns(),
-                        canonical(entry),
-                    ),
-                )
-        if finished:
-            self.report_import.close()
-            self.report_import = None
-            with self.store.transaction():
-                self.store.db.execute(
-                    "UPDATE reports SET state='FINISHED',finished_ns=? WHERE id=?",
-                    (time.time_ns(), self.job_id),
-                )
-                self.store.db.execute(
-                    "UPDATE campaigns SET report_state='FINISHED' WHERE id=?", (campaign_id,)
-                )
-                self.store.set_state(campaign_id, "FINISHED")
-            self.current, self.job_id = None, None
+            for row in self.store.rows(
+                "SELECT id,path FROM artifacts WHERE campaign_id=? AND kind='checkpoint_index'",
+                (campaign_id,),
+            ):
+                if not Path(row["path"]).exists():
+                    self.store.db.execute("DELETE FROM artifacts WHERE id=?", (row["id"],))
+            self.store.db.execute(
+                "UPDATE reports SET state='FINISHED',finished_ns=? WHERE id=?",
+                (time.time_ns(), report["id"]),
+            )
+            self.store.db.execute(
+                "UPDATE campaigns SET report_state='FINISHED' WHERE id=?", (campaign_id,)
+            )
+            self.store.set_state(campaign_id, "FINISHED")
+        self.current, self.job_id = None, None
 
     def _storage_failure(self, detail: str) -> None:
         self.queue_enabled = False
-        if self.report_import is not None:
-            self._report_failure(detail, storage=True)
-            return
         for worker in self.active.values():
             worker.stop("storage_failure", detail)
         if self.current:
@@ -1845,20 +1813,14 @@ class Engine:
         if directory.exists():
             shutil.rmtree(directory)
 
-    def _report_failure(self, detail: str, *, storage: bool = False) -> None:
+    def _finalization_failure(self, detail: str, *, storage: bool = False) -> None:
+        """Compaction or commit failed: the campaign is FINISHED with the reason (its runs and records stand;
+        a failed compaction leaves the attempts' own segments, which every reader still uses)."""
         if self.job is not None:
             self.job.close()
             self.job = None
-        if self.report_import is not None:
-            self.report_import.close()
-            self.report_import = None
         report = self.store.one("SELECT * FROM reports WHERE id=?", (self.job_id,))
         assert report is not None
-        try:
-            self._remove_report_output(report)
-        except OSError as error:
-            storage = True
-            detail += "; report cleanup requires repair: " + str(error)
         with self.store.transaction():
             self.store.db.execute(
                 "UPDATE reports SET state='FAILED',detail=?,finished_ns=? WHERE id=?",
@@ -1868,7 +1830,9 @@ class Engine:
                 "UPDATE campaigns SET report_state='FAILED' WHERE id=?", (report["campaign_id"],)
             )
             self.store.set_state(
-                report["campaign_id"], "FINISHED", "Execution finished; reporting failed: " + detail
+                report["campaign_id"],
+                "FINISHED",
+                "Execution finished; finalization failed: " + detail,
             )
         if storage:
             self.queue_enabled = False
@@ -1913,9 +1877,6 @@ class Engine:
         if self.job is not None:
             self.job.close()
             self.job = None
-        if self.report_import is not None:
-            self.report_import.close()
-            self.report_import = None
         for identity, worker in self.active.items():
             if self._stop_requested(identity):
                 worker.stop("manual_stop", "Stopped by the researcher from the Monitor")

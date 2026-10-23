@@ -141,11 +141,56 @@ DESCRIPTIONS: dict[str, dict[str, tuple[str, str, str]]] = {
         ),
         "odom_distance_m": ("m", "no odometry yet", "cumulative raw-odometry distance"),
     },
+    # One row per robot, world, spawn and profile (RD-33): the group's identity, then counts
+    # (reported-outcomes-v2 report classes, run_record.report_class).
     "accounting": {
+        "robot_id": ("", "never", "the group's robot"),
+        "world_id": ("", "never", "the group's world"),
+        "spawn_id": ("", "never", "the group's spawn"),
+        "profile_id": ("", "never", "the group's profile"),
+        "comparison_keys": (
+            "count",
+            "never",
+            "distinct comparison keys among the group's reported final runs (more than 1: not comparable)",
+        ),
+        "planned": ("count", "never", "experiments planned"),
+        "done": ("count", "never", "experiments resolved (DONE)"),
+        "unresolved": ("count", "never", "experiments left UNRESOLVED"),
+        "not_done": ("count", "never", "experiments neither done nor unresolved"),
         "final_completed": ("count", "never", "reported final runs that completed"),
         "final_time_limit": ("count", "never", "reported final runs stopped at the time limit"),
         "final_no_movement": ("count", "never", "reported final runs that never moved"),
+        "reported": ("count", "never", "final runs of report class reported"),
         "coverage_ineligible": ("count", "never", "reported final runs not eligible for coverage"),
+        "missing_startup": ("count", "never", "final runs of report class missing_startup"),
+        "missing_platform": ("count", "never", "final runs of report class missing_platform"),
+        "excluded_runtime_failure": (
+            "count",
+            "never",
+            "final runs of report class excluded_runtime_failure",
+        ),
+        "excluded_stopped": ("count", "never", "final runs of report class excluded_stopped"),
+        "replaced_timing_rejection": (
+            "count",
+            "never",
+            "attempts replaced after a timing rejection",
+        ),
+        "replaced_engine_interruption": (
+            "count",
+            "never",
+            "attempts replaced after an engine interruption",
+        ),
+        "discarded_campaign_stop": ("count", "never", "attempts discarded by a campaign stop"),
+        "discarded_experiment_stop": (
+            "count",
+            "never",
+            "attempts discarded by an experiment stop",
+        ),
+        "discarded_experiment_restart": (
+            "count",
+            "never",
+            "attempts discarded by an experiment restart",
+        ),
     },
     "profiles": {
         "profile_id": ("", "never", ""),
@@ -791,8 +836,6 @@ def _codebook(tables: dict[str, pa.Schema]) -> list[dict[str, str]]:
                 unit, null, definition = field.unit, field.null, field.definition
             elif table in DESCRIPTIONS and column.name in DESCRIPTIONS[table]:
                 unit, null, definition = DESCRIPTIONS[table][column.name]
-            elif table == "accounting":
-                unit, null, definition = "count", "never", "attempts or experiments in this group"
             else:
                 unit, null, definition = "", "as recorded", f"docs/MEASUREMENTS.md ({table})"
             rows.append(

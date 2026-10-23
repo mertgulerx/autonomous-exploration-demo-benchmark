@@ -346,6 +346,7 @@ class ResultsPage(QtWidgets.QWidget):
 
     def close_run(self) -> None:
         """Back to the runs as they were (filters, scroll and expanded attempts)."""
+        self.run_view.close_timers()  # no polling for a view that is gone; opening a run asks again
         self.run_view.hide()
         self.study_page.show()
         self.results.view.setFocus(QtCore.Qt.FocusReason.OtherFocusReason)

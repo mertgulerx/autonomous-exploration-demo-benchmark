@@ -427,6 +427,8 @@ class Window(QtWidgets.QMainWindow):
             return  # these pages show their own list, map, snapshot and save errors
         if tag.startswith("editor-") and ":" in tag:
             return  # an open profile editor shows its own errors
+        if tag.startswith(("builder-plan-", "builder-studies-")):
+            return  # New campaign shows these itself (the plan's hash line; the Existing list stays)
         if tag == self.campaigns.tag and ATTENTION_REJECTED in error:
             return  # an engine without the attention order: the table falls back silently (D6)
         if tag == "catalog":

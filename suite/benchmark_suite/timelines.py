@@ -43,6 +43,14 @@ MAX_POINTS = 7200  # per series of a run view: two hours at 1 Hz
 MAX_TRACE_POINTS = 2000  # per run of a traces reply
 TRACE_BUDGET = 150_000  # per traces reply, shared by its runs (about 3 MB)
 COVERED_SHARE = 0.5  # a speed interval needs valid pose pairs over at least half of its second
+GAP_S = 2.0  # a longer stretch between coverage samples breaks the line (RD-6's gap rule, as the GUI draws it)
+MILESTONES = (
+    25,
+    50,
+    75,
+    90,
+    95,
+)  # the first sample at or above each is kept in a thinned coverage series
 # Time columns of the derived tables: movement-relative, or from activation for a run that never moved.
 DERIVED = {
     "goals": (
@@ -69,6 +77,46 @@ def thinned(rows: Sequence[Any], limit: int) -> tuple[list[Any], int]:
     return kept, step
 
 
+def thinned_coverage(rows: Sequence[Sequence[Any]], limit: int) -> tuple[list[Any], int]:
+    """``thinned`` for a coverage series of (t, value, …) rows, with RD-6's gap rule applied first: between two
+    kept rows whose recorded stretch holds a gap over ``GAP_S`` comes a break row (halfway, every value null),
+    so a thinned series marks its gaps itself and its readers apply no time rule of their own. The first valid
+    row at or above each milestone (the sample a first-reached time names) is kept. k grows until the kept and
+    break rows fit ``limit``. Unthinned series come back as they are (k = 1): readers apply the 2 s rule."""
+    if len(rows) <= limit:
+        return list(rows), 1
+    count = len(rows)
+    gaps = [0] * count  # gaps[i]: recorded gaps up to row i
+    for index in range(1, count):
+        t0, t1 = rows[index - 1][0], rows[index][0]
+        gaps[index] = gaps[index - 1] + int(t0 is not None and t1 is not None and t1 - t0 > GAP_S)
+    milestones = set()
+    for share in MILESTONES:
+        found = next(
+            (
+                index
+                for index, row in enumerate(rows)
+                if row[0] is not None and row[0] >= 0 and row[1] is not None and row[1] >= share
+            ),
+            None,
+        )
+        if found is not None:
+            milestones.add(found)
+    step = -(-count // max(1, limit))
+    while True:
+        chosen = sorted(set(range(0, count, step)) | {count - 1} | milestones)
+        kept: list[Any] = [rows[chosen[0]]]
+        for a, b in zip(chosen, chosen[1:]):
+            if gaps[b] > gaps[a]:
+                t0, t1 = rows[a][0], rows[b][0]
+                middle = None if t0 is None or t1 is None else round((t0 + t1) / 2, 3)
+                kept.append((middle, *([None] * (len(rows[b]) - 1))))
+            kept.append(rows[b])
+        if len(kept) <= limit or step >= count:
+            return kept, step
+        step += max(1, step // 4)
+
+
 def _relative_s(clock_ns: int | None, origin_ns: int | None) -> float | None:
     """Seconds from the origin, to the millisecond."""
     return None if clock_ns is None or origin_ns is None else round((clock_ns - origin_ns) / 1e9, 3)
@@ -85,6 +133,25 @@ def _derived(directory: Path, name: str, moved: bool) -> list[list[Any]] | None:
         for row in rows:
             row[2] = None if row[1] is None or row[2] is None else row[1] + row[2]
     return rows
+
+
+def _dispatches(directory: Path, moved: bool) -> list[list[Any]] | None:
+    """The explorer's dispatches as (time, kind, mapped): the format-1 decision rows (one per dispatch
+    line); from log format 2 those rows are decisions, so the dispatches come from the goals table (each
+    paired dispatch, by its dispatch kind, at the goal's dispatch time)."""
+    path = directory / "derived" / f"explorer_decisions.v{DERIVED_VERSION}.parquet"
+    if not path.is_file():
+        return None
+    formats = pq.read_table(path, columns=["log_format"]).column("log_format").to_pylist()
+    goals_path = path.with_name(f"goals.v{DERIVED_VERSION}.parquet")
+    if goals_path.is_file():  # a format-2 run may have dispatched without any decision line
+        formats += (
+            pq.read_table(goals_path, columns=["log_format"]).column("log_format").to_pylist()
+        )
+    if not any(isinstance(value, int) and value >= 2 for value in formats):
+        return _derived(directory, "explorer_decisions", moved)
+    goals = _derived(directory, "goals", moved) or []
+    return [[row[1], row[4], True] for row in goals if row[1] is not None and row[4] is not None]
 
 
 def _first_per_second(points: Iterable[tuple[float, Any]]) -> list[tuple[float, Any]]:
@@ -173,7 +240,7 @@ def timeline(directory: Path) -> dict[str, Any]:
     series: dict[str, Any] = dict(
         coverage=coverage,
         goals=_derived(directory, "goals", moved),
-        dispatches=_derived(directory, "explorer_decisions", moved),
+        dispatches=_dispatches(directory, moved),
         gates=_derived(directory, "gate_evaluations", moved),
         analysis=analysis,
         speed_ground_truth=_ground_truth_speed(poses, origin_ns)
@@ -182,7 +249,8 @@ def timeline(directory: Path) -> dict[str, Any]:
         speed_odometry=odometry,
     )
     steps = {}
-    for name in ("coverage", "analysis", "speed_ground_truth", "speed_odometry"):
+    series["coverage"], steps["coverage"] = thinned_coverage(series["coverage"], MAX_POINTS)
+    for name in ("analysis", "speed_ground_truth", "speed_odometry"):
         series[name], steps[name] = thinned(series[name], MAX_POINTS)
     return dict(
         attempt_id=directory.name,
@@ -278,7 +346,7 @@ def traces(
             and row["valid"]
             and row["status"] == "valid"
         ]
-        samples, step = thinned(samples, limit)
+        samples, step = thinned_coverage(samples, limit)
         runs.append(
             dict({name: record[name] for name in TRACE_FIELDS}, samples=samples, every_kth=step)
         )

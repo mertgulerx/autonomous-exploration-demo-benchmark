@@ -21,15 +21,15 @@ rows, which carry both clocks, and every mapped time is an estimate.
 """
 
 from bisect import bisect_right
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+import math
 import re
 from typing import Any
 
 import zstandard
 
-PARSER_VERSION = 1
 # A pair is accepted when its Nav2 goal lies at most this long after the mapped dispatch.
 MATCH_WINDOW_NS = 1_000_000_000
 # ... or at most this long before it: the wall-to-simulation mapping's error (up to 31 ms on the
@@ -45,6 +45,12 @@ DIED = re.compile(
     r"^\[ERROR\] \[frontier_explorer-\d+\]: process has died \[pid \d+, exit code (?P<code>-?\d+)"
 )
 SIGINT_SENT = re.compile(r"^\[INFO\] \[frontier_explorer-\d+\]: sending signal 'SIGINT'")
+# Version 2 (the logging release, R8): the startup line, the dispatch id on dispatch lines, and the
+# structured lines "<kind> key=value …" (a cancel line's text= runs to the end of the line).
+LOG_FORMAT_2 = "log_format=2"
+DISPATCH_ID = re.compile(r"; dispatch_id=(?P<id>\d+)$")
+STRUCTURED = re.compile(r"^(?P<kind>decision|gate|cancel) (?P<fields>[a-z_]+=.*)$")
+FIELD = re.compile(r"(?P<key>[a-z_]+)=(?P<value>\S*)")
 NUMBER = r"-?\d+(?:\.\d+)?(?:e[-+]?\d+)?"
 FRONTIER = re.compile(
     rf"frontier reference=\((?P<fx>{NUMBER}), (?P<fy>{NUMBER})\), "
@@ -84,16 +90,44 @@ class Dispatch:
     dispatch_x: float | None
     dispatch_y: float | None
     frontier_size: int | None
+    dispatch_id: int | None = None  # format 2
+
+
+@dataclass(frozen=True, slots=True)
+class Structured:
+    """One format-2 line: its wall stamp, kind (decision, gate or cancel) and fields as written ("none"
+    becomes None; a cancel line's ``text`` is the rest of the line)."""
+
+    utc_ns: int
+    kind: str
+    fields: Mapping[str, str | None]
+
+    def number(self, key: str) -> float | None:
+        """A finite number, or None (unavailable, not a number, or not finite)."""
+        value = self.fields.get(key)
+        try:
+            found = float(value) if value is not None else None
+        except ValueError:
+            return None
+        return found if found is not None and math.isfinite(found) else None
+
+    def integer(self, key: str) -> int | None:
+        value = self.number(key)
+        return int(value) if value is not None and value.is_integer() else None
 
 
 @dataclass(frozen=True, slots=True)
 class ExplorerLog:
-    version: int
+    version: int  # the log format: 1, or 2 after a log_format=2 line
     lines: int
     dispatches: tuple[Dispatch, ...]
     exit_status: str
     exit_code: int | None
     exited_before_stop: bool | None
+    structured: tuple[Structured, ...] = ()
+
+    def of_kind(self, kind: str) -> list[Structured]:
+        return [line for line in self.structured if line.kind == kind]
 
 
 def read_text(directory: Path, name: str = "explorer") -> str | None:
@@ -112,8 +146,10 @@ def read_text(directory: Path, name: str = "explorer") -> str | None:
 def parse(text: str | None) -> ExplorerLog:
     """Dispatch lines and the exit of the explorer process from one log."""
     if text is None:
-        return ExplorerLog(PARSER_VERSION, 0, (), NOT_STARTED, None, None)
+        return ExplorerLog(1, 0, (), NOT_STARTED, None, None)
     dispatches: list[Dispatch] = []
+    structured: list[Structured] = []
+    log_format = 1
     status, code, signal_line, exit_line = STOPPED_BY_WORKER, None, None, None
     lines = text.splitlines()
     for number, line in enumerate(lines):
@@ -132,15 +168,23 @@ def parse(text: str | None) -> ExplorerLog:
         if match is None:
             continue
         text_part = match["text"]
+        utc_ns = int(match["stamp"]) * 1_000_000_000 + int(match["fraction"].ljust(9, "0")[:9])
+        if text_part == LOG_FORMAT_2:
+            log_format = 2
+            continue
+        found = STRUCTURED.match(text_part) if log_format == 2 else None
+        if found is not None:
+            structured.append(Structured(utc_ns, found["kind"], _parse_fields(found["fields"])))
+            continue
         for kind, pattern in DISPATCHES:
             head = pattern.match(text_part)
             if head is None:
                 continue
             frontier = FRONTIER.search(text_part)
+            identity = DISPATCH_ID.search(text_part) if log_format == 2 else None
             dispatches.append(
                 Dispatch(
-                    utc_ns=int(match["stamp"]) * 1_000_000_000
-                    + int(match["fraction"].ljust(9, "0")[:9]),
+                    utc_ns=utc_ns,
                     kind=kind,
                     mode=head.groupdict().get("mode"),
                     frontier_x=float(frontier["fx"]) if frontier else None,
@@ -148,11 +192,26 @@ def parse(text: str | None) -> ExplorerLog:
                     dispatch_x=float(frontier["dx"]) if frontier else None,
                     dispatch_y=float(frontier["dy"]) if frontier else None,
                     frontier_size=int(frontier["size"]) if frontier else None,
+                    dispatch_id=int(identity["id"]) if identity else None,
                 )
             )
             break
     before = None if exit_line is None else signal_line is None or exit_line < signal_line
-    return ExplorerLog(PARSER_VERSION, len(lines), tuple(dispatches), status, code, before)
+    return ExplorerLog(
+        log_format, len(lines), tuple(dispatches), status, code, before, tuple(structured)
+    )
+
+
+def _parse_fields(text: str) -> dict[str, str | None]:
+    """A structured line's key=value fields; ``text=`` takes the rest of the line."""
+    head, _, rest = text.partition(" text=")
+    found: dict[str, str | None] = {
+        item["key"]: None if item["value"] == "none" else item["value"]
+        for item in FIELD.finditer(head)
+    }
+    if rest or text.endswith(" text="):
+        found["text"] = rest
+    return found
 
 
 class ClockMap:
@@ -188,7 +247,9 @@ def match(
     """
     pairs: dict[int, Dispatch] = {}
     mismatches = unmapped = 0
-    timed = sorted((goal for goal in goals if goal[1] is not None), key=lambda goal: (goal[1], goal[0]))
+    timed = sorted(
+        (goal for goal in goals if goal[1] is not None), key=lambda goal: (goal[1], goal[0])
+    )
     mismatches += len(goals) - len(timed)
     index = 0
     for dispatch in dispatches:
@@ -212,34 +273,101 @@ def match(
 def decision_rows(
     log: ExplorerLog, clock: ClockMap, origin_ns: int | None, activation_ns: int | None
 ) -> list[dict[str, Any]]:
-    """``explorer_decisions`` rows; version 1 logs only dispatches, so the decision columns stay null."""
-    rows = []
-    for dispatch in log.dispatches:
-        mapped = clock(dispatch.utc_ns)
-        rows.append(
+    """``explorer_decisions`` rows: one per format-2 decision line, or, in format 1 (which logs only
+    dispatches), one per dispatch with the decision columns null."""
+    if log.version >= 2:
+        return [
             dict(
-                time_s=(mapped - origin_ns) / 1e9
-                if mapped is not None and origin_ns is not None
-                else None,
-                t_activation_s=(mapped - activation_ns) / 1e9
-                if mapped is not None and activation_ns is not None
-                else None,
-                time_mapped=mapped is not None,
-                utc_ns=dispatch.utc_ns,
-                kind=dispatch.kind,
-                selection_mode=dispatch.mode,
-                candidates=None,
-                pool_size=None,
-                route_length=None,
-                search_ms=None,
-                ordering_ms=None,
-                decision_map_cache_hits=None,
-                decision_map_cache_misses=None,
-                frontier_cache_hits=None,
-                frontier_cache_misses=None,
-                order_cache_hits=None,
-                order_cache_misses=None,
+                _times(line.utc_ns, clock, origin_ns, activation_ns),
+                utc_ns=line.utc_ns,
+                kind=line.fields.get("trigger"),
+                selection_mode=line.fields.get("mode"),
+                candidates=line.integer("candidates"),
+                pool_size=line.integer("pool_size"),
+                route_length=line.integer("route_length"),
+                search_ms=line.number("search_ms"),
+                ordering_ms=line.number("ordering_ms"),
+                decision_map_cache_hits=line.integer("decision_map_cache_hits"),
+                decision_map_cache_misses=line.integer("decision_map_cache_misses"),
+                frontier_cache_hits=line.integer("frontier_cache_hits"),
+                frontier_cache_misses=line.integer("frontier_cache_misses"),
+                order_cache_hits=line.integer("order_cache_hits"),
+                order_cache_misses=line.integer("order_cache_misses"),
                 log_format=log.version,
             )
+            for line in log.of_kind("decision")
+        ]
+    return [
+        dict(
+            _times(dispatch.utc_ns, clock, origin_ns, activation_ns),
+            utc_ns=dispatch.utc_ns,
+            kind=dispatch.kind,
+            selection_mode=dispatch.mode,
+            candidates=None,
+            pool_size=None,
+            route_length=None,
+            search_ms=None,
+            ordering_ms=None,
+            decision_map_cache_hits=None,
+            decision_map_cache_misses=None,
+            frontier_cache_hits=None,
+            frontier_cache_misses=None,
+            order_cache_hits=None,
+            order_cache_misses=None,
+            log_format=log.version,
         )
-    return rows
+        for dispatch in log.dispatches
+    ]
+
+
+def _times(
+    utc_ns: int, clock: ClockMap, origin_ns: int | None, activation_ns: int | None
+) -> dict[str, Any]:
+    mapped = clock(utc_ns)
+    return dict(
+        time_s=(mapped - origin_ns) / 1e9 if mapped is not None and origin_ns is not None else None,
+        t_activation_s=(mapped - activation_ns) / 1e9
+        if mapped is not None and activation_ns is not None
+        else None,
+        time_mapped=mapped is not None,
+    )
+
+
+def goals_by_dispatch(pairs: dict[int, Dispatch]) -> dict[int, int]:
+    """Format 2: the Nav2 goal sequence of each paired dispatch id."""
+    return {d.dispatch_id: sequence for sequence, d in pairs.items() if d.dispatch_id is not None}
+
+
+def gate_rows(
+    log: ExplorerLog,
+    clock: ClockMap,
+    origin_ns: int | None,
+    activation_ns: int | None,
+    goals: dict[int, int],
+) -> list[dict[str, Any]]:
+    """``gate_evaluations`` rows: one per format-2 gate line, its goal through the dispatch id (null when
+    that dispatch paired with no Nav2 goal); none in format 1."""
+    return [
+        dict(
+            _times(line.utc_ns, clock, origin_ns, activation_ns),
+            goal_sequence=goals.get(identity)
+            if (identity := line.integer("dispatch_id")) is not None
+            else None,
+            gate_value=line.number("gate_value"),
+            threshold=line.number("threshold"),
+            result=line.fields.get("result"),
+            log_format=log.version,
+        )
+        for line in log.of_kind("gate")
+    ]
+
+
+def cancels_by_dispatch(log: ExplorerLog) -> dict[int, Structured]:
+    """Format 2: the last cancel or replace line of each dispatch id (a rejected cancel may be followed by
+    another; the goals table uses it only for a goal that was canceled or preempted)."""
+    found: dict[int, Structured] = {}
+    for line in log.of_kind("cancel"):
+        identity = line.integer("dispatch_id")
+        if identity is not None:
+            found[identity] = line
+    return found

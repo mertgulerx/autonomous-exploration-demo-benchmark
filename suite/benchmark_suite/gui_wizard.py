@@ -664,9 +664,12 @@ class NoteLine(Themed):
 class SettingRow(Themed):
     """``.set``: padding 14 20 (screen 32), the label in a 240 px
     column (600 ink on a 32 px line; a note such as "· optional" in ``text.tertiary``) and the control 32 px
-    after it; a bottom rule unless last."""
+    after it; a bottom rule unless last. When less than ``STACK_BELOW`` px would stay beside the label (the
+    window's narrowest widths), the control goes under the label at the row's full width."""
 
     LABEL_WIDTH, GAP, PAD_X, PAD_Y = 240, 32, 20, 14
+    LABEL_LINE = 32  # the label's line, above a stacked control
+    STACK_BELOW = 360
 
     def __init__(
         self,
@@ -688,10 +691,37 @@ class SettingRow(Themed):
         self.setFixedHeight(2 * self.PAD_Y + height + (0 if last else 1))
         self.setAccessibleName(label)
 
+    def set_control_height(self, height: int) -> None:
+        """A control that wraps onto more lines (the Study row at narrow widths)."""
+        if height != self.control_height:
+            self.control_height = height
+            self.resizeEvent(QtGui.QResizeEvent(self.size(), self.size()))
+
+    def stacked(self, width: int | None = None) -> bool:
+        """The control goes under the label in a row ``width`` wide (the current one by default)."""
+        width = self.width() if width is None else width
+        return width - 2 * self.PAD_X - self.LABEL_WIDTH - self.GAP < self.STACK_BELOW
+
+    def control_width(self, width: int | None = None) -> int:
+        """The width the control gets in a row ``width`` wide (the current one by default)."""
+        width = self.width() if width is None else width
+        beside = 0 if self.stacked(width) else self.LABEL_WIDTH + self.GAP
+        return width - 2 * self.PAD_X - beside
+
+    def height_for(self, width: int) -> int:
+        """The row's height when it is ``width`` wide."""
+        label = self.LABEL_LINE if self.stacked(width) else 0
+        return 2 * self.PAD_Y + label + self.control_height + (0 if self.last else 1)
+
     def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
         super().resizeEvent(event)
-        left = self.PAD_X + self.LABEL_WIDTH + self.GAP
-        place(self.control, left, self.PAD_Y, self.width() - left - self.PAD_X, self.control_height)
+        width = self.width()
+        if self.height_for(width) != self.height():
+            self.setFixedHeight(self.height_for(width))
+        stacked = self.stacked(width)
+        left = self.PAD_X if stacked else self.PAD_X + self.LABEL_WIDTH + self.GAP
+        top = self.PAD_Y + (self.LABEL_LINE if stacked else 0)
+        place(self.control, left, top, self.control_width(width), self.control_height)
 
     def paintEvent(self, event: QtGui.QPaintEvent) -> None:
         painter = QtGui.QPainter(self)
@@ -807,14 +837,39 @@ class ExecutionCard(Card):
         self.study_range.setVisible(bool(text))
         self.repetition_row.relayout()
 
-    def natural_height(self) -> int:
-        """Border, head and the rows' fixed heights."""
-        return 2 + 52 + sum(row.minimumHeight() for row in self.rows)
+    def natural_height(self, width: int | None = None) -> int:
+        """Border, head and the rows' heights (at the card's ``width`` when given)."""
+        if width is None:
+            return 2 + 52 + sum(row.minimumHeight() for row in self.rows)
+        return 2 + 52 + sum(row.height_for(width - 2) for row in self.rows)
 
 
 STUDY_CHOICES = (("Unassigned", 0), ("Existing study", 1), ("New study", 2))
 UNASSIGNED_STUDY, EXISTING_STUDY, NEW_STUDY = 0, 1, 2
 HASH_TEXT = TextStyle(12, 400, 18, mono=True)
+
+
+class StudyChoice(QtWidgets.QWidget):
+    """The Study row's control: the kind segments, then the ID field or study select (``width`` px) beside
+    them, or under them when ``wrapped``."""
+
+    def __init__(self, kind: "ChoiceSegments", fields: tuple[QtWidgets.QWidget, ...]) -> None:
+        super().__init__()
+        self.kind, self.fields = kind, fields
+        self.width_px, self.wrapped = 240.0, False
+        for widget in (kind, *fields):
+            widget.setParent(self)
+
+    def relayout(self) -> None:
+        kind = math.ceil(self.kind.natural_width())
+        self.kind.setGeometry(0, 0, kind, 32)
+        x, y = (0, 32 + 10) if self.wrapped else (kind + 10, 0)
+        for field in self.fields:
+            field.setGeometry(x, y, math.floor(self.width_px), 32)
+
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
+        super().resizeEvent(event)
+        self.relayout()
 
 
 class StudyForm(Card):
@@ -834,10 +889,7 @@ class StudyForm(Card):
         self.new_id.setAccessibleName("New study ID")
         self.existing = KeySelect(themes)
         self.existing.setAccessibleName("Existing study")
-        study = FlexRow(gap=10)
-        study.add(self.kind)
-        study.add(self.new_id, width=240)
-        study.add(self.existing, width=240)
+        study = StudyChoice(self.kind, (self.new_id, self.existing))
         self.study_row = study
         self.evidence = ChoiceSegments(themes, [("Exploratory", 0), ("Confirmatory", 1)])
         self.evidence.setAccessibleName("Evidence level")
@@ -878,10 +930,14 @@ class StudyForm(Card):
         enabled = kind != UNASSIGNED_STUDY
         for widget in (self.evidence, self.plan, self.choose):
             widget.setEnabled(enabled)
-        # the ID field or study select: 240 px, less when the card is narrow
-        room = self.study_row.width() - self.kind.natural_width() - 10
-        for field in (self.new_id, self.existing):
-            self.study_row.set_width(field, max(120.0, min(240.0, room)))
+        # the ID field or study select: 240 px beside the choice, less when the card is narrow, and on a line
+        # of its own under it when even 120 px does not fit there (the window's narrowest width)
+        width = self.rows[0].control_width() if self.rows[0].width() else self.study_row.width()
+        room = width - self.kind.natural_width() - 10
+        wrapped = room < 120 and kind != UNASSIGNED_STUDY
+        self.study_row.wrapped = wrapped
+        self.study_row.width_px = min(240.0, width) if wrapped else max(120.0, min(240.0, room))
+        self.rows[0].set_control_height(32 + 10 + 32 if wrapped else 32)
         self.study_row.relayout()
         self._plan_width()
 
@@ -897,15 +953,18 @@ class StudyForm(Card):
             - self.choose.natural_width()
             - (10 + self.hash.natural_width() if self.hash.text() else 0)
         )
-        self.plan_row.set_width(self.plan, max(120.0, room))
+        self.plan_row.set_width(self.plan, max(60.0, room))  # the hash is read before the path
         self.evidence.setGeometry(0, 0, math.ceil(self.evidence.natural_width()), 32)
 
     def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
         super().resizeEvent(event)
         self.sync()
 
-    def natural_height(self) -> int:
-        return 2 + 52 + sum(row.minimumHeight() for row in self.rows)
+    def natural_height(self, width: int | None = None) -> int:
+        """Border, head and the rows' heights (at the card's ``width`` when given)."""
+        if width is None:
+            return 2 + 52 + sum(row.minimumHeight() for row in self.rows)
+        return 2 + 52 + sum(row.height_for(width - 2) for row in self.rows)
 
 
 @dataclass(frozen=True, slots=True)

@@ -58,6 +58,9 @@ STATUS_TEXT = TextStyle(12.5, 400, 18)
 STATUS_MONO = TextStyle(12, 400, 18, mono=True)
 NOTE_TEXT = TextStyle(12, 400, 18)
 LINES = 400  # the log keeps this many lines
+STATUS_RETRIES = (
+    5  # export status polls that may fail in a row before the export is reported failed
+)
 State = Literal["running", "finished", "refused", "failed", "stopped"]
 LOOKS: dict[State, BadgeLook] = {
     "running": BadgeLook("Running", "running", "loader"),
@@ -90,6 +93,7 @@ class Job:
     lines: list[str] = field(default_factory=list)
     detail: str = ""  # the outputs' directory, the export's path, or the reason it did not finish
     export_id: str | None = None
+    status_failures: int = 0  # export status polls failed in a row
     cancelled: bool = False  # Cancel was pressed: a stop, not a failure, ends it
     partial: dict[bool, str] = field(default_factory=lambda: {False: "", True: ""})  # by stderr
 
@@ -325,6 +329,12 @@ class Jobs(QtCore.QObject):
         process.setArguments(["-m", "benchmark_analysis", "--export", path])
         environment = QtCore.QProcessEnvironment.systemEnvironment()
         environment.insert("PYTHONUNBUFFERED", "1")
+        for name in (
+            "PYTHONPATH",
+            "VIRTUAL_ENV",
+            "PYTHONHOME",
+        ):  # its own environment only, never the GUI's
+            environment.remove(name)
         process.setProcessEnvironment(environment)
         process.readyReadStandardOutput.connect(lambda: self._read(process, False))
         process.readyReadStandardError.connect(lambda: self._read(process, True))
@@ -389,8 +399,8 @@ class Jobs(QtCore.QObject):
         self.process = None
         process.deleteLater()
         self._refresh(job)
-        if job.state in ("finished", "refused"):
-            self.analysed.emit(job.study_id)  # new outputs, or a kept refusal (RO-22)
+        # any end: new outputs, a kept refusal (RO-22), or a directory a failed run left (listed as unreadable)
+        self.analysed.emit(job.study_id)
 
     def _error(self, process: QtCore.QProcess, error: QtCore.QProcess.ProcessError) -> None:
         if (
@@ -456,6 +466,7 @@ class Jobs(QtCore.QObject):
             if job is None or job.state != "running":
                 return True
             state = result.get("state")
+            job.status_failures = 0
             if state == "running":
                 self.export_poll.start()
                 return True
@@ -484,11 +495,22 @@ class Jobs(QtCore.QObject):
         if not tag.startswith(("results-export:", "results-export-status:")):
             return False
         job = self.export
+        if job is not None and job.state == "running" and tag.startswith("results-export-status:"):
+            # one unanswered status poll says nothing about the export, which runs on in the engine
+            job.status_failures += 1
+            if job.status_failures < STATUS_RETRIES:
+                job.add(f"Status not read ({error}); asking again")
+                self.export_poll.start()
+                self._refresh(job)
+                return True
         if job is not None and job.state == "running":
             job.state, job.ended, job.detail = (
                 "refused" if tag.startswith("results-export:") else "failed",
                 time.monotonic(),
-                error,
+                error
+                if tag.startswith("results-export:")
+                else f"its status could not be read ({error}); the export may still finish and "
+                "then appears on the study card",
             )
             job.add(error)
             self._refresh(job)
