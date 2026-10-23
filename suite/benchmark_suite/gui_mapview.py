@@ -154,7 +154,7 @@ class MapControls(Themed):
 class LiveMap(Themed):
     """The map stage (see the module docstring); the widget is the stage (``.stage``). It shows a run's
     ``LiveLayers``; call ``update`` after changing them in place. Worlds & Spawns (``gui_spawns.SpawnMap``) and the
-    Results run summary (``gui_results.RunMapView``) change the class attributes below."""
+    Results run view (``gui_run_detail.RunMapView``) change the class attributes below."""
 
     PAD = PAD  # ``data-pad``: the fitted world's margin in the stage
     RING = "border.line"  # the 1 px ring around the world box

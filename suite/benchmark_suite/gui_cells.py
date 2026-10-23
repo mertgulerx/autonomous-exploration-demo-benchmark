@@ -55,10 +55,14 @@ from .gui_widgets import (
 
 CellKind = Literal["text", "name", "number", "mono", "badge", "rep", "check", "empty"]
 Align = Literal["left", "right"]
-NoteKind = Literal["excluded", "limit", "detail"]
+NoteKind = Literal["excluded", "limit", "detail", "attempts", "low", "tag"]
 
 CELL_ROLE = QtCore.Qt.ItemDataRole.UserRole + 41
 DIM_ROLE = QtCore.Qt.ItemDataRole.UserRole + 42  # the whole row in text.tertiary (excluded runs)
+# headerData: faint text after a column title (``th .v``: 400, ``text.tertiary``, 3 px after; "C(L) v2")
+SUFFIX_ROLE = QtCore.Qt.ItemDataRole.UserRole + 43
+# headerData: a second line under the title (``th small``: 11 px, ``text.tertiary``; a column's unit)
+SUBLINE_ROLE = QtCore.Qt.ItemDataRole.UserRole + 44
 
 MONO_TEXT = TextStyle(12, 400, 18, mono=True)
 # Style, colour and gap after the text (None: a space of the note's style).
@@ -66,8 +70,17 @@ NOTE_STYLES: dict[NoteKind, tuple[TextStyle, str, float | None]] = {
     "excluded": (TextStyle(11, 400, 18), "text.tertiary", 6.0),  # ``.excl`` after a badge
     "limit": (TextStyle(11.5, 400, 18), "state.warn", 4.0),  # censored durations: "30:00 limit"
     "detail": (BODY, "text.tertiary", None),  # "Default · world file": a space, then faint text
+    "attempts": (TextStyle(12, 400, 18), "text.secondary", 10.0),  # ``.att``: caret, "2 attempts"
+    "low": (TextStyle(11, 600, 18), "state.warn", 4.0),  # ``.lowt`` after a low minimum RTF
+    "tag": (TextStyle(11, 400, 18), "text.secondary", 8.0),  # ``.stag``: "confirmatory" in a frame
 }
+TAG_PAD = 5  # ``.stag`` padding 1 5 inside a 1 px ``border.strong`` frame, radius 4
+# A note drawn after an icon (``.att``: a 12 px caret, then 3 px).
+NOTE_ICONS: dict[NoteKind, str] = {"attempts": "cdown"}
+NOTE_ICON_SIZE, NOTE_ICON_GAP = 14, 3  # ``.i.sm``
 HEADER_TEXT = TextStyle(12, 500, 18)
+HEADER_SUFFIX = TextStyle(12, 400, 18)
+HEADER_SUBLINE = TextStyle(11, 400, 18)
 NO_TEXT: tuple[CellKind, ...] = ("badge", "check", "empty")
 
 
@@ -86,6 +99,8 @@ class Cell:
     note_kind: NoteKind = "excluded"
     check: QtCore.Qt.CheckState | None = None
     tooltip: str = ""
+    # the first occurrence of this part of the text in text.tertiary (``span.faint``)
+    faint: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,6 +136,7 @@ class TableLook:
     round_top: float = 0.0
     round_bottom: float = 0.0
     key: str = ""  # remembers dragged column widths as ``table/<key>`` (empty: not remembered)
+    last_rule: bool = False  # the last row keeps its bottom rule (a table above a pinned footer)
 
     def column(self, index: int) -> ColumnStyle:
         return self.columns[index] if 0 <= index < len(self.columns) else ColumnStyle()
@@ -192,8 +208,12 @@ class CellDelegate(TableTextDelegate):
         model = self.view.model()
         return model is None or row >= model.rowCount() - 1
 
+    def unruled(self, row: int) -> bool:
+        """Whether the row has no bottom rule (the last row, unless the look keeps it)."""
+        return self.is_last_row(row) and not self.look.last_rule
+
     def content_height(self, rect: QtCore.QRect, row: int) -> int:
-        return rect.height() - (0 if self.is_last_row(row) else 1)
+        return rect.height() - (0 if self.unruled(row) else 1)
 
     def text_frame(
         self, index: QtCore.QModelIndex | QtCore.QPersistentModelIndex, rect: QtCore.QRect
@@ -213,6 +233,10 @@ class CellDelegate(TableTextDelegate):
         if cell.note:  # a right-aligned value ends with its note ("30:00 limit")
             note_style, _, gap = NOTE_STYLES[cell.note_kind]
             unit += (style.advance(" ") if gap is None else gap) + note_style.advance(cell.note)
+            if cell.note_kind in NOTE_ICONS:
+                unit += NOTE_ICON_SIZE + NOTE_ICON_GAP
+            if cell.note_kind == "tag":
+                unit += 2 * (TAG_PAD + 1)
         width = style.advance(text) + unit
         if column.right(cell.kind):
             left = max(left, rect.x() + rect.width() - column.padding_right - width)
@@ -263,7 +287,7 @@ class CellDelegate(TableTextDelegate):
         selected = self.row_selected(
             index, bool(styled.state & QtWidgets.QStyle.StateFlag.State_Selected)
         )
-        last = self.is_last_row(row)
+        last = self.unruled(row)
         painter.save()
         fill = (
             "surface.selected"
@@ -382,7 +406,15 @@ class CellDelegate(TableTextDelegate):
                 theme.color("accent.soft"),
             )
         shown = style.elide(text, room)
-        advance = draw_text(painter, left, line_top, shown, style, theme.color(token))
+        if cell.faint and cell.faint in shown:
+            head, tail = shown.split(cell.faint, 1)
+            advance = draw_text(painter, left, line_top, head, style, theme.color(token))
+            advance += draw_text(
+                painter, left + advance, line_top, cell.faint, style, theme.color("text.tertiary")
+            )
+            advance += draw_text(painter, left + advance, line_top, tail, style, theme.color(token))
+        else:
+            advance = draw_text(painter, left, line_top, shown, style, theme.color(token))
         if cell.unit:
             unit_color = theme.color("text.tertiary")
             draw_text(painter, left + advance + 2, line_top, cell.unit, style, unit_color)
@@ -395,8 +427,29 @@ class CellDelegate(TableTextDelegate):
     ) -> None:
         note_style, token, gap = NOTE_STYLES[cell.note_kind]
         line_top = baseline - note_style.baseline(0)
-        space = note_style.advance(" ") if gap is None else gap
-        draw_text(painter, x + space, line_top, cell.note, note_style, theme.color(token))
+        x += note_style.advance(" ") if gap is None else gap
+        icon = NOTE_ICONS.get(cell.note_kind)
+        if icon is not None:
+            top = line_top + (note_style.line - NOTE_ICON_SIZE) / 2
+            gui_icons.draw(
+                painter,
+                icon,
+                theme.color(token),
+                QtCore.QPointF(snap(x), snap(top)),
+                NOTE_ICON_SIZE,
+            )
+            x += NOTE_ICON_SIZE + NOTE_ICON_GAP
+        if cell.note_kind == "tag":
+            width = note_style.advance(cell.note) + 2 * (TAG_PAD + 1)
+            frame = QtCore.QRectF(x + 0.5, line_top + 0.5, width - 1, note_style.line - 1)
+            painter.save()
+            painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+            painter.setPen(QtGui.QPen(theme.color("border.strong"), 1))
+            painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+            painter.drawRoundedRect(frame, 3.5, 3.5)
+            painter.restore()
+            x += TAG_PAD + 1
+        draw_text(painter, x, line_top, cell.note, note_style, theme.color(token))
 
     # hover tracking and tooltips
 
@@ -673,10 +726,16 @@ class TableHeader(QtWidgets.QHeaderView):
                     paint_check(painter, box, theme, check_mark(self.check_state))
                 continue
             text = str(model.headerData(logical, QtCore.Qt.Orientation.Horizontal) or "")
+            suffix = str(
+                model.headerData(logical, QtCore.Qt.Orientation.Horizontal, SUFFIX_ROLE) or ""
+            )
             sorted_here = logical == sorted_section
             color = theme.color("text.ink" if sorted_here else "text.secondary")
             space = HEADER_TEXT.advance(" ")
-            chevron = (14 + space) if sorted_here else 0.0
+            # the suffix and the chevron follow the title
+            chevron = (14 + space if sorted_here else 0.0) + (
+                3 + HEADER_SUFFIX.advance(suffix) if suffix else 0.0
+            )
             room = width - column.padding_left - column.padding_right
             left = float(x + column.padding_left)
             if column.right() and HEADER_TEXT.advance(text) + chevron > room:
@@ -685,7 +744,31 @@ class TableHeader(QtWidgets.QHeaderView):
                 shown = HEADER_TEXT.elide(text, room - chevron)
                 if column.right():
                     left = x + width - column.padding_right - HEADER_TEXT.advance(shown) - chevron
-            advance = draw_text(painter, left, line_top, shown, HEADER_TEXT, color)
+            subline = str(
+                model.headerData(logical, QtCore.Qt.Orientation.Horizontal, SUBLINE_ROLE) or ""
+            )
+            top = line_top - (HEADER_TEXT.line / 2 if subline else 0)
+            if subline:  # two 18 px lines (``th small`` is a block), centred together
+                below = HEADER_SUBLINE.elide(subline, room)
+                sub_left = (
+                    x + width - column.padding_right - HEADER_SUBLINE.advance(below)
+                    if column.right()
+                    else x + column.padding_left
+                )
+                draw_text(
+                    painter, sub_left, top + 18, below, HEADER_SUBLINE, theme.color("text.tertiary")
+                )
+            advance = draw_text(painter, left, top, shown, HEADER_TEXT, color)
+            if suffix:
+                advance += 3
+                advance += draw_text(
+                    painter,
+                    left + advance,
+                    top,
+                    suffix,
+                    HEADER_SUFFIX,
+                    theme.color("text.tertiary"),
+                )
             if sorted_here:
                 descending = self.sortIndicatorOrder() == QtCore.Qt.SortOrder.DescendingOrder
                 # ``vertical-align: -2px``: the 14 px chevron ends 2 px below the baseline
@@ -1160,6 +1243,24 @@ class PaintedTable(QtWidgets.QAbstractScrollArea):
         return ""
 
 
+def apply_columns(view: QtWidgets.QTableView, themes: ThemeManager, look: TableLook) -> TableHeader:
+    """A new header for ``look``'s columns: fixed widths (dragged ones remembered) and the flexible column;
+    also when a table's columns change (the view deletes its previous header)."""
+    hidden = view.horizontalHeader().isHidden()  # a table may paint its own header instead
+    header = TableHeader(themes, look, view)
+    view.setHorizontalHeader(header)
+    header.setHidden(hidden)  # a header made for a shown view starts hidden
+    header.setStretchLastSection(False)
+    for index, column in enumerate(look.columns):
+        if column.width is None:
+            header.setSectionResizeMode(index, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        else:
+            # The header resizes columns itself (``TableHeader``): Qt's own section dragging is off.
+            header.setSectionResizeMode(index, QtWidgets.QHeaderView.ResizeMode.Fixed)
+            header.resizeSection(index, round(header.sizes.widths.get(index, column.width)))
+    return header
+
+
 def style_table(
     view: QtWidgets.QTableView,
     themes: ThemeManager,
@@ -1168,11 +1269,10 @@ def style_table(
     delegate_class: type[CellDelegate] = CellDelegate,
 ) -> CellDelegate:
     """Apply the design to a table view: header, delegate, rows, no grid, no zebra; returns the delegate."""
-    header = TableHeader(themes, look, view)
     view.setProperty("designTable", True)
     view.style().unpolish(view)
     view.style().polish(view)
-    view.setHorizontalHeader(header)
+    apply_columns(view, themes, look)
     view.setShowGrid(False)
     view.setAlternatingRowColors(False)
     view.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
@@ -1183,14 +1283,6 @@ def style_table(
     view.setVerticalScrollMode(QtWidgets.QAbstractItemView.ScrollMode.ScrollPerPixel)
     view.setHorizontalScrollBarPolicy(QtCore.Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
     OverlayScrollBar(themes, view)
-    header.setStretchLastSection(False)
-    for index, column in enumerate(look.columns):
-        if column.width is None:
-            header.setSectionResizeMode(index, QtWidgets.QHeaderView.ResizeMode.Stretch)
-        else:
-            # The header resizes columns itself (``TableHeader``): Qt's own section dragging is off.
-            header.setSectionResizeMode(index, QtWidgets.QHeaderView.ResizeMode.Fixed)
-            header.resizeSection(index, round(header.sizes.widths.get(index, column.width)))
     previous = view.itemDelegate()
     delegate = delegate_class(view, themes, look)
     view.setItemDelegate(delegate)

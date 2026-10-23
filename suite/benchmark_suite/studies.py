@@ -33,7 +33,14 @@ import sqlite3
 from typing import Any, cast
 
 from .contracts import UNASSIGNED, ContractError, canonical
-from .run_record import FIELDS, INDEX_COLUMNS, RUN_RECORD_VERSION, read_time_fields
+from .run_record import (
+    FIELDS,
+    INDEX_COLUMNS,
+    MILESTONES,
+    RUN_RECORD_VERSION,
+    read_time_fields,
+    report_class,
+)
 from .store import (
     ACTIVE_STATES,
     TUNING_CAMPAIGN,
@@ -49,6 +56,12 @@ RUN_FILTERS = frozenset({*INDEX_COLUMNS, *RECORD_FILTERS, "is_final"})
 # Sortable: every scalar field of the record, and finality.
 RUN_SORT_KEYS = frozenset({field.name for field in FIELDS if field.kind != "list"} | {"is_final"})
 RUN_ORDER = "c.created_ns,c.id,e.position,r.attempt_number"
+# Time-to-event fields and their censor times: a censored run sorts as later than every observed one
+CENSORED_SORT = {
+    "activation_to_movement_s": "activation_to_movement_censor_s",
+    "completion_s": "completion_censor_s",
+    **{f"t{m}_s": f"t{m}_censor_s" for m in MILESTONES},
+}
 # Values whose mixing among full final records the export refuses (``refused_mixes``).
 REFUSED_MIXES = ("run_record_version", "dataset_schema", "coverage_metric_version")
 HOMOGENEOUS = ("timing_rule", "debug_streams", "diagnostics_enabled", "provenance_id")
@@ -105,20 +118,10 @@ def with_read_time(
     )
 
 
-def runs_page(
-    database: sqlite3.Connection,
-    filters: dict[str, Any],
-    offset: Any = 0,
-    limit: Any = 100,
-    sort_by: Any = None,
-    sort_descending: Any = False,
-) -> dict[str, Any]:
-    """One page of run records (``results.query`` table ``runs``), in plan order unless sorted."""
-    offset, limit = _page(offset, limit)
+def _run_source(database: sqlite3.Connection, filters: dict[str, Any]) -> tuple[str, list[Any]]:
+    """The FROM … WHERE of a run read and its arguments, from validated ``filters``."""
     if set(filters) - RUN_FILTERS:
         raise ContractError("filters", "Unsupported table or filter")
-    if type(sort_descending) is not bool:
-        raise ContractError("sort_descending", "Expected boolean")
     terms: list[str] = ["r.run_record_version=?"]
     arguments: list[Any] = [RUN_RECORD_VERSION]
     for key, value in filters.items():
@@ -140,9 +143,34 @@ def runs_page(
         else:
             terms.append(column + "=?")
             arguments.append(value)
-    # Tuning runs never appear in lists; a filter by their own campaign still reaches them.
-    if "campaign_id" not in filters:
+    # Tuning runs never appear in lists, and a study's runs are the ones its export holds (no campaign a
+    # restarted copy replaces); a filter by one campaign still reaches that campaign's runs.
+    if "campaign_id" not in filters and "study_id" in filters:
+        condition, replaced = held(database)
+        terms.append(condition)
+        arguments.extend(replaced)
+    elif "campaign_id" not in filters:
         terms.append(f"r.campaign_id NOT IN (SELECT id FROM campaigns WHERE {TUNING_CAMPAIGN})")
+    source = (
+        "run_records r JOIN experiments e ON e.id=r.experiment_id "
+        "JOIN campaigns c ON c.id=r.campaign_id WHERE " + " AND ".join(terms)
+    )
+    return source, arguments
+
+
+def runs_page(
+    database: sqlite3.Connection,
+    filters: dict[str, Any],
+    offset: Any = 0,
+    limit: Any = 100,
+    sort_by: Any = None,
+    sort_descending: Any = False,
+) -> dict[str, Any]:
+    """One page of run records (``results.query`` table ``runs``), in plan order unless sorted."""
+    offset, limit = _page(offset, limit)
+    if type(sort_descending) is not bool:
+        raise ContractError("sort_descending", "Expected boolean")
+    source, arguments = _run_source(database, filters)
     if sort_by is None:
         if sort_descending:
             raise ContractError("sort_by", "Choose a column before setting the sort direction")
@@ -157,11 +185,18 @@ def runs_page(
             if sort_by in INDEX_COLUMNS
             else f"json_extract(r.record,'$.{sort_by}')"
         )
-        order = f"{column} {'DESC' if sort_descending else 'ASC'},{RUN_ORDER}"
-    source = (
-        "run_records r JOIN experiments e ON e.id=r.experiment_id "
-        "JOIN campaigns c ON c.id=r.campaign_id WHERE " + " AND ".join(terms)
-    )
+        direction = "DESC" if sort_descending else "ASC"
+        if sort_by in CENSORED_SORT:
+            # observed times, then censored ones by their censor time (reversed when descending), then none
+            censor = f"json_extract(r.record,'$.{CENSORED_SORT[sort_by]}')"
+            first, second = (1, 0) if sort_descending else (0, 1)
+            rank = (
+                f"CASE WHEN {column} IS NOT NULL THEN {first} "
+                f"WHEN {censor} IS NOT NULL THEN {second} ELSE 2 END"
+            )
+            order = f"{rank},{column} {direction},{censor} {direction},{RUN_ORDER}"
+        else:
+            order = f"{column} IS NULL,{column} {direction},{RUN_ORDER}"  # unavailable values last
     rows = database.execute(
         "SELECT r.record,e.final_attempt_id,e.state,"
         "(SELECT COUNT(*) FROM attempts n WHERE n.experiment_id=r.experiment_id) "
@@ -182,6 +217,29 @@ def runs_page(
         offset=offset,
         next_offset=offset + len(rows) if offset + len(rows) < total else None,
     )
+
+
+def run_counts(database: sqlite3.Connection, filters: dict[str, Any]) -> dict[str, int]:
+    """Counts over every run a filter selects (``results.query`` runs with ``include: ["counts"]``): final
+    runs by report class (``reported-outcomes-v2``, as each row's read-time field) and the attempts that are
+    not final as ``discarded`` (a discard) or ``replaced`` (a timing rejection or an interruption, replaced or
+    waiting for its replacement). The Results footer reads them."""
+    source, arguments = _run_source(database, filters)
+    counts: Counter[str] = Counter()
+    for final, outcome, started, exited, state in database.execute(
+        "SELECT (e.final_attempt_id IS r.attempt_id),r.outcome,"
+        "json_extract(r.record,'$.insight_started'),json_extract(r.record,'$.insight_exited_before_stop'),"
+        f"e.state FROM {source}",
+        arguments,
+    ):
+        # json_extract gives SQLite integers for booleans; None stays None
+        started = None if started is None else bool(started)
+        exited = None if exited is None else bool(exited)
+        kind = report_class(bool(final), outcome, started, exited, state)
+        if kind == "not_final":
+            kind = "discarded" if outcome == "manual_discard" else "replaced"
+        counts[kind] += 1
+    return dict(sorted(counts.items()))
 
 
 def attempt_record(database: sqlite3.Connection, attempt_id: str) -> dict[str, Any] | None:

@@ -30,7 +30,7 @@ from typing import Any, Literal
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import gui_icons
-from .gui_controls import CheckBox, SearchField, SpinBox
+from .gui_controls import CheckBox, KeySelect, SearchField, SpinBox, Switch
 from .gui_theme import ThemeManager, border_width, snap
 from .gui_widgets import (
     BODY,
@@ -662,10 +662,11 @@ class NoteLine(Themed):
 
 
 class SettingRow(Themed):
-    """``.set``: padding 24 20, the label in a 240 px column (600 ink on a 32 px line; an optional
-    "· optional" in ``text.tertiary``) and the control 32 px after it; a bottom rule unless last."""
+    """``.set``: padding 14 20 (screen 32), the label in a 240 px
+    column (600 ink on a 32 px line; a note such as "· optional" in ``text.tertiary``) and the control 32 px
+    after it; a bottom rule unless last."""
 
-    LABEL_WIDTH, GAP, PAD_X, PAD_Y = 240, 32, 20, 24
+    LABEL_WIDTH, GAP, PAD_X, PAD_Y = 240, 32, 20, 14
 
     def __init__(
         self,
@@ -675,12 +676,14 @@ class SettingRow(Themed):
         height: int,
         *,
         optional: bool = False,
+        note: str = "",
         last: bool = False,
         parent: QtWidgets.QWidget | None = None,
     ) -> None:
         super().__init__(themes, parent)
         self.label, self.control, self.control_height = label, control, height
-        self.optional, self.last = optional, last
+        self.note = note or ("· optional" if optional else "")  # drawn after the label when set
+        self.last = last
         control.setParent(self)
         self.setFixedHeight(2 * self.PAD_Y + height + (0 if last else 1))
         self.setAccessibleName(label)
@@ -697,14 +700,14 @@ class SettingRow(Themed):
             painter,
             self.PAD_X,
             self.PAD_Y,
-            self.label + (" " if self.optional else ""),
+            self.label + (" " if self.note else ""),
             SETTING_LABEL,
             theme.color("text.ink"),
         )
-        if self.optional:
+        if self.note:
             # The span sits on the label's baseline in its own 15 px inline box.
             top = SETTING_LABEL.baseline(self.PAD_Y) - BODY.baseline(0)
-            draw_text(painter, x, top, "· optional", BODY, theme.color("text.tertiary"))
+            draw_text(painter, x, top, self.note, BODY, theme.color("text.tertiary"))
         if not self.last:
             painter.fillRect(
                 QtCore.QRect(0, self.height() - 1, self.width(), 1), theme.color("border.line")
@@ -759,24 +762,149 @@ class ExecutionCard(Card):
         repetitions.add(self.repetitions, width=112)
         repetitions.add(TextLine(themes, "Presets", BODY, "text.tertiary"))
         repetitions.add(self.presets)
+        # the study's numbers for these repetitions ("· study repetitions 1–5"; hidden when unassigned)
+        self.study_range = TextLine(themes, "", BODY, "text.tertiary")
+        repetitions.add(self.study_range)
+        self.repetition_row = repetitions
         execution = ExecutionControl(themes)
         self.concurrency = execution.concurrency
+        # Debug streams (A7): a run condition, recorded per run and checked across a study
+        self.debug = Switch(themes, "Off", gap=10)
+        self.debug.setAccessibleName("Debug streams")
+        self.debug_note = TextLine(themes, "", BODY, "text.tertiary")
+        debug = FlexRow(gap=10)
+        debug.add(self.debug)
+        debug.add(self.debug_note)
+        self.debug_row = debug
+        self.debug.toggled.connect(self._debug_text)
+        self._debug_text(False)
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(1, 1, 1, 1)
         layout.setSpacing(0)
         layout.addWidget(CardHead(themes, "Campaign"))
         self.rows = (
             SettingRow(themes, "Name", self.name, 32),
-            SettingRow(themes, "Description", self.description, 104, optional=True),
+            SettingRow(themes, "Description", self.description, 56, optional=True),
             SettingRow(themes, "Repetitions per combination", repetitions, 32),
-            SettingRow(themes, "Execution", execution, 59, last=True),
+            SettingRow(themes, "Execution", execution, 59),
+            SettingRow(themes, "Debug streams", debug, 32, last=True),
         )
         for row in self.rows:
             layout.addWidget(row)
         layout.addStretch(1)
 
+    def _debug_text(self, on: bool) -> None:
+        self.debug.setText("On" if on else "Off")
+        self.debug_note.setText(
+            "· records Nav2 feedback at 1 Hz per goal and command rows"
+            if on
+            else "· records Nav2 feedback and command rows when on"
+        )
+        self.debug_row.relayout()
+
+    def set_study_range(self, text: str) -> None:
+        self.study_range.setText(text)
+        self.study_range.setVisible(bool(text))
+        self.repetition_row.relayout()
+
     def natural_height(self) -> int:
-        """Border, head and the rows' fixed heights (476 px)."""
+        """Border, head and the rows' fixed heights."""
+        return 2 + 52 + sum(row.minimumHeight() for row in self.rows)
+
+
+STUDY_CHOICES = (("Unassigned", 0), ("Existing study", 1), ("New study", 2))
+UNASSIGNED_STUDY, EXISTING_STUDY, NEW_STUDY = 0, 1, 2
+HASH_TEXT = TextStyle(12, 400, 18, mono=True)
+
+
+class StudyForm(Card):
+    """``.form.study`` (32): "Study" with the study (Unassigned, an existing study, or a new one by its ID),
+    its evidence level as the researcher declares it (Exploratory or Confirmatory) and its plan (a Markdown
+    file in the checkout, its SHA-256 above the deviations log as the engine computes it; required for
+    confirmatory)."""
+
+    choose_plan = QtCore.Signal()
+
+    def __init__(self, themes: ThemeManager, parent: QtWidgets.QWidget | None = None) -> None:
+        super().__init__(themes, parent)
+        self.kind = ChoiceSegments(themes, STUDY_CHOICES)
+        self.kind.setAccessibleName("Study")
+        self.new_id = QtWidgets.QLineEdit()
+        self.new_id.setPlaceholderText("Study ID, e.g. S2-threshold")
+        self.new_id.setAccessibleName("New study ID")
+        self.existing = KeySelect(themes)
+        self.existing.setAccessibleName("Existing study")
+        study = FlexRow(gap=10)
+        study.add(self.kind)
+        study.add(self.new_id, width=240)
+        study.add(self.existing, width=240)
+        self.study_row = study
+        self.evidence = ChoiceSegments(themes, [("Exploratory", 0), ("Confirmatory", 1)])
+        self.evidence.setAccessibleName("Evidence level")
+        evidence = QtWidgets.QWidget()
+        self.evidence.setParent(evidence)
+        self.plan = QtWidgets.QLineEdit()
+        self.plan.setPlaceholderText("docs/research/experiments/YYYY-MM-DD-slug.md")
+        self.plan.setAccessibleName("Plan")
+        self.choose = Button(themes, "Choose…", icon="folder")
+        self.choose.clicked.connect(self.choose_plan.emit)
+        self.hash = TextLine(themes, "", HASH_TEXT, "text.secondary")
+        plan = FlexRow(gap=10)
+        plan.add(self.plan)
+        plan.add(self.choose)
+        plan.add(self.hash)
+        self.plan_row = plan
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(1, 1, 1, 1)
+        layout.setSpacing(0)
+        layout.addWidget(CardHead(themes, "Study"))
+        self.rows = (
+            SettingRow(themes, "Study", study, 32),
+            SettingRow(themes, "Evidence level", evidence, 32),
+            SettingRow(themes, "Plan", plan, 32, note="· required for confirmatory", last=True),
+        )
+        for row in self.rows:
+            layout.addWidget(row)
+        layout.addStretch(1)
+        self.kind.set_index(UNASSIGNED_STUDY)
+        self.evidence.set_index(0)
+        self.kind.changed.connect(lambda _: self.sync())
+        self.sync()
+
+    def sync(self) -> None:
+        kind = self.kind.index()
+        self.new_id.setVisible(kind == NEW_STUDY)
+        self.existing.setVisible(kind == EXISTING_STUDY)
+        enabled = kind != UNASSIGNED_STUDY
+        for widget in (self.evidence, self.plan, self.choose):
+            widget.setEnabled(enabled)
+        # the ID field or study select: 240 px, less when the card is narrow
+        room = self.study_row.width() - self.kind.natural_width() - 10
+        for field in (self.new_id, self.existing):
+            self.study_row.set_width(field, max(120.0, min(240.0, room)))
+        self.study_row.relayout()
+        self._plan_width()
+
+    def set_hash(self, text: str) -> None:
+        self.hash.setText(text)
+        self._plan_width()
+
+    def _plan_width(self) -> None:
+        """The plan field takes the room the button and the hash leave (``.input.grow``)."""
+        room = (
+            self.plan_row.width()
+            - 10
+            - self.choose.natural_width()
+            - (10 + self.hash.natural_width() if self.hash.text() else 0)
+        )
+        self.plan_row.set_width(self.plan, max(120.0, room))
+        self.evidence.setGeometry(0, 0, math.ceil(self.evidence.natural_width()), 32)
+
+    def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
+        super().resizeEvent(event)
+        self.sync()
+
+    def natural_height(self) -> int:
         return 2 + 52 + sum(row.minimumHeight() for row in self.rows)
 
 
@@ -793,6 +921,7 @@ class SummaryItem:
 class DraftFacts:
     robots: tuple[SummaryItem, ...] = ()
     worlds: tuple[SummaryItem, ...] = ()
+    study: tuple[SummaryItem, ...] = ()  # "Study & recording" (32)
     combinations: tuple[SummaryItem, ...] = ()
     per_repetition: int = 0
     note: str = ""
@@ -832,16 +961,19 @@ class DraftSummary(Card):
         return [
             ("Robots & profiles", self.facts.robots),
             ("Worlds & starting poses", self.facts.worlds),
+            ("Study & recording", self.facts.study),
             ("Combinations", self.facts.combinations),
         ]
 
     def natural_height(self) -> int:
         """Border, head, the groups with their rules, the per-repetition total and the note."""
         height = 2 + 52.0
-        for index, (_, items) in enumerate(self.groups()):
+        groups = self.groups()
+        for index, (_, items) in enumerate(groups):
+            last = index == len(groups) - 1
             height += self.GROUP_TOP + self.HEAD + self.ITEM * len(items)
-            height += 4 + self.TOTAL + (20 if self.facts.note else 0) if index == 2 else 0
-            height += self.GROUP_BOTTOM + (1 if index < 2 else 0)
+            height += 4 + self.TOTAL + (20 if self.facts.note else 0) if last else 0
+            height += self.GROUP_BOTTOM + (0 if last else 1)
         return math.ceil(height)
 
     def resizeEvent(self, event: QtGui.QResizeEvent) -> None:

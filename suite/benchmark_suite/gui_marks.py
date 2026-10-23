@@ -353,7 +353,6 @@ class Meter(Themed):
 
 KV_LABEL = TextStyle(13, 400, 18)
 KV_VALUE = TextStyle(13, 500, 18, tabular=True)
-KV_UNIT = TextStyle(13, 400, 18)
 
 
 @dataclass(frozen=True, slots=True)
@@ -363,12 +362,18 @@ class KeyValue:
     unit: str = ""
     tooltip: str = ""
     value_token: str = "text.ink"
+    value_style: TextStyle | None = None  # this row's value style (the list's by default)
+    mark: str | None = None  # a 7 px dot in this colour token before the value (``.okd``, ``.wd``)
+    action: str = ""  # a link after the value ("Show log"); a click emits ``KeyValueList.acted``
 
 
 class KeyValueList(Themed):
     """``.kv``: rows with a bottom rule each; label ``text.secondary`` left, value ink 500 right-aligned with
-    tabular figures and a muted unit. ``row_height`` 30 (32 on Monitor and the Results summary, with a 12.5 px
-    label); ``last_open`` leaves the last row without its rule."""
+    tabular figures and a muted unit. ``row_height`` 30 (32 on Monitor, 31 in the Results run view, with a 12.5 px
+    label); ``last_open`` leaves the last row without its rule. ``value_style`` sets the values' size (the
+    units follow it at weight 400)."""
+
+    acted = QtCore.Signal(int)  # the row whose action was clicked
 
     def __init__(
         self,
@@ -376,11 +381,14 @@ class KeyValueList(Themed):
         *,
         row_height: int = 30,
         label_style: TextStyle = KV_LABEL,
+        value_style: TextStyle = KV_VALUE,
         last_open: bool = False,
         parent: QtWidgets.QWidget | None = None,
     ) -> None:
         super().__init__(themes, parent)
         self.row_height, self.label_style, self.last_open = row_height, label_style, last_open
+        self.value_style = value_style
+        self.unit_style = TextStyle(value_style.size, 400, value_style.line)
         self.rows: list[KeyValue] = []
         self.setSizePolicy(
             QtWidgets.QSizePolicy.Policy.Preferred, QtWidgets.QSizePolicy.Policy.Fixed
@@ -407,13 +415,23 @@ class KeyValueList(Themed):
             (
                 self.label_style.advance(row.label)
                 + 16
-                + KV_VALUE.advance(row.value)
-                + (2 + KV_UNIT.advance(row.unit) if row.unit else 0)
+                + (row.value_style or self.value_style).advance(row.value)
+                + (2 + self.unit_style.advance(row.unit) if row.unit else 0)
                 for row in self.rows
             ),
             default=0.0,
         )
         return QtCore.QSize(math.ceil(width), self.row_height * len(self.rows))
+
+    def mouseReleaseEvent(self, event: QtGui.QMouseEvent) -> None:
+        row = int(event.position().y() // self.row_height)
+        if 0 <= row < len(self.rows) and self.rows[row].action:
+            action = self.rows[row]
+            link = TextStyle((action.value_style or self.value_style).size, 500, 18)
+            if event.position().x() >= self.width() - link.advance(action.action) - 4:
+                self.acted.emit(row)
+                return
+        super().mouseReleaseEvent(event)
 
     def event(self, event: QtCore.QEvent) -> bool:
         if event.type() == QtCore.QEvent.Type.ToolTip and isinstance(event, QtGui.QHelpEvent):
@@ -440,19 +458,47 @@ class KeyValueList(Themed):
                 self.label_style,
                 self.color("text.secondary"),
             )
-            unit_width = (2 + KV_UNIT.advance(row.unit)) if row.unit else 0.0
-            value_width = KV_VALUE.advance(row.value)
-            x = width - unit_width - value_width
-            draw_text(
-                painter, x, top + top_offset, row.value, KV_VALUE, self.color(row.value_token)
-            )
+            style = row.value_style or self.value_style
+            right = float(width)
+            if row.action:  # the link at the right, 8 px after the value
+                link = TextStyle(style.size, 500, style.line)
+                link_width = link.advance(row.action)
+                draw_text(
+                    painter,
+                    right - link_width,
+                    top + top_offset,
+                    row.action,
+                    link,
+                    self.color("text.ink"),
+                )
+                baseline = link.baseline(top + top_offset) + 2
+                painter.fillRect(
+                    QtCore.QRectF(right - link_width, baseline, link_width, 1),
+                    self.color("text.ink"),
+                )
+                right -= link_width + 8
+            unit_width = (2 + self.unit_style.advance(row.unit)) if row.unit else 0.0
+            # a long value is cut to the room the label leaves (``.kv .v`` padding-left 16)
+            room = right - self.label_style.advance(row.label) - 16 - unit_width
+            value = style.elide(row.value, room)
+            value_width = style.advance(value)
+            x = right - unit_width - value_width
+            draw_text(painter, x, top + top_offset, value, style, self.color(row.value_token))
+            if row.mark:  # ``vertical-align: 1px`` on the text's baseline, 6 px before it
+                baseline = style.baseline(top + top_offset)
+                painter.save()
+                painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+                painter.setPen(QtCore.Qt.PenStyle.NoPen)
+                painter.setBrush(self.color(row.mark))
+                painter.drawEllipse(QtCore.QRectF(x - 6 - 7, baseline - 1 - 7, 7, 7))
+                painter.restore()
             if row.unit:
                 draw_text(
                     painter,
-                    width - unit_width + 2,
+                    right - unit_width + 2,
                     top + top_offset,
                     row.unit,
-                    KV_UNIT,
+                    self.unit_style,
                     self.color("text.tertiary"),
                 )
             if not open_row:
@@ -470,6 +516,14 @@ class CoverageSample:
     seconds: float  # simulation time since the attempt's first movement
     percent: float
     start: bool = False  # the line breaks before this sample (a gap in the data)
+
+
+def tick_step(span: float, ticks: int = 5) -> float:
+    """The first of the chart steps that puts at most ``ticks`` intervals on ``span`` seconds."""
+    for step in (10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200):
+        if span / step <= ticks:
+            return float(step)
+    return 14400.0
 
 
 class CoverageChart(Themed):
@@ -507,13 +561,6 @@ class CoverageChart(Themed):
         last = self.samples[-1].seconds if self.samples else 0.0
         return max(60.0, last * 1.1)
 
-    @staticmethod
-    def _tick_step(span: float) -> float:
-        for step in (10, 15, 30, 60, 120, 300, 600, 900, 1800, 3600, 7200):
-            if span / step <= 5:
-                return float(step)
-        return 14400.0
-
     def paintEvent(self, event: QtGui.QPaintEvent) -> None:
         painter = QtGui.QPainter(self)
         painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
@@ -536,7 +583,7 @@ class CoverageChart(Themed):
                 left + plot_w * sample.seconds / span, bottom - plot_h * sample.percent / 100
             )
 
-        step = self._tick_step(span)
+        step = tick_step(span)
         tick = 0.0
         while tick <= span + 1e-9:
             text = duration(tick)

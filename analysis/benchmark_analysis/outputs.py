@@ -14,14 +14,16 @@
 
 """Writes every output with its sidecar (RESULTS_OVERHAUL §7 and A15; FIGURE_STYLE §1, §11).
 
-The output directory holds ``stats.json``, ``coverage_grid.parquet``, ``tables/<T>.csv|.tex``,
+The output directory holds ``stats.json``, ``coverage_grid.parquet``, ``tables/<T>.csv|.tex|.pdf`` (the PDF a typeset sheet, RO-19),
 ``figures/<F>.pdf`` with ``contact_sheets/<F>.png``, and one ``<output>.sidecar.json`` beside each: the code and
 environment, the export's ``SHA256SUMS`` hash and the hashes of the files read, the settings and their sources,
-the seed, the evidence level, the confirmatory checks, the attempts behind the output and, for figures, the
-``check_pdf`` result and the alt text. Nothing written holds a time, a path or a host name, so two runs on one
+the seed, the evidence level, the confirmatory checks, the attempts behind the output, its ``counts`` (RO-21: n
+as it uses them, runs and for paired outputs pairs, and what it leaves out) and, for figures, the ``check_pdf``
+result and the alt text. Nothing written holds a time, a path or a host name, so two runs on one
 export give byte-identical files.
 """
 
+from collections import Counter
 from collections.abc import Callable, Iterable
 from datetime import UTC, datetime
 import json
@@ -31,7 +33,7 @@ from typing import Any
 import matplotlib.pyplot as plt
 import pyarrow.parquet as pq
 
-from . import checks, figures, style, tables
+from . import checks, figures, sheets, style, tables
 from .data import Study, coverage_grid, load
 from .environment import environment
 from .estimates import STATS_FORMAT, Entries, estimates
@@ -107,19 +109,70 @@ def confirmatory_checks(study: Study, settings: Settings) -> list[dict[str, Any]
     return found
 
 
+# Outputs whose n is pairs of runs (block × profile against Default), besides their runs.
+PAIRED = ("T5", "S", "F3_")
+
+
+def _pairs(study: Study, used: set[str]) -> int:
+    """Profile runs paired with their block's Default run, both among ``used``."""
+    count = 0
+    for stratum in study.strata:
+        baseline = study.baselines.get(stratum.robot_id)
+        blocks: dict[str, set[str]] = {}
+        for run in stratum.finals:
+            if run["attempt_id"] in used:
+                blocks.setdefault(run["block_id"], set()).add(run["profile_id"])
+        count += sum(
+            len(profiles - {baseline}) for profiles in blocks.values() if baseline in profiles
+        )
+    return count
+
+
+def scope_counts(study: Study, attempt_ids: Iterable[str], *, pairs: bool) -> dict[str, Any]:
+    """RO-21: the output's n and what it leaves out, for the n line under its view.
+
+    ``runs``: final runs it uses; ``pairs`` (paired outputs only); ``left_out``: the study's other final runs by
+    report class (``reported`` for reported runs this output does not use, such as parallel runs in the compute
+    outputs); ``replaced`` and ``discarded``: attempts that are not final; ``strata`` and ``profiles``."""
+    used = set(attempt_ids)
+    finals = study.finals
+    left = Counter(str(run["report_class"]) for run in finals if run["attempt_id"] not in used)
+    earlier = Counter(
+        "discarded" if run["outcome"] == "manual_discard" else "replaced"
+        for run in study.runs
+        if not run["is_final"]
+    )
+    counts: dict[str, Any] = dict(
+        runs=sum(run["attempt_id"] in used for run in finals),
+        final_runs=len(finals),
+        left_out=dict(sorted(left.items())),
+        replaced=earlier["replaced"],
+        discarded=earlier["discarded"],
+        strata=len(study.strata),
+        profiles=len({run["profile_id"] for run in finals}),
+    )
+    if pairs:
+        counts["pairs"] = _pairs(study, used)
+    return counts
+
+
 def _sidecar(
     base: dict[str, Any],
-    export: Export,
+    study: Study,
     inputs: Iterable[str],
     attempt_ids: Iterable[str],
     **extra: Any,
 ) -> str:
+    export = study.export
     names = sorted({name for name in inputs if name in export.files})
+    used = sorted(set(attempt_ids))
+    output = str(extra.get("output", ""))
     return json_text(
         {
             **base,
             "inputs": export.input_hashes(*names),
-            "attempt_ids": sorted(set(attempt_ids)),
+            "attempt_ids": used,
+            "counts": scope_counts(study, used, pairs=output.startswith(PAIRED)),
             **extra,
         }
     )
@@ -158,11 +211,10 @@ def write_all(
         json_text(dict(format=STATS_FORMAT, study_id=export.study_id, entries=entries)),
         encoding="utf-8",
     )
-    all_attempts = [r["attempt_id"] for r in study.finals]
+    # the runs any entry uses (the sensitivity populations add excluded ones)
+    used = sorted({a for entry in entries for a in entry.get("attempt_ids", [])})
     (directory / "stats.sidecar.json").write_text(
-        _sidecar(
-            base, export, INPUTS["stats"], all_attempts, output="stats.json", entries=len(entries)
-        ),
+        _sidecar(base, study, INPUTS["stats"], used, output="stats.json", entries=len(entries)),
         encoding="utf-8",
     )
     log(f"stats.json: {len(entries)} entries")
@@ -173,7 +225,7 @@ def write_all(
     (directory / "coverage_grid.sidecar.json").write_text(
         _sidecar(
             base,
-            export,
+            study,
             INPUTS["coverage_grid"],
             grid.column("attempt_id").unique().to_pylist(),
             output="coverage_grid.parquet",
@@ -185,15 +237,23 @@ def write_all(
     table_directory = directory / "tables"
     for table in tables.tables(source):
         tables.write(table, table_directory)
+        sheet_path = table_directory / f"{table.name}.pdf"
+        with style.context(preset, sans):
+            width = sheets.write(table, sheet_path, preset)
+        result = checks.check_pdf(sheet_path, width)
+        if result.get("problems"):
+            warnings.append(f"table {table.name}: " + "; ".join(result["problems"]))
         (table_directory / f"{table.name}.sidecar.json").write_text(
             _sidecar(
                 base,
-                export,
+                study,
                 INPUTS.get(table.name, INPUTS["stats"]),
                 table.attempt_ids,
                 output=table.name,
+                files=[f"{table.name}.csv", f"{table.name}.tex", f"{table.name}.pdf"],
                 title=table.title,
                 notes=table.notes,
+                check_pdf=result,
             ),
             encoding="utf-8",
         )
@@ -229,7 +289,7 @@ def write_all(
             (figure_directory / f"{built.name}.sidecar.json").write_text(
                 _sidecar(
                     base,
-                    export,
+                    study,
                     inputs,
                     built.attempt_ids,
                     output=f"{built.name}.pdf",

@@ -35,6 +35,10 @@ TOOLTIP = QtCore.Qt.ItemDataRole.ToolTipRole
 ALIGNMENT = QtCore.Qt.ItemDataRole.TextAlignmentRole
 # The only roles TableModel answers; views ask for about ten roles per painted or measured cell.
 TABLE_ROLES = frozenset({DISPLAY, TOOLTIP, ALIGNMENT})
+# the checkout the GUI runs from (suite/benchmark_suite/..)
+ROOT = Path(__file__).resolve().parents[2]
+# a background read answers "loading" until it is built; it is asked again after this many ms
+POLL_MS = 300
 
 
 class TextSelection(QtCore.QObject):
@@ -186,6 +190,27 @@ class Transport(QtCore.QThread):
                 elif method == "local.write":
                     atomic_bytes(Path(params["path"]), params["text"].encode())
                     result = {"path": params["path"]}
+                # a directory's entries (the Study tab's analysis outputs)
+                elif method == "local.list":
+                    path = Path(params["path"])
+                    result = {
+                        "path": str(path),
+                        "entries": [
+                            {
+                                "name": child.name,
+                                "directory": child.is_dir(),
+                                "size": status.st_size,
+                                "modified_ns": status.st_mtime_ns,
+                            }
+                            for child in sorted(path.iterdir())
+                            for status in (child.stat(),)
+                        ],
+                    }
+                elif method == "local.read_bytes":  # a produced PDF for the Study tab's viewer
+                    path = Path(params["path"])
+                    if path.stat().st_size > 16 * 1024 * 1024:
+                        raise ValueError("File exceeds 16 MiB")
+                    result = {"bytes": path.read_bytes()}
                 else:
                     result = self.client.call(method, params, identity)
                 self.received.emit(tag, result)
@@ -415,6 +440,8 @@ class PagedTable(QtWidgets.QWidget):
         self.filters: dict[str, Any] = {}
         self.sort_by: str | None = None
         self.sort_descending = False
+        self.summary = True  # results.query summary rows; run pages take none
+        self.include: list[str] = []  # results.query optional parts (the Campaigns page's study)
         self.offset, self.total, self.busy = 0, 0, False
         self.refresh_pending = False
         self.context: tuple[str, str] | None = None
@@ -540,7 +567,8 @@ class PagedTable(QtWidgets.QWidget):
                     params,
                     offset=self.offset,
                     limit=100,
-                    summary=True,
+                    **({"summary": True} if self.summary else {}),
+                    **({"include": list(self.include)} if self.include else {}),
                 ),
             )
 

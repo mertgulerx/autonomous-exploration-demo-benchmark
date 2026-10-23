@@ -56,6 +56,7 @@ from .studies import (
     last_repetition,
     provenance_document,
     read_study,
+    run_counts,
     runs_page,
     studies_page,
 )
@@ -718,14 +719,21 @@ class Engine:
         if method == "results.query" and params.get("table") == "runs":
             if params.get("cursor") is not None or params.get("summary", False) is not False:
                 raise ContractError("table", "Run pages take no cursor or summary")
-            return runs_page(
+            include = params.get("include", [])
+            if include not in ([], ["counts"]):
+                raise ContractError("include", "Choose counts for run pages")
+            filters = mapping(params.get("filters", {}), "filters")
+            page = runs_page(
                 self.store.db,
-                mapping(params.get("filters", {}), "filters"),
+                filters,
                 params.get("offset", 0),
                 params.get("limit", 100),
                 params.get("sort_by"),
                 params.get("sort_descending", False),
             )
+            if include:
+                page["counts"] = run_counts(self.store.db, filters)
+            return page
         if method == "results.query":
             include = params.get("include", [])
             if include not in ([], ["study"]) or (include and params.get("table") != "campaigns"):

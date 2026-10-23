@@ -17,7 +17,10 @@
 The outputs go to ``--out`` or, by default, beside the export: ``<study>/analysis/<version>-<hash8>`` where the
 hash is the export's ``SHA256SUMS`` hash (writing into the export would break it). The directory is built under a
 temporary name and renamed when complete; an existing one is never overwritten, and a stop (SIGTERM) removes
-both. A relative ``--out`` is relative to the working directory.
+both (once the outputs are complete, a stop is ignored and the run finishes). A relative ``--out`` is relative to the working directory. A refusal of a study export writes
+``<study>/analysis/refused-<version>-<hash8>.json`` beside where the outputs would have gone (RO-22: the
+reason, the column whose values differ, the stratum and each value's runs); a later run of that version on
+that export that finishes removes it.
 
 Protocol for a caller such as the GUI: progress lines on stdout, ``warning: …`` lines on stdout, ``done: <dir>``
 as the last stdout line, ``refused: …`` on stderr. Exit codes: 0 done, 2 refused, 1 failed, 143 stopped.
@@ -48,9 +51,19 @@ def default_out(export: Export) -> Path:
     """``results/studies/<study>/analysis/<version>-<hash8>`` beside ``.../exports/<export>``."""
     if export.directory.parent.name != "exports":
         raise Refused(
-            "the export is not in a study's exports/ directory: name an output with --out"
+            "the export is not in a study's exports/ directory: name an output with --out",
+            kept=False,
         )
     return export.directory.parent.parent / "analysis" / f"{__version__}-{export.sums_sha256[:8]}"
+
+
+def refusal_path(export: Export) -> Path | None:
+    """Where a refusal of ``export`` is kept: beside its default output (None outside a study's exports/)."""
+    try:
+        target = default_out(export)
+    except Refused:
+        return None
+    return target.with_name(f"refused-{target.name}.json")
 
 
 def run(
@@ -58,19 +71,46 @@ def run(
 ) -> Path:
     log(f"benchmark_analysis {__version__}: checking {export_directory.name}")
     export = open_export(export_directory)
+    try:
+        return _analyse(export, out, preset=preset, sans=sans)
+    except Refused as exc:
+        kept = refusal_path(export) if out is None and exc.kept else None
+        if kept is not None:
+            kept.parent.mkdir(parents=True, exist_ok=True)
+            kept.write_text(
+                json_text(
+                    dict(
+                        format="refusal-v1",
+                        study_id=export.study_id,
+                        export_sha256sums=export.sums_sha256,
+                        module_version=__version__,
+                        **exc.document(),
+                    )
+                ),
+                encoding="utf-8",
+            )
+        raise
+
+
+def _analyse(export: Export, out: Path | None, *, preset: str, sans: bool) -> Path:
     config = settings(export.study)
     target = (out or default_out(export)).resolve()
     if target.is_relative_to(export.directory):
         raise Refused(
-            "the output directory cannot be inside the export (it would break SHA256SUMS)"
+            "the output directory cannot be inside the export (it would break SHA256SUMS)",
+            kept=False,
         )
     target.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        target.mkdir()  # claims the name; the finished outputs replace this empty directory
-    except FileExistsError as exc:
-        raise Refused(f"{target.name} already exists; outputs are never overwritten") from exc
     staging = target.with_name(f"{target.name}.partial-{os.getpid()}")
+    claimed = False  # only a directory this run claimed is removed on a stop or an error
     try:
+        try:
+            target.mkdir()  # claims the name; the finished outputs replace this empty directory
+        except FileExistsError as exc:
+            raise Refused(
+                f"{target.name} already exists; outputs are never overwritten", kept=False
+            ) from exc
+        claimed = True
         staging.mkdir()
         log(f"study {export.study_id} ({config.evidence_level}), {len(export.files)} files checked")
         for warning in write_all(export, config, staging, preset=preset, sans=sans, log=log):
@@ -92,16 +132,26 @@ def run(
             ),
             encoding="utf-8",
         )
-        staging.rename(target)
+        # From here the outputs are complete: a stop request no longer interrupts the rename that keeps them.
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        staging.rename(target)  # replaces the empty claimed directory
     except BaseException:
         shutil.rmtree(staging, ignore_errors=True)
-        target.rmdir()
+        if claimed and target.is_dir() and not any(target.iterdir()):
+            target.rmdir()
         raise
+    stale = refusal_path(export)
+    if out is None and stale is not None:
+        try:
+            stale.unlink(missing_ok=True)  # this version now analyses the export
+        except OSError as exc:  # the outputs are complete; the old refusal only stays visible
+            log(f"warning: the earlier refusal {stale.name} could not be removed: {exc}")
     log(f"done: {target}")
     return target
 
 
 def _stop(signum: int, frame: object) -> None:
+    signal.signal(signum, signal.SIG_IGN)  # a second request must not interrupt the cleanup
     raise SystemExit(128 + signum)
 
 

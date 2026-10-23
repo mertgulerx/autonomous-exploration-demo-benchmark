@@ -271,16 +271,12 @@ class Window(QtWidgets.QMainWindow):
 
     def make_results(self) -> None:
         layout = self.page("Results", "results")
+        layout.setContentsMargins(0, 0, 0, 0)  # the run view scrolls over the whole page
         self.results_page = ResultsPage(self.themes, self.transport)
-        self.results_page.campaign_chosen.connect(
-            lambda identity, name: self.select_campaign({"id": identity, "name": name})
-        )
         self.results_page.attempt_selected.connect(self.monitor.log_view.select_attempt)
         self.results_page.replay_requested.connect(self.open_replay)
-        self.results_page.notify.connect(self.page_notice)
-        self.report_browser = self.results_page.report_browser
         self.results = self.results_page.results
-        self.tables.extend([self.results, self.results_page.reports])
+        self.tables.append(self.results)
         layout.addWidget(self.results_page, 1)
 
     def refresh_visible_tables(self) -> None:
@@ -417,7 +413,6 @@ class Window(QtWidgets.QMainWindow):
             if campaign["id"] != self.campaign_id:
                 return
             self.campaign_card.update_campaign(campaign, counters, self.catalog)
-            self.results_page.set_state(str(campaign.get("state") or ""))
 
     def failed(self, tag: str, error: str) -> None:
         if tag.startswith("tile-") and self.live_card.failed(tag, error):
@@ -434,8 +429,6 @@ class Window(QtWidgets.QMainWindow):
             return  # an open profile editor shows its own errors
         if tag == self.campaigns.tag and ATTENTION_REJECTED in error:
             return  # an engine without the attention order: the table falls back silently (D6)
-        if tag.startswith("report-generate:") and tag != self.report_browser.generation_tag:
-            return
         if tag == "catalog":
             self.catalog_pending = False
         if tag == "status":
@@ -540,7 +533,7 @@ class Window(QtWidgets.QMainWindow):
             return
         self.campaign_id = row["id"]
         self.campaign_card.reset(row.get("name", "Selected campaign"))
-        self.results_page.set_campaign(self.campaign_id, row.get("name", ""))
+        self.results_page.set_campaign(self.campaign_id)
 
     def update_delete_button(self, *args: Any) -> None:
         """Delete: disabled until rows are ticked; then "Delete N" in the danger style (01, 02)."""

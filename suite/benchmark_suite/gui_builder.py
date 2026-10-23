@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from copy import deepcopy
+from pathlib import Path
 from typing import Any
 import uuid
 
@@ -20,7 +21,7 @@ import yaml
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from .gui_cells import OverlayScrollBar
-from .gui_support import Transport
+from .gui_support import POLL_MS, ROOT, Transport
 from .gui_review import (
     VALIDATE_ACCEPTED,
     VALIDATE_CHANGES,
@@ -36,10 +37,15 @@ from .gui_robots import RobotSelector
 from .gui_worlds import WorldSelector
 from .gui_theme import ThemeManager
 from .gui_widgets import CardSplit, place, plural
+from .analysis_block import plan_parts
 from .gui_wizard import (
+    EXISTING_STUDY,
+    NEW_STUDY,
+    UNASSIGNED_STUDY,
     DraftFacts,
     DraftSummary,
     ExecutionCard,
+    StudyForm,
     SummaryItem,
     WizardFooter,
     WizardHead,
@@ -49,24 +55,31 @@ from .contracts import resolve_world_time_limits
 
 
 class StepCards(QtWidgets.QWidget):
-    """Step 3's settings card and the 420 px draft summary, as tall as the taller of the two; the gap between
-    them can be dragged (remembered; a double click restores the design's width)."""
+    """Step 3's Campaign card over the Study card (16 px apart), and the 420 px draft summary, as tall as the
+    taller side; the gap between them can be dragged (remembered; a double click restores the design's
+    width)."""
 
     def __init__(
-        self, themes: ThemeManager, execution: ExecutionCard, summary: DraftSummary
+        self,
+        themes: ThemeManager,
+        execution: ExecutionCard,
+        study: StudyForm,
+        summary: DraftSummary,
     ) -> None:
         super().__init__()
-        self.execution, self.summary = execution, summary
-        execution.setParent(self)
-        summary.setParent(self)
+        self.execution, self.study, self.summary = execution, study, summary
+        for card in (execution, study, summary):
+            card.setParent(self)
         self.side = CardSplit(themes, self, "builder/summary", self.relayout, across=True, sign=-1)
 
     def relayout(self) -> None:
         width = self.width()
-        height = max(self.execution.natural_height(), self.summary.natural_height())
+        top = self.execution.natural_height()
+        height = max(top + 16 + self.study.natural_height(), self.summary.natural_height())
         self.setMinimumHeight(height)
         side = self.side.resolve(420, 340, width - 16 - 520)
-        place(self.execution, 0, 0, width - side - 16, height)
+        place(self.execution, 0, 0, width - side - 16, top)
+        place(self.study, 0, top + 16, width - side - 16, height - top - 16)
         place(self.summary, width - side, 0, side, height)
         self.side.place(width - side - 16, 0, 16, height)
 
@@ -118,9 +131,18 @@ class CampaignBuilder(QtWidgets.QWidget):
         self.stack.addWidget(self.world_selector)
         # Step 3: the settings card and the draft summary side by side (``grid 1fr 420px``).
         self.execution = ExecutionCard(themes)
+        self.study_form = StudyForm(themes)
         self.summary = DraftSummary(themes)
         self.summary.change_requested.connect(self.show_step)
-        execution_page = StepCards(themes, self.execution, self.summary)
+        execution_page = StepCards(themes, self.execution, self.study_form, self.summary)
+        # The studies a campaign can join (studies.list): ID -> row (evidence levels, plan, last repetition)
+        self.studies: dict[str, dict[str, Any]] = {}
+        self.studies_tag = ""
+        self.plan_tag = ""
+        self.plan_timer = QtCore.QTimer(self)
+        self.plan_timer.setSingleShot(True)
+        self.plan_timer.setInterval(POLL_MS)
+        self.plan_timer.timeout.connect(self.read_plan)
         # A long draft (many robots or worlds) makes both cards taller; the step then scrolls.
         execution_scroll = QtWidgets.QScrollArea()
         execution_scroll.setWidgetResizable(True)
@@ -167,9 +189,22 @@ class CampaignBuilder(QtWidgets.QWidget):
             field.textChanged.connect(self.invalidate)
         self.repetitions.valueChanged.connect(self.invalidate)
         self.concurrency.changed.connect(self.invalidate)
+        form = self.study_form
+        form.kind.changed.connect(self.study_kind)
+        form.evidence.changed.connect(self.invalidate)
+        form.new_id.textChanged.connect(self.invalidate)
+        form.existing.currentIndexChanged.connect(self.study_picked)
+        form.plan.textChanged.connect(self.invalidate)
+        form.plan.textChanged.connect(lambda _: self.plan_timer.start())
+        form.choose_plan.connect(self.choose_plan)
+        self.execution.debug.toggled.connect(self.invalidate)
         transport.received.connect(self.received)
         transport.failed.connect(self.failed)
         self.show_step(0)
+
+    def showEvent(self, event: QtGui.QShowEvent) -> None:
+        super().showEvent(event)
+        self.load_studies()  # the studies a campaign can join (Existing study, the repetition range)
 
     def design(self) -> dict[str, Any]:
         worlds = self.world_selector.selections()
@@ -190,7 +225,108 @@ class CampaignBuilder(QtWidgets.QWidget):
             "world_time_limits": self.world_selector.time_limits(),
             "exclusions": [list(v) for v in sorted(self.excluded & combinations)],
             **({"source_campaign_id": self.source_campaign_id} if self.source_campaign_id else {}),
+            **({"study": study} if (study := self.study_block()) is not None else {}),
+            **({"debug_streams": True} if self.execution.debug.isChecked() else {}),
         }
+
+    # the study (32)
+
+    def study_id(self) -> str | None:
+        form = self.study_form
+        kind = form.kind.index()
+        if kind == NEW_STUDY:
+            return form.new_id.text().strip() or None
+        if kind == EXISTING_STUDY:
+            value = form.existing.currentData()
+            return str(value) if value else None
+        return None
+
+    def study_block(self) -> dict[str, Any] | None:
+        """The campaign's ``study`` block (contracts.Study): the engine adds the plan's hash and numbering."""
+        form = self.study_form
+        if form.kind.index() == UNASSIGNED_STUDY:
+            return None
+        identity = self.study_id()
+        if identity is None:
+            raise ValueError(
+                "Name the new study, or choose Unassigned"
+                if form.kind.index() == NEW_STUDY
+                else "Choose an existing study, or choose Unassigned"
+            )
+        plan = form.plan.text().strip()
+        return {
+            "id": identity,
+            "evidence_level": "confirmatory" if form.evidence.index() == 1 else "exploratory",
+            "plan": plan or None,
+        }
+
+    def load_studies(self) -> None:
+        self.studies_tag = "builder-studies-" + uuid.uuid4().hex
+        self.transport.submit(self.studies_tag, "studies.list", {"offset": 0, "limit": 250})
+
+    def studies_received(self, result: dict[str, Any]) -> None:
+        rows = [r for r in result.get("rows") or [] if r.get("study_id") != "unassigned"]
+        self.studies = {str(r["study_id"]): r for r in rows}
+        select = self.study_form.existing
+        chosen = select.currentData()
+        select.blockSignals(True)
+        select.clear()
+        for row in rows:
+            levels = " and ".join(row.get("evidence_levels") or ["exploratory"])
+            select.addItem(f"{row['study_id']} · {levels}", row["study_id"])
+        select.setCurrentIndex(max(0, select.findData(chosen)))
+        select.blockSignals(False)
+        if self.study_form.kind.index() == EXISTING_STUDY and select.currentData() != chosen:
+            self.study_picked(select.currentIndex())  # chosen before the list arrived
+        self.update_summary()
+
+    def study_kind(self, kind: int) -> None:
+        """Choosing Existing study takes the shown study's level and plan (its select may not change)."""
+        if kind == EXISTING_STUDY:
+            self.study_picked(self.study_form.existing.currentIndex())
+        else:
+            self.invalidate()
+
+    def study_picked(self, index: int) -> None:
+        """An existing study: its evidence level and plan as its newest campaign declared them."""
+        row = self.studies.get(str(self.study_form.existing.itemData(index) or ""))
+        if row is not None:
+            levels = row.get("evidence_levels") or []
+            self.study_form.evidence.set_index(1 if "confirmatory" in levels else 0)
+            self.study_form.plan.setText(str(row.get("plan") or ""))
+        self.invalidate()
+
+    def study_range(self) -> str:
+        """ "· study repetitions 1–5": the numbers this campaign's repetitions take in its study (RD-30)."""
+        identity = self.study_id()
+        if identity is None:
+            return ""
+        last = (self.studies.get(identity) or {}).get("last_repetition")
+        first = (last + 1 if isinstance(last, int) else 0) + 1
+        return f"· study repetitions {first}–{first + self.repetitions.value() - 1}"
+
+    def choose_plan(self) -> None:
+        start = ROOT / "docs/research/experiments"
+        path, _ = QtWidgets.QFileDialog.getOpenFileName(
+            self, "Study plan", str(start if start.is_dir() else ROOT), "Markdown (*.md)"
+        )
+        if not path:
+            return
+        chosen = Path(path).resolve()
+        if not chosen.is_relative_to(ROOT.resolve()):
+            self.set_message("Choose a plan inside this checkout: the engine reads it from there.")
+            return
+        self.study_form.plan.setText(chosen.relative_to(ROOT.resolve()).as_posix())
+
+    def read_plan(self) -> None:
+        """The plan's SHA-256 above its deviations log, read off the GUI thread (the engine checks it again at
+        submission, from its own checkout)."""
+        plan = self.study_form.plan.text().strip()
+        if not plan or self.study_form.kind.index() == UNASSIGNED_STUDY:
+            self.study_form.set_hash("")
+            return
+        self.plan_tag = "builder-plan-" + uuid.uuid4().hex
+        self.transport.submit(self.plan_tag, "local.read", {"path": str(ROOT / plan)})
 
     def invalidate(self, *args: Any) -> None:
         if self.import_tag and self.validation_tag.startswith("campaign-import-"):
@@ -240,6 +376,25 @@ class CampaignBuilder(QtWidgets.QWidget):
             self.set_message("The campaign changed after validation; validate it again.")
         return unchanged
 
+    def study_items(self) -> tuple[SummaryItem, ...]:
+        form = self.study_form
+        identity = self.study_id()
+        kind = form.kind.index()
+        if kind == UNASSIGNED_STUDY or identity is None:
+            study = "Unassigned"
+        else:
+            study = f"{identity} · " + ("existing" if identity in self.studies else "new")
+        evidence = (
+            "—"
+            if kind == UNASSIGNED_STUDY
+            else form.evidence.segments[form.evidence.index()].text()
+        )
+        return (
+            SummaryItem("Study", study),
+            SummaryItem("Evidence level", evidence),
+            SummaryItem("Debug streams", "On" if self.execution.debug.isChecked() else "Off"),
+        )
+
     def update_summary(self) -> None:
         robots, worlds = self.robot_selector.selections(), self.world_selector.selections()
         count = 0
@@ -262,6 +417,8 @@ class CampaignBuilder(QtWidgets.QWidget):
             count,
         )
         self.summary.set_facts(self.draft_facts())
+        self.execution.set_study_range(self.study_range())
+        self.study_form.sync()
         self.fit_step_cards()
 
     def fit_step_cards(self) -> None:
@@ -316,6 +473,7 @@ class CampaignBuilder(QtWidgets.QWidget):
                 for robot, references in robots.items()
             ),
             worlds=tuple(world_items),
+            study=self.study_items(),
             combinations=tuple(combinations),
             per_repetition=sum(item.count or 0 for item in combinations),
             note=note,
@@ -494,6 +652,22 @@ class CampaignBuilder(QtWidgets.QWidget):
         self.robot_selector.set_selections(value["robots"])
         self.world_selector.set_selections(value["worlds"])
         self.world_selector.set_time_limits(dict(resolve_world_time_limits(value, value["worlds"])))
+        self.execution.debug.setChecked(bool(value.get("debug_streams", False)))
+        study = value.get("study")
+        form = self.study_form
+        if isinstance(study, dict) and study.get("id"):
+            identity = str(study["id"])
+            if identity in self.studies:
+                form.kind.set_index(EXISTING_STUDY)
+                form.existing.setCurrentIndex(max(0, form.existing.findData(identity)))
+            else:
+                form.kind.set_index(NEW_STUDY)
+                form.new_id.setText(identity)
+            form.evidence.set_index(1 if study.get("evidence_level") == "confirmatory" else 0)
+            form.plan.setText(str(study.get("plan") or ""))
+        else:
+            form.kind.set_index(UNASSIGNED_STUDY)
+            form.plan.setText("")
         self.invalidate()
         self.show_step(0)
 
@@ -528,6 +702,21 @@ class CampaignBuilder(QtWidgets.QWidget):
             self.transport.submit(self.export_tag, "local.write", {"path": path, "text": text})
 
     def received(self, tag: str, result: Any) -> None:
+        if tag == self.studies_tag:
+            self.studies_tag = ""
+            self.studies_received(result)
+            return
+        if tag == self.plan_tag:
+            self.plan_tag = ""
+            try:
+                digest = plan_parts(str(result.get("text") or "")).sha256
+            except ValueError as exc:  # the engine refuses the same plan at submission
+                self.study_form.set_hash("unreadable plan")
+                self.study_form.hash.setToolTip(str(exc))
+                return
+            self.study_form.set_hash("SHA-256 " + digest[:8])
+            self.study_form.hash.setToolTip(digest)
+            return
         if tag == self.validation_tag:
             specification = result.get("specification") if isinstance(result, dict) else None
             if not isinstance(specification, dict):
@@ -591,6 +780,13 @@ class CampaignBuilder(QtWidgets.QWidget):
             self.tuning_started.emit()
 
     def failed(self, tag: str, error: str) -> None:
+        if tag == self.studies_tag:
+            self.studies_tag = ""
+            return  # the Existing study list stays as it was
+        if tag == self.plan_tag:
+            self.plan_tag = ""
+            self.study_form.set_hash("plan not found")
+            return
         if tag == self.tuning_tag:
             self.tuning_tag = ""
             self.sync_actions()
@@ -617,7 +813,13 @@ class CampaignBuilder(QtWidgets.QWidget):
 
     def show_accepted(self, specification: dict[str, Any], timing_retry: Any) -> None:
         """Step 4's view of what the engine accepted: the campaign card and the profile changes."""
-        facts = accepted_facts(specification, timing_retry, self.labels("worlds"), self.spawn_label)
+        facts = accepted_facts(
+            specification,
+            timing_retry,
+            self.labels("worlds"),
+            self.spawn_label,
+            lambda identity: identity in self.studies,
+        )
         maps = {}
         for world in facts.worlds:
             self.world_selector.ensure_map(world.world_id)

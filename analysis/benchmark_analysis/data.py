@@ -167,6 +167,28 @@ def _rows(table: pa.Table) -> list[Row]:
     return table.to_pylist()  # type: ignore[no-any-return]
 
 
+def _groups(runs: Iterable[Row], column: str) -> list[dict[str, Any]]:
+    """The runs of a refusal by the value of ``column``: each value with its runs (RO-22)."""
+    found: dict[str, list[Row]] = defaultdict(list)
+    for run in runs:
+        found[str(run[column])].append(run)
+    return [
+        dict(
+            value=value,
+            runs=[
+                dict(
+                    attempt_id=run["attempt_id"],
+                    campaign_id=run["campaign_id"],
+                    block_id=run["block_id"],
+                    profile_id=run["profile_id"],
+                )
+                for run in sorted(members, key=lambda r: (r["campaign_id"], r["attempt_id"]))
+            ],
+        )
+        for value, members in sorted(found.items())
+    ]
+
+
 def load(export: Export) -> Study:
     """The study's runs, strata and series, or a refusal naming what does not fit."""
     runs = _rows(export.table("runs"))
@@ -176,7 +198,11 @@ def load(export: Export) -> Study:
     for column in VERSION_COLUMNS:
         found = sorted({str(run[column]) for run in finals})
         if len(found) > 1:
-            raise Refused(f"final runs mix {column} values {found}; analyse each separately")
+            raise Refused(
+                f"final runs mix {column} values {found}; analyse each separately",
+                column=column,
+                groups=_groups(finals, column),
+            )
     hashes: dict[str, set[str]] = defaultdict(set)
     for run in finals:
         hashes[run["profile_id"]].add(run["parameter_hash"])
@@ -184,7 +210,9 @@ def load(export: Export) -> Study:
         if len(found_hashes) > 1:
             raise Refused(
                 f"profile {profile} ran with {len(found_hashes)} parameter sets: its runs are not one "
-                "condition"
+                "condition",
+                column="parameter_hash",
+                groups=_groups([r for r in finals if r["profile_id"] == profile], "parameter_hash"),
             )
     cells: dict[tuple[str, str, str], list[Row]] = defaultdict(list)
     for run in finals:
@@ -195,20 +223,40 @@ def load(export: Export) -> Study:
         keys = sorted({run["comparison_key"] for run in members if run["comparison_key"]})
         found_limits = {run["time_limit_s"] for run in members if run["report_class"] == REPORTED}
         if None in found_limits:
-            raise Refused(f"{name}: a reported run has no time limit; restricted estimands need L")
+            raise Refused(
+                f"{name}: a reported run has no time limit; restricted estimands need L",
+                column="time_limit_s",
+                stratum=name,
+                groups=_groups(members, "time_limit_s"),
+            )
         limits = sorted(found_limits)
         if len(keys) > 1:
             raise Refused(
                 f"{name} holds {len(keys)} comparison keys "
-                f"({', '.join(k[:12] for k in keys)}): its runs are not comparable"
+                f"({', '.join(k[:12] for k in keys)}): its runs are not comparable",
+                column="comparison_key",
+                stratum=name,
+                groups=_groups(members, "comparison_key"),
             )
         if len(limits) > 1 or (limits and (limits[0] is None or limits[0] <= 0)):
-            raise Refused(f"{name}: one positive time limit L is needed, found {limits}")
+            raise Refused(
+                f"{name}: one positive time limit L is needed, found {limits}",
+                column="time_limit_s",
+                stratum=name,
+                groups=_groups(members, "time_limit_s"),
+            )
         seen: set[tuple[str, str]] = set()
         for run in members:
             pair = (run["block_id"], run["profile_id"])
             if pair in seen:
-                raise Refused(f"{name}: two final runs of block {pair[0]} and {pair[1]}")
+                raise Refused(
+                    f"{name}: two final runs of block {pair[0]} and {pair[1]}",
+                    column="block_id",
+                    stratum=name,
+                    groups=_groups(
+                        [r for r in members if (r["block_id"], r["profile_id"]) == pair], "block_id"
+                    ),
+                )
             seen.add(pair)
         if not limits:
             empty.append((robot, world, spawn))

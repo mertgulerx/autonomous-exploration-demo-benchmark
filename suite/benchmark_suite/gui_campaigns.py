@@ -112,7 +112,7 @@ COLUMNS = [
     ("name", "Campaign"),
     ("state", "Status"),
     ("count", "Experiments"),
-    ("report_state", "Reports"),
+    ("study_id", "Study"),
     ("created_ns", "Submitted"),
     ("actions", "Actions"),
 ]
@@ -124,24 +124,15 @@ LOOK = TableLook(
         ColumnStyle("name"),
         ColumnStyle("badge", width=176),
         ColumnStyle("number", width=112),
-        ColumnStyle("rep", width=150, padding_left=36),
+        ColumnStyle("text", width=236, padding_left=36),
         ColumnStyle("number", align="left", width=164),
         ColumnStyle("empty", align="right", width=148),
     ],
     round_top=7,
     round_bottom=7,
 )
-SORT_KEYS = {1: "name", 2: "attention", 3: "count", 4: "report_state", 5: "created_ns"}
+SORT_KEYS = {1: "name", 2: "attention", 3: "count", 5: "created_ns"}
 ATTENTION_REJECTED = "Choose a campaign table column"  # an engine without the attention sort
-
-
-def report_look(state: str | None) -> tuple[str, str]:
-    """Reports column: ``check`` Finished, ``alert`` Failed, otherwise ``clock`` Pending."""
-    if state == "FINISHED":
-        return "check", "Finished"
-    if state == "FAILED":
-        return "alert", "Failed"
-    return "clock", "Pending"
 
 
 class CampaignModel(PagedTableModel):
@@ -184,9 +175,14 @@ class CampaignModel(PagedTableModel):
             return Cell(kind="badge", badge=look) if look else Cell(humanize(record["state"]))
         if key == "count":
             return Cell(f"{record['count']:,}", "number")
-        if key == "report_state":
-            icon, word = report_look(record.get("report_state"))
-            return Cell(word, "rep", icon=icon)
+        if (
+            key == "study_id"
+        ):  # (34) the study, or a muted "Unassigned"; a tag on a confirmatory one
+            study = record.get("study_id")
+            if not study or study == "unassigned":
+                return Cell("Unassigned", token="text.tertiary")
+            confirmatory = record.get("evidence_level") == "confirmatory"
+            return Cell(str(study), note="confirmatory" if confirmatory else "", note_kind="tag")
         if key == "created_ns":
             return Cell(cell_text("created_ns", record.get("created_ns")), "number")
         return Cell(kind="empty")
@@ -243,6 +239,7 @@ class CampaignTable(PagedTable):
     def __init__(self, transport: Transport, themes: ThemeManager) -> None:
         model = CampaignModel()
         super().__init__(transport, "campaign-table", "campaigns", COLUMNS, model=model)
+        self.include = ["study"]  # the Study column (34)
         self.campaign_model = model
         self.themes = themes
         self.label.hide()
@@ -704,7 +701,12 @@ def campaign_facts(
     return CampaignFacts(
         name=campaign["name"],
         eyebrow="Selected campaign · "
-        + (f"{concurrency} parallel workers" if concurrency > 1 else "sequential"),
+        + (f"{concurrency} parallel workers" if concurrency > 1 else "sequential")
+        + (
+            f" · Study {study['id']}"
+            if isinstance(study := specification.get("study"), dict)
+            else ""
+        ),
         state=campaign["state"],
         chips=tuple(formula_chips(specification, catalog)) if specification.get("robots") else (),
         count=int(campaign["count"]),

@@ -49,6 +49,8 @@ class Table:
     rows: list[list[str]] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
     attempt_ids: set[str] = field(default_factory=set)
+    # its sheet may leave out count columns that are 0 in every row (T1)
+    sparse_counts: bool = False
 
     def csv(self) -> str:
         buffer = io.StringIO()
@@ -275,7 +277,9 @@ def t1(src: Sources) -> Table:
             group[run["report_class"]] += 1
             if run["report_class"] == REPORTED:
                 group["outcome_" + run["outcome"]] += 1
-    table = Table("T1", "Outcome accounting per stratum and profile", list(T1_COLUMNS))
+    table = Table(
+        "T1", "Outcome accounting per stratum and profile", list(T1_COLUMNS), sparse_counts=True
+    )
     stratum_of = {(s.robot_id, s.world_id, s.spawn_id): s for s in study.strata}
     order = {profile: index for index, profile in enumerate(src.order)}
     for key in sorted(counts, key=lambda k: (k[:3], order.get(k[3], len(order)), k[3])):

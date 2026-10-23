@@ -19,7 +19,7 @@ The combinations follow the form; the other two cards show only what the last su
 accepted, so they never describe a design the engine has not checked.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 import math
 from typing import Any
@@ -36,7 +36,7 @@ from .gui_cells import (
     TableLook,
     style_table,
 )
-from .gui_dialogs import Run, wrap, wrap_text
+from .gui_dialogs import Run, wrap
 from .gui_maps import MapStage, SpawnMark, WorldMap
 from .gui_menus import show_tooltip
 from .gui_profile_preview import ParameterDifference, profile_differences, value_text
@@ -67,6 +67,7 @@ NEW_VALUE = TextStyle(13, 600, 18, tabular=True)
 CAMPAIGN_NAME = TextStyle(15, 600, 21)
 BAND_LEAD = TextStyle(13, 700, 18)  # ``<b>`` in the band
 VALUE = TextStyle(13, 500, 18, tabular=True)
+VALUE_MONO = TextStyle(12, 400, 18, mono=True)
 WORLD_NAME = TextStyle(13, 600, 18)
 
 
@@ -537,6 +538,15 @@ class AcceptedFacts:
     execution: str  # "Sequential", "2 parallel workers"
     timing_retry: str
     worlds: tuple[AcceptedWorld, ...]
+    # the study and recording rows (33): key, value, set in mono, a faint addition (the plan's hash)
+    study: tuple[tuple[str, str, bool, str], ...] = ()
+
+    def rows(self) -> list[tuple[str, str, bool, str]]:
+        return [
+            ("Execution", self.execution, False, ""),
+            ("Timing retry", self.timing_retry, False, ""),
+            *self.study,
+        ]
 
 
 def execution_text(concurrency: Any) -> str:
@@ -558,7 +568,8 @@ class AcceptedCard(Card):
     apart. Before that a muted line says what to do; a failed validation shows its error in the band, in the
     bad colours."""
 
-    BAND, KV_ROW, MAP_W, MAP_H = 44, 40, 168, 132
+    # screen 33 (the study rows joined): 34 px key-value rows, 128×98 maps, 10 px around the name
+    BAND, KV_ROW, MAP_W, MAP_H = 44, 34, 128, 98
     MAP_GAP = 18  # ``.wr``: the map, then the world's facts 18 px to its right
     TILE_PAD = 14  # above and below the map in a grid row
     TILE_GAP = 24  # between the grid's columns
@@ -646,9 +657,9 @@ class AcceptedCard(Card):
         band = box.y() + 53
         who = band + self.band_height(width)
         lines = self._description_lines(width)
-        who_height = 14 + 21 + (3 + 18 * len(lines) if lines else 0) + 14 + 1
+        who_height = 10 + 21 + (3 + 18 * len(lines) if lines else 0) + 10 + 1
         kv = who + who_height
-        where = kv + 2 * self.KV_ROW
+        where = kv + len(self.facts.rows() if self.facts else ()) * self.KV_ROW
         return band, who, kv, where
 
     def rows_top(self) -> float:
@@ -744,25 +755,35 @@ class AcceptedCard(Card):
         ink, secondary = theme.color("text.ink"), theme.color("text.secondary")
         # Name and description, then a rule.
         name = CAMPAIGN_NAME.elide(facts.name, inner)
-        draw_text(painter, x, who + 14, name, CAMPAIGN_NAME, ink)
+        draw_text(painter, x, who + 10, name, CAMPAIGN_NAME, ink)
         for index, runs in enumerate(self._description_lines(width)):
             text = "".join(run.text for run in runs)
-            draw_text(painter, x, who + 14 + 21 + 3 + 18 * index, text, BODY, secondary)
+            draw_text(painter, x, who + 10 + 21 + 3 + 18 * index, text, BODY, secondary)
         painter.fillRect(QtCore.QRectF(left + 1, kv - 1, width - 2, 1), line)
-        # Execution and Timing retry (``.kv``: 112 px keys, values 16 px further, a rule between).
-        for index, (key, value) in enumerate(
-            (("Execution", facts.execution), ("Timing retry", facts.timing_retry))
-        ):
+        # Execution, Timing retry and the study rows (``.kv``: 112 px keys, values 16 px further, rules between).
+        rows = facts.rows()
+        for index, (key, value, mono, faint) in enumerate(rows):
             row = kv + index * self.KV_ROW
-            content = self.KV_ROW - (1 if index == 0 else 0)
-            if index == 0:
+            last = index == len(rows) - 1
+            content = self.KV_ROW - (0 if last else 1)
+            if not last:
                 painter.fillRect(QtCore.QRectF(x, row + content, inner, 1), line)
             line_top = row + (content - 18) / 2
             draw_text(painter, x, line_top, key, BODY, secondary)
             value_x = x + 112 + 16
-            draw_text(
-                painter, value_x, line_top, VALUE.elide(value, x + inner - value_x), VALUE, ink
-            )
+            style = VALUE_MONO if mono else VALUE
+            tail = BODY.advance(" " + faint) if faint else 0.0
+            shown = style.elide(value, x + inner - value_x - tail)
+            advance = draw_text(painter, value_x, line_top, shown, style, ink)
+            if faint:
+                draw_text(
+                    painter,
+                    value_x + advance,
+                    line_top,
+                    " " + faint,
+                    BODY,
+                    theme.color("text.tertiary"),
+                )
         # Worlds and starting poses.
         painter.fillRect(QtCore.QRectF(left + 1, where, width - 2, 1), line)
         draw_text(painter, x, where + 1 + 12, "Worlds & starting poses", GROUP_HEAD, secondary)
@@ -815,20 +836,57 @@ class AcceptedCard(Card):
     ) -> None:
         theme = self.theme
         ink, secondary = theme.color("text.ink"), theme.color("text.secondary")
-        # The name, the time limit, then "Starting poses" over the pose names wrapped across the column (as many
-        # lines as the row holds; the last one elided when they still do not fit).
-        room = max(1, int((each - 16 - 24 * 3) // 18))
-        poses = wrap_text(world.poses, VALUE, width, limit=room) or ["—"]
-        block = 24 * 3 + 18 * len(poses) - 6
+        # ``.wf`` (33): the name, then "Starting poses" and "Time limit", each a label with its value at the
+        # right (a long pose list elided), 6 px apart, the block centred on the map.
+        block = 18 * 3 + 6 * 2
         top = row_top + (each - block) / 2
         draw_text(painter, x, top, WORLD_NAME.elide(world.label, width), WORLD_NAME, ink)
-        line_top = top + 24
-        key_width = draw_text(painter, x, line_top, "Time limit", BODY, secondary)
-        shown = VALUE.elide(world.limit, max(0.0, width - key_width - 12))
-        draw_text(painter, x + width - VALUE.advance(shown), line_top, shown, VALUE, ink)
-        draw_text(painter, x, line_top + 24, "Starting poses", BODY, secondary)
-        for index, text in enumerate(poses):
-            draw_text(painter, x, line_top + 48 + 18 * index, text, VALUE, ink)
+        for index, (key, value) in enumerate(
+            (("Starting poses", world.poses or "—"), ("Time limit", world.limit))
+        ):
+            line_top = top + 24 * (index + 1)
+            key_width = draw_text(painter, x, line_top, key, BODY, secondary)
+            shown = VALUE.elide(value, max(0.0, width - key_width - 12))
+            draw_text(painter, x + width - VALUE.advance(shown), line_top, shown, VALUE, ink)
+
+
+def study_rows(
+    specification: Mapping[str, Any], existing: Callable[[str], bool]
+) -> tuple[tuple[str, str, bool, str], ...]:
+    """The study, its plan (in mono) with the hash the engine computed (faint), the study's repetition
+    numbers and the debug streams (33)."""
+    study = specification.get("study")
+    repetitions = specification.get("repetitions")
+    count = repetitions if isinstance(repetitions, int) and not isinstance(repetitions, bool) else 0
+    debug = "On" if specification.get("debug_streams") else "Off"
+    if not isinstance(study, Mapping) or not study.get("id"):
+        return (
+            ("Study", "Unassigned", False, ""),
+            ("Repetitions", f"1–{count}" if count else "—", False, ""),
+            ("Debug streams", debug, False, ""),
+        )
+    identity = str(study["id"])
+    first = study.get("first_repetition")
+    first = first if isinstance(first, int) and not isinstance(first, bool) else 0
+    plan = study.get("plan")
+    digest = str(study.get("plan_sha256") or "")
+    return (
+        (
+            "Study",
+            f"{identity} · {'existing' if existing(identity) else 'new'} · "
+            f"{study.get('evidence_level', 'exploratory')}",
+            False,
+            "",
+        ),
+        (
+            "Plan",
+            str(plan).rsplit("/", 1)[-1] if plan else "None",
+            bool(plan),
+            f"· {digest[:8]}" if plan and digest else "",
+        ),
+        ("Repetitions", f"{first + 1}–{first + count}" if count else "—", False, ""),
+        ("Debug streams", debug, False, ""),
+    )
 
 
 def accepted_facts(
@@ -836,6 +894,7 @@ def accepted_facts(
     timing_retry: Any,
     world_labels: dict[str, str],
     spawn_label: Callable[[str, dict[str, Any]], str],
+    existing: Callable[[str], bool] = lambda _: False,
 ) -> AcceptedFacts:
     """The card's view of an accepted specification (``campaign.preview``)."""
     limits = specification.get("world_time_limits") or {}
@@ -867,6 +926,7 @@ def accepted_facts(
         execution_text(specification.get("concurrency")),
         str(timing_retry) if timing_retry else "—",
         tuple(worlds),
+        study_rows(specification, existing),
     )
 
 
