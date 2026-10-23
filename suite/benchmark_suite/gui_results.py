@@ -82,6 +82,9 @@ class ResultsPage(QtWidgets.QWidget):
             None  # chosen on Campaigns, applied once its study is known
         )
         self.names = Names({}, {}, {}, {}, {})
+        # profile and spawn names by source, merged into ``names`` (``_merge_names``)
+        self.library_names: dict[str, dict[str, str]] = {}
+        self.inline_names: dict[str, dict[str, str]] = {}
 
         # The study page carries the page's paddings; the run view scrolls over the whole page area.
         self.study_page = QtWidgets.QWidget(self)
@@ -119,6 +122,7 @@ class ResultsPage(QtWidgets.QWidget):
         self.study_view.jobs = self.jobs
         self.jobs.changed.connect(self._job_changed)
         self.jobs.exported.connect(lambda _: self.load_detail())
+        self.jobs.exported.connect(self.files_view.study_changed)
         self.jobs.analysed.connect(lambda _: self.study_view.reload_analysis())
         self.export.clicked.connect(self._export)
         self.analyse.clicked.connect(self._analyse)
@@ -199,6 +203,26 @@ class ResultsPage(QtWidgets.QWidget):
         self.names.campaigns.update(
             {str(r["id"]): str(r.get("name") or str(r["id"])[:8]) for r in self.campaigns}
         )
+        # profiles and spawns defined inline in a campaign are not in the library: their accepted names, where
+        # an ID has one name across the campaigns (otherwise the ID is shown, never a guessed name)
+        found: dict[str, dict[str, set[str]]] = {"profiles": {}, "spawns": {}}
+        for campaign in self.campaigns:
+            specification = campaign.get("specification")
+            if not isinstance(specification, Mapping):
+                continue
+            for kind, groups in (
+                ("profiles", specification.get("robots")),
+                ("spawns", specification.get("worlds")),
+            ):
+                for entries in groups.values() if isinstance(groups, Mapping) else ():
+                    for entry in entries if isinstance(entries, list) else ():
+                        if isinstance(entry, Mapping) and entry.get("id") and entry.get("name"):
+                            found[kind].setdefault(str(entry["id"]), set()).add(str(entry["name"]))
+        self.inline_names = {
+            kind: {key: next(iter(names)) for key, names in ids.items() if len(names) == 1}
+            for kind, ids in found.items()
+        }
+        self._merge_names()
         if self.wanted_campaign is not None:
             row = next((r for r in self.campaigns if r["id"] == self.wanted_campaign), None)
             if row is not None:
@@ -297,10 +321,18 @@ class ResultsPage(QtWidgets.QWidget):
         """The library's profiles and spawns ("Robot · Name", identity): the profile filter and the names the
         table shows (the profile's own name, the spawn's world and name)."""
         self.runs.set_options("profile_id", list(profiles))
-        self.names.profiles.update(
-            {str(value): text.split(" · ", 1)[-1] for text, value in profiles}
-        )
-        self.names.spawns.update({str(value): text.split(" · ", 1)[-1] for text, value in spawns})
+        self.library_names = {
+            kind: {str(value): text.split(" · ", 1)[-1] for text, value in options}
+            for kind, options in (("profiles", profiles), ("spawns", spawns))
+        }
+        self._merge_names()
+
+    def _merge_names(self) -> None:
+        """Profile and spawn names: the library's over the campaigns' inline ones."""
+        for kind, table in (("profiles", self.names.profiles), ("spawns", self.names.spawns)):
+            table.clear()
+            table.update(self.inline_names.get(kind, {}))
+            table.update(self.library_names.get(kind, {}))
         self.results.view.viewport().update()
 
     # runs
@@ -446,6 +478,8 @@ class ResultsPage(QtWidgets.QWidget):
         self.head.relayout()
         if index == RUNS:
             self.results.refresh()
+        elif index == FILES:
+            self.files_view.retry_failed()
 
     def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
         super().resizeEvent(event)

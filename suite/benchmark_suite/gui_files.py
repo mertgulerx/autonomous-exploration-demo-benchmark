@@ -824,6 +824,7 @@ class FilesTab(QtWidgets.QWidget):
         self.poll.timeout.connect(self._repeat)
         self.loaded_text = ""
         self.jump = False  # the study root's first listing opens the newest export
+        self.listing_failed = False  # its listing failed; retried when the tab shows
         self.units_folder = ""  # the export folder whose codebook.csv gave ``units``
         self.table_reply: Mapping[str, Any] | None = (
             None  # the shown table page (redrawn with its units)
@@ -847,6 +848,24 @@ class FilesTab(QtWidgets.QWidget):
         if study_id:
             roots.insert(0, Root("study", study_id, "Study exports", "study " + study_id))
         self._set_roots(roots, roots[0] if roots else None)
+
+    def study_changed(self, study_id: str) -> None:
+        """A new export of ``study_id``: its root, when shown at its top or at ``exports/``, lists again (opening the
+        newest export when no file is open); a folder inside an export stays as it is."""
+        if self.root is None or self.root.kind != "study" or self.root.identity != study_id:
+            return
+        if self.listing_failed or (self.path in ("", "exports") and self.file is None):
+            self._change_root(self.root)
+        elif self.path in ("", "exports"):
+            self.open_folder(self.path)
+
+    def retry_failed(self) -> None:
+        """The tab shown again: a listing that failed (a study without exports yet) is asked for again."""
+        if self.root is not None and self.listing_failed:
+            if self.root.kind == "study" and self.file is None:
+                self._change_root(self.root)
+            else:
+                self.open_folder(self.path)
 
     def show_run(self, attempt_id: str, label: str) -> None:
         """A run's directory as the root (the run view's Files button)."""
@@ -909,6 +928,7 @@ class FilesTab(QtWidgets.QWidget):
             self.folder.set_total(0)
             return
         self.path = path
+        self.listing_failed = False
         self.folder_token = uuid.uuid4().hex
         self.folder.crumb.set_path(self.root.home, path)
         self._request(
@@ -1203,7 +1223,7 @@ class FilesTab(QtWidgets.QWidget):
 
     def _failed(self, kind: str, reason: str) -> None:
         if kind == "list":
-            self.jump = False
+            self.jump, self.listing_failed = False, True
             self.folder.entries.set_entries([])
             self.folder.set_error(reason)
         elif kind in ("table", "text", "found", "bytes"):
