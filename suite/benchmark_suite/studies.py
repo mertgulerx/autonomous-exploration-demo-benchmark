@@ -110,9 +110,14 @@ def with_read_time(
     final_attempt_id: str | None,
     experiment_state: str | None,
     superseded: Mapping[str, str],
+    last_attempt_number: int | None = None,
 ) -> dict[str, Any]:
     """A stored record with its read-time fields (``run_record.read_time_fields``)."""
-    experiment = dict(final_attempt_id=final_attempt_id, state=experiment_state)
+    experiment = dict(
+        final_attempt_id=final_attempt_id,
+        state=experiment_state,
+        last_attempt_number=last_attempt_number,
+    )
     return dict(
         record, **read_time_fields(record, experiment, superseded.get(record["campaign_id"]))
     )
@@ -199,7 +204,8 @@ def runs_page(
             order = f"{column} IS NULL,{column} {direction},{RUN_ORDER}"  # unavailable values last
     rows = database.execute(
         "SELECT r.record,e.final_attempt_id,e.state,"
-        "(SELECT COUNT(*) FROM attempts n WHERE n.experiment_id=r.experiment_id) "
+        "(SELECT COUNT(*) FROM attempts n WHERE n.experiment_id=r.experiment_id),"
+        "(SELECT MAX(n.number) FROM attempts n WHERE n.experiment_id=r.experiment_id) "
         f"FROM {source} ORDER BY {order} LIMIT ? OFFSET ?",
         (*arguments, limit, offset),
     ).fetchall()
@@ -208,7 +214,7 @@ def runs_page(
     return dict(
         rows=[
             dict(
-                with_read_time(json.loads(row[0]), row[1], row[2], superseded),
+                with_read_time(json.loads(row[0]), row[1], row[2], superseded, row[4]),
                 experiment_attempts=row[3],
             )
             for row in rows
@@ -245,13 +251,14 @@ def run_counts(database: sqlite3.Connection, filters: dict[str, Any]) -> dict[st
 def attempt_record(database: sqlite3.Connection, attempt_id: str) -> dict[str, Any] | None:
     """An attempt's current-version run record with its read-time fields; None until it is built."""
     row = database.execute(
-        "SELECT r.record,e.final_attempt_id,e.state FROM run_records r "
+        "SELECT r.record,e.final_attempt_id,e.state,"
+        "(SELECT MAX(n.number) FROM attempts n WHERE n.experiment_id=r.experiment_id) FROM run_records r "
         "JOIN experiments e ON e.id=r.experiment_id WHERE r.attempt_id=? AND r.run_record_version=?",
         (attempt_id, RUN_RECORD_VERSION),
     ).fetchone()
     if row is None:
         return None
-    return with_read_time(json.loads(row[0]), row[1], row[2], _superseded(database))
+    return with_read_time(json.loads(row[0]), row[1], row[2], _superseded(database), row[3])
 
 
 def provenance_document(
@@ -326,11 +333,12 @@ def studies_page(database: sqlite3.Connection, offset: Any = 0, limit: Any = 100
 
 def refused_mixes(full: Iterable[dict[str, Any]]) -> list[str]:
     """The export's refusal (``exports._run_rows``) and ``study.get``'s warning: full final records whose
-    record, dataset-schema or coverage-metric versions differ (null is a value of its own)."""
+    record, dataset-schema or coverage-metric versions differ. A run without a value (a startup failure before
+    recording began has no coverage block) holds no data of that version and mixes nothing."""
     full = list(full)
     mixes = []
     for column in REFUSED_MIXES:
-        values = sorted({str(record[column]) for record in full})
+        values = sorted({str(record[column]) for record in full if record[column] is not None})
         if len(values) > 1:
             mixes.append(f"Final runs mix {column} values {', '.join(values)}")
     return mixes

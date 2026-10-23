@@ -35,6 +35,7 @@ import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import gui_tokens
+from .contracts import GAP_S
 from .gui_cells import MONO_TEXT, OverlayScrollBar
 from .gui_controls import StatusBadge, badge_look
 from .gui_maps import LiveLayers, WorldMap, decode_grey
@@ -77,8 +78,24 @@ GROUP_TITLE = TextStyle(12, 600, 18)
 TRACK_TITLE = TextStyle(12.5, 600, 18)
 TRACK_TEXT = TextStyle(12, 400, 18)
 MILESTONES = (50, 75, 90, 95)  # the first-reached times the view shows
-GAP_S = 2.0  # a longer stretch without coverage samples breaks the line (RD-6's gap rule)
 MAP_WIDTH = 520  # the left column (decision 4)
+
+
+def carries_forward(
+    record: Mapping[str, Any], last_sample_s: float | None, limit_s: float | None
+) -> bool:
+    """RD-6's carry-forward as the run view and the traces draw it: a run that completed by L (``completion_event``)
+    holds its final value to L from its last sample, never across a final gap (F1, ``data.run_end`` in the
+    analysis package, and C(L) in ``run_record`` apply the same rule)."""
+    completion = number(record.get("completion_s"))
+    return (
+        record.get("outcome") == "completed"
+        and record.get("completion_event") is True
+        and limit_s is not None
+        and completion is not None
+        and last_sample_s is not None
+        and completion - last_sample_s <= GAP_S
+    )
 
 
 class RunMapView(LiveMap):
@@ -549,7 +566,6 @@ class RunCharts(Themed):
     def carried_forward(self) -> bool:
         """A completed run's final value is carried forward to L (the defined carry-forward, RD-6), from its
         last sample, never across a final gap (as F1 and the traces)."""
-        completion = number(self.record.get("completion_s"))
         last = next(
             (
                 number(row[0])
@@ -558,14 +574,7 @@ class RunCharts(Themed):
             ),
             None,
         )
-        return (
-            self.record.get("outcome") == "completed"
-            and self.record.get("completion_event") is True
-            and self.limit_s() is not None
-            and completion is not None
-            and last is not None
-            and completion - last <= GAP_S
-        )
+        return carries_forward(self.record, last, self.limit_s())
 
     def goal_counts(self) -> tuple[int, int, int, int]:
         rows = rows_of((self.timeline or {}).get("goals"), 5)

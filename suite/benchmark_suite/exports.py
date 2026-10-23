@@ -309,7 +309,8 @@ def snapshot(workspace: Path, study_id: str) -> Snapshot:
     missing = [attempt["id"] for attempt in attempts if attempt["id"] not in records]
     if missing:
         raise Refused(
-            f"{len(missing)} run record(s) missing or of another version; export when they exist"
+            f"{len(missing)} run record(s) missing or of another version; export when they exist (a failed "
+            "record job is retried at the next engine start; see the run_record.failed event)"
         )
     duplicates = Counter((e["block_id"], e["profile_id"]) for e in experiments)
     if any(count > 1 for count in duplicates.values()):
@@ -633,10 +634,17 @@ def _run_rows(
 ) -> tuple[list[dict[str, Any]], list[tuple[dict[str, Any], dict[str, Any], str]]]:
     """``runs`` rows (every attempt) and the final runs with their report class."""
     rows, finals = [], []
+    last = {
+        experiment: max(a["number"] for a in own)
+        for experiment, own in _attempts_by_experiment(snap).items()
+    }
     for attempt in snap.attempts:
         record = snap.records[attempt["id"]]
         # Superseded campaigns are left out of an export, so no exported run is superseded.
-        extra = read_time_fields(record, snap.experiments[attempt["experiment_id"]], None)
+        experiment = snap.experiments[attempt["experiment_id"]]
+        extra = read_time_fields(
+            record, {**experiment, "last_attempt_number": last[attempt["experiment_id"]]}, None
+        )
         rows.append({**{field.name: record[field.name] for field in FIELDS}, **extra})
         if extra["is_final"]:
             finals.append((attempt, record, extra["report_class"]))

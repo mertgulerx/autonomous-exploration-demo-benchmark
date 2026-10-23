@@ -37,6 +37,9 @@ PROFILE_DELETION_LIMIT = 250
 # "Reported population"); run records and study exports use reported-outcomes-v2 (run_record.report_class).
 REPORTED_OUTCOMES = frozenset({"completed", "time_limit", "no_movement"})
 STOPPED_OUTCOMES = frozenset({"manual_stop"})
+# RD-6's gap rule: a longer stretch without a valid coverage sample breaks a line and gives no value across it
+# (the analysis package keeps its own copy, analysis/benchmark_analysis/data.py, with a 1e-9 float tolerance).
+GAP_S = 2.0
 
 
 def average_speed(distance_m: Any, elapsed_seconds: Any) -> float | None:

@@ -32,7 +32,7 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from .contracts import average_speed, content_hash
+from .contracts import REPORTED_OUTCOMES, average_speed, content_hash
 from .datasets import files, iter_rows, materialize_manifest, recorded_version
 from .explorer_log import (
     ClockMap,
@@ -53,7 +53,6 @@ from .strata import COMPARISON_KEY_VERSION, comparison_key
 
 RUN_RECORD_VERSION = 1
 ELIGIBILITY_VERSION = "eligibility-v2"
-REPORT_POLICY = "reported-outcomes-v2"
 DERIVED_VERSION = 1
 # Goal statuses the explorer itself causes (a cancel request or a replacement goal).
 ENDED_BY_EXPLORER = frozenset({"canceled", "preempted"})
@@ -222,7 +221,6 @@ TYPES: dict[str, tuple[type, ...]] = {
 }
 # Failures whose detail text maps to outcome_detail_code (RD-26).
 FAILURES = frozenset({"startup_failure", "runtime_failure", "storage_failure"})
-REPORTED = frozenset({"completed", "time_limit", "no_movement"})
 
 
 def validate(record: dict[str, Any]) -> None:
@@ -297,7 +295,7 @@ def report_class(
         return "excluded_runtime_failure"
     if outcome == "manual_stop":
         return "excluded_stopped"
-    if outcome in REPORTED:
+    if outcome in REPORTED_OUTCOMES:
         return "reported"
     return "missing_platform"
 
@@ -305,11 +303,21 @@ def report_class(
 def read_time_fields(
     record: dict[str, Any], experiment: dict[str, Any], superseded_by: str | None
 ) -> dict[str, Any]:
-    """Finality, replacement, report class and supersession of a stored record (never stored)."""
+    """Finality, replacement, report class and supersession of a stored record (never stored). A timing
+    rejection or an interruption is replaced only when a later attempt of its experiment exists
+    (``experiment["last_attempt_number"]``, as the export's accounting counts it); one still waiting has none."""
     is_final = experiment.get("final_attempt_id") == record["attempt_id"]
     outcome = record["outcome"]
+    last = experiment.get("last_attempt_number")
     replaced = None
-    if not is_final and outcome in ("timing_rejection", "engine_interruption", "manual_discard"):
+    if not is_final and (
+        outcome == "manual_discard"
+        or (
+            outcome in ("timing_rejection", "engine_interruption")
+            and last is not None
+            and record["attempt_number"] < last
+        )
+    ):
         replaced = outcome
     return dict(
         is_final=is_final,

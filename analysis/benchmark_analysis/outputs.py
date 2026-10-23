@@ -133,14 +133,16 @@ def scope_counts(study: Study, attempt_ids: Iterable[str], *, pairs: bool) -> di
 
     ``runs``: final runs it uses; ``pairs`` (paired outputs only); ``left_out``: the study's other final runs by
     report class (``reported`` for reported runs this output does not use, such as parallel runs in the compute
-    outputs); ``replaced`` and ``discarded``: attempts that are not final; ``strata`` and ``profiles``."""
+    outputs), including the final runs of cells without a reported run; ``replaced`` (a later attempt exists) and
+    ``discarded``: attempts that are not final; ``strata`` and ``profiles``."""
     used = set(attempt_ids)
-    finals = study.finals
+    finals = [run for run in study.runs if run["is_final"]]  # every cell's, not only the strata's
     left = Counter(str(run["report_class"]) for run in finals if run["attempt_id"] not in used)
     earlier = Counter(
         "discarded" if run["outcome"] == "manual_discard" else "replaced"
         for run in study.runs
         if not run["is_final"]
+        and (run["outcome"] == "manual_discard" or run["replaced_reason"] is not None)
     )
     counts: dict[str, Any] = dict(
         runs=sum(run["attempt_id"] in used for run in finals),

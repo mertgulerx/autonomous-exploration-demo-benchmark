@@ -196,7 +196,8 @@ def load(export: Export) -> Study:
     if not finals:
         raise Refused("the export holds no final runs")
     for column in VERSION_COLUMNS:
-        found = sorted({str(run[column]) for run in finals})
+        # a run without the value (a startup failure before recording began) holds no data of that version
+        found = sorted({str(run[column]) for run in finals if run[column] is not None})
         if len(found) > 1:
             raise Refused(
                 f"final runs mix {column} values {found}; analyse each separately",

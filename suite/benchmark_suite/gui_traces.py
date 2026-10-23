@@ -21,9 +21,10 @@ from typing import Any
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from .contracts import GAP_S
 from .gui_marks import CHART_LABEL
 from .gui_menus import show_tooltip
-from .gui_run_detail import GAP_S, TimeAxis
+from .gui_run_detail import TimeAxis, carries_forward
 from .gui_style import duration, number
 from .gui_theme import ThemeManager
 from .gui_widgets import TextStyle, Themed, paint_glyphs
@@ -246,14 +247,7 @@ class TracesChart(Themed):
             end = segments[-1][-1]
             samples = run.get("samples") or []
             last = number(samples[-1][0]) if samples else None
-            completion = number(run.get("completion_s"))
-            if (
-                run.get("outcome") == "completed"
-                and limit is not None
-                and last is not None
-                and completion is not None
-                and completion - last <= GAP_S  # never across a final gap (F1: only from the end)
-            ):
+            if carries_forward(run, last, limit):
                 carried = self.colour(run)
                 carried.setAlphaF(0.9 if hovered else 0.35)
                 width = 2.6 if hovered else 1.2

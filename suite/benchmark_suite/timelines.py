@@ -33,7 +33,7 @@ from typing import Any
 
 import pyarrow.parquet as pq
 
-from .contracts import ContractError
+from .contracts import GAP_S, ContractError
 from .datasets import iter_rows, materialize_manifest
 from .monitoring import PathSettings
 from .run_record import DERIVED_VERSION, RUN_RECORD_VERSION, time_origins, track
@@ -43,7 +43,6 @@ MAX_POINTS = 7200  # per series of a run view: two hours at 1 Hz
 MAX_TRACE_POINTS = 2000  # per run of a traces reply
 TRACE_BUDGET = 150_000  # per traces reply, shared by its runs (about 3 MB)
 COVERED_SHARE = 0.5  # a speed interval needs valid pose pairs over at least half of its second
-GAP_S = 2.0  # a longer stretch between coverage samples breaks the line (RD-6's gap rule, as the GUI draws it)
 MILESTONES = (
     25,
     50,
@@ -285,6 +284,7 @@ TRACE_FIELDS = (
     "repetition",
     "outcome",
     "completion_s",
+    "completion_event",
     "coverage_final_pct",
     "coverage_at_limit_pct",
     "time_limit_s",

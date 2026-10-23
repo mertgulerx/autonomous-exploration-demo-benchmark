@@ -271,8 +271,9 @@ def t1(src: Sources) -> Table:
             # a discard without a trigger is an experiment stop, as the engine reads it (exports.py)
             trigger = run["discard_trigger"] or "experiment_stop"
             group["discarded_" + (trigger if trigger in DISCARD_TRIGGERS else "other")] += 1
-        elif not run["is_final"] and run["outcome"] in ("timing_rejection", "engine_interruption"):
-            group["replaced_" + run["outcome"]] += 1
+        elif run["replaced_reason"] in ("timing_rejection", "engine_interruption"):
+            # replaced: a later attempt of the experiment exists (one still waiting is in Not done)
+            group["replaced_" + run["replaced_reason"]] += 1
         elif run["is_final"]:
             group[run["report_class"]] += 1
             if run["report_class"] == REPORTED:

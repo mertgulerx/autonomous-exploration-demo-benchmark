@@ -184,11 +184,6 @@ class Transport(QtCore.QThread):
                     result = {
                         "text": path.read_text(encoding="utf-8")
                     }  # as the engine reads plans and YAML
-                elif method == "local.read_image":
-                    path = Path(params["path"])
-                    if path.stat().st_size > 8 * 1024 * 1024:
-                        raise ValueError("Preview exceeds 8 MiB")
-                    result = {"image": path.read_bytes()}
                 elif method == "local.write":
                     atomic_bytes(Path(params["path"]), params["text"].encode())
                     result = {"path": params["path"]}

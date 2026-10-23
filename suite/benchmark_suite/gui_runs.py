@@ -314,7 +314,9 @@ def run_cell(record: Mapping[str, Any], key: str, names: Names) -> Cell:
         value, event = record.get(f"{prefix}_s"), record.get(f"{prefix}_event")
         if event and isinstance(value, (int, float)):
             return Cell(duration(value), "number", token=token)
-        if event is False and record.get("report_class") == REPORTED:
+        # RD-8: a run that never moved never reaches (R = L)
+        never = record.get("outcome") == "no_movement"
+        if (event is False or never) and record.get("report_class") == REPORTED:
             if key == "completion":
                 return Cell("> L", "name", token="state.warn")  # ``.cens``: right-censored at L
             return Cell("not reached", token="text.secondary")
