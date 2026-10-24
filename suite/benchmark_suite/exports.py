@@ -27,6 +27,7 @@ from collections.abc import Iterable, Iterator
 import csv
 from dataclasses import dataclass
 import gzip
+import hashlib
 import io
 import json
 import os
@@ -40,6 +41,7 @@ import uuid
 
 import duckdb
 from exploration_benchmark_runner.coverage import erode
+from exploration_benchmark_runner.worlds import WorldRegistry
 import numpy as np
 from PIL import Image
 import pyarrow as pa
@@ -48,7 +50,7 @@ import pyarrow.csv as pcsv
 import pyarrow.parquet as pq
 import yaml
 
-from .analysis_block import plan_parts, validate
+from .analysis_block import WorldFacts, plan_parts, validate
 from .contracts import NO_MOVEMENT_LIMIT, ContractError, canonical, content_hash
 from .datasets import files, iter_rows, materialize_manifest, stream_relation
 from .explorer_log import read_text
@@ -69,11 +71,14 @@ from .schemas import SCHEMAS
 from .storage import file_hash, load_object, read_object, sync_directory
 from .store import Store, replaced_campaigns, study_campaign_rows
 from .studies import homogeneity, refused_mixes
+from .world_facts import world_facts
 
 if TYPE_CHECKING:
     from .jobs import Job
 
-EXPORT_VERSION = 1
+# 2 (world integration, plans/worlds/I2 §3.10, R-1): the ``worlds`` table, the registry hash and each campaign's
+# time-limit rule and inputs in study.yaml, and descriptors.json and regions.png per reference. Additive.
+EXPORT_VERSION = 2
 LOGS = ("explorer", "insight", "navigation", "robot", "simulation", "worker")
 ARROW = {
     "text": pa.string(),
@@ -190,6 +195,29 @@ DESCRIPTIONS: dict[str, dict[str, tuple[str, str, str]]] = {
             "count",
             "never",
             "attempts discarded by an experiment restart",
+        ),
+    },
+    # The registry facts of the worlds of the final runs (contract: plans/worlds/EXECUTION.md "Shared contracts").
+    "worlds": {
+        "world_id": ("", "never", "world registry ID"),
+        "tier": ("", "never", "A, SC, P, F, RP or MO"),
+        "family": ("", "not tier F", "F1 … F5"),
+        "role": ("", "never", "registry role"),
+        "design_point_json": (
+            "JSON",
+            "never",
+            "factor -> level of a tier F world; {} for named worlds",
+        ),
+        "seed": ("", "not tier F", "world.yaml seed"),
+        "generator_version": (
+            "",
+            "tier A (not a collection world)",
+            "worldgen version of the world",
+        ),
+        "world_yaml_sha256": (
+            "sha256",
+            "tier A (not a collection world)",
+            "the world.yaml the registry pins",
         ),
     },
     "profiles": {
@@ -418,10 +446,68 @@ def _map(directory: Path, destination: Path, manifest: dict[str, Any]) -> None:
     destination.with_suffix(".yaml").write_text(yaml.safe_dump(description, sort_keys=True))
 
 
-def _reference(
-    workspace: Path, manifest: dict[str, Any], destination: Path, pairs: list[tuple[str, str]]
+def _checkout(workspace: Path) -> Path:
+    """The checkout beside ``results/campaigns/<workspace>`` (the engine's mount)."""
+    return workspace.resolve().parents[2]
+
+
+def _descriptors(
+    registry: WorldRegistry, world: str, metadata_sha256: str, target_dir: Path
 ) -> str | None:
-    """The coverage reference an attempt used: masks as PGM/PNG with their YAML (RESULTS_OVERHAUL §6).
+    """Copy a reference's official descriptors and region raster (I2 §3.9) from the checkout, hash-checked
+    against the registry pins. Returns a warning instead, and copies neither file, when the world has no
+    descriptor pin or its pinned file describes another reference than the one the attempt used (the
+    pin moved on after the runs; the runs stay exportable). A descriptor file that describes another
+    reference than the registry's own pin, changed bytes or a raster that does not match refuse."""
+    try:
+        entry = registry.world(world)
+    except ValueError:
+        entry = None
+    pin = entry.descriptors if entry is not None else None
+    if entry is None or pin is None:
+        return f"world {world}: no descriptor file in the registry; descriptors.json and regions.png left out"
+    data = registry.path(pin.file).read_bytes()
+    if hashlib.sha256(data).hexdigest() != pin.sha256:
+        raise Refused(f"{pin.file} changed since the registry was loaded")
+    try:
+        document = json.loads(data)
+        described, raster_sha256 = (
+            document["grid"]["metadata_sha256"],
+            document["region_raster"]["sha256"],
+        )
+    except (ValueError, KeyError, TypeError) as exc:
+        raise Refused(f"{pin.file} is not a descriptor file: {exc!r}") from exc
+    if described != entry.reference.metadata_sha256:
+        # the registry contradicts itself (a descriptor file pinned to another reference): never a warning
+        raise Refused(
+            f"{pin.file} describes reference {described[:8]}, not the registry's "
+            f"{entry.reference.metadata_sha256[:8]} for {world}"
+        )
+    if described != metadata_sha256:
+        return (
+            f"world {world}: the pinned {pin.file} describes another reference than "
+            f"{metadata_sha256[:8]}, which runs used; descriptors.json and regions.png left out"
+        )
+    # The pinned raster (registry naming rule); inside the export it is regions.png, the name the descriptor
+    # file's region_raster.file gives.
+    raster_bytes = registry.path(pin.regions_file).read_bytes()
+    if hashlib.sha256(raster_bytes).hexdigest() != raster_sha256:
+        raise Refused(f"{pin.regions_file} does not match {pin.file}")
+    (target_dir / "descriptors.json").write_bytes(data)
+    (target_dir / "regions.png").write_bytes(raster_bytes)
+    return None
+
+
+def _reference(
+    workspace: Path,
+    manifest: dict[str, Any],
+    destination: Path,
+    pairs: list[tuple[str, str]],
+    registry: WorldRegistry,
+    warnings: list[str],
+) -> str | None:
+    """The coverage reference an attempt used: masks as PGM/PNG with their YAML (RESULTS_OVERHAUL §6), and
+    its official descriptors and region raster (export version 2).
 
     Its directory is ``<reference id>-<8 hex of its objects' hash>``: a reference regenerated under the same
     ID (a changed world) gets its own directory.
@@ -470,6 +556,9 @@ def _reference(
             sort_keys=True,
         )
     )
+    warning = _descriptors(registry, metadata["world"], objects["coverage_metadata"], target_dir)
+    if warning is not None:
+        warnings.append(warning)
     return name
 
 
@@ -748,6 +837,8 @@ def _per_run(
     staging: Path,
     finals: list[tuple[dict[str, Any], dict[str, Any], str]],
     pairs: list[tuple[str, str]],
+    registry: WorldRegistry,
+    warnings: list[str],
 ) -> tuple[
     list[dict[str, Any]], list[dict[str, Any]], dict[str, list[pa.Table]], dict[str, list[str]]
 ]:
@@ -777,7 +868,9 @@ def _per_run(
                     )
                 )
         _map(directory, staging / "maps" / attempt["id"], manifest)
-        reference = _reference(workspace, manifest, staging / "references", pairs)
+        reference = _reference(
+            workspace, manifest, staging / "references", pairs, registry, warnings
+        )
         if reference:
             references[reference].append(attempt["id"])
         _raw(directory, staging / "raw" / attempt["id"], pairs)
@@ -869,9 +962,10 @@ export format {export_version}. Every file is listed with its SHA-256 in `SHA256
 - `runs`: one row per attempt (the run record `run-record-v{record_version}` plus its finality and report class).
 - `experiments`: the planned profile × block experiments, the accounting denominator.
 - `endpoints`, `coverage`, `trajectory_gt`, `goals`, `accounting`, `explorer_decisions`, `gate_evaluations`,
-  `profiles`: see `codebook.csv`, which describes every column.
+  `profiles`, `worlds`: see `codebook.csv`, which describes every column.
 - `maps/`, `references/`: final SLAM maps (with the map-to-world alignment) and the coverage references, as
-  Nav2 map images with YAML.
+  Nav2 map images with YAML; each reference also holds its official world descriptors (`descriptors.json`) and
+  region raster (`regions.png`, 16-bit, row 0 = largest y, 0 outside the free floor) when the registry pins them.
 - `raw/`: the recorded streams, manifest and logs of every final run, absolute paths replaced.
 - `study.yaml`, `provenance.json`: the study's identity, campaigns, analysis block, code and run environment,
   and the homogeneity check; `plan.md`: the study plan as it was at export, when the study names one.
@@ -894,13 +988,14 @@ def _plan(
     study: dict[str, Any],
     registered: list[str],
     pairs: list[tuple[str, str]],
+    worlds: dict[str, WorldFacts],
 ) -> tuple[dict[str, Any] | None, str | None, list[str]]:
     """Copy the study's plan from the checkout to ``plan.md`` (RO-15); its analysis block, the hash of its
     registered part now, and warnings. The block is passed on only when that part still has the one hash
     every campaign registered, so the analysis never reads parameters the study did not run under."""
     if not study.get("plan"):
         return None, None, []
-    checkout = workspace.resolve().parents[2]
+    checkout = _checkout(workspace)
     path = (checkout / study["plan"]).resolve()
     if not path.is_relative_to(checkout) or not path.is_file():
         return (
@@ -928,7 +1023,7 @@ def _plan(
         )
         return None, plan.sha256, warnings
     try:
-        block = validate(plan.block, confirmatory=confirmatory)
+        block = validate(plan.block, confirmatory=confirmatory, worlds=worlds)
     except ContractError as exc:
         return None, plan.sha256, [f"study plan: the block no longer validates ({exc}); {left_out}"]
     return block, plan.sha256, []
@@ -945,8 +1040,11 @@ def _study_files(
     pairs: list[tuple[str, str]],
     analysis: dict[str, Any] | None,
     plan_sha256_at_export: str | None,
+    registry_sha256: str,
+    world_warnings: list[str],
 ) -> None:
-    """``study.yaml``, ``provenance.json``, README and licence."""
+    """``study.yaml``, ``provenance.json``, README and licence. ``world_warnings`` (worlds without a registry
+    entry or descriptor pin) go under ``provenance.json`` ``world_warnings``, not ``homogeneity``."""
     study = (
         next(
             (
@@ -981,10 +1079,15 @@ def _study_files(
                             repetitions=c["specification"]["repetitions"],
                             concurrency=c["specification"]["concurrency"],
                             world_time_limits=c["specification"].get("world_time_limits"),
+                            # I4: the rule that set the limits and its inputs (null without the rule).
+                            time_limit_rule=c["specification"].get("time_limit_rule"),
+                            time_limit_inputs=c["specification"].get("time_limit_inputs"),
                             debug_streams=bool(c["specification"].get("debug_streams")),
                         )
                         for c in snap.campaigns
                     ],
+                    # The world registry the export read (worlds table, descriptor pins); I1 R-3.
+                    world_registry_sha256=registry_sha256,
                     default_parameter_hashes=dict(sorted(defaults.items())),
                     attempts=len(snap.attempts),
                     experiments=len(snap.experiments),
@@ -1003,6 +1106,7 @@ def _study_files(
                     documents={identity: snap.documents.get(identity) for identity in used},
                     references=dict(sorted((k, sorted(v)) for k, v in references.items())),
                     homogeneity=homogeneity,
+                    world_warnings=world_warnings,
                 ),
                 indent=2,
                 sort_keys=True,
@@ -1059,10 +1163,55 @@ def _seal(staging: Path, pairs: list[tuple[str, str]], host_name: str) -> int:
     return len(paths)
 
 
+def _registry_matches_runs(
+    registry: WorldRegistry,
+    sources: dict[str, set[str | None]],
+    finals: list[tuple[dict[str, Any], dict[str, Any], str]],
+    documents: dict[str, Any],
+) -> list[str]:
+    """Check the checkout's registry, which gives the ``worlds`` table and the descriptor pins, against
+    what the runs recorded. ``sources``: per world, the ``world_yaml_sha256`` of each full run's manifest
+    (``configuration.scenario.source``; null for tier A). A collection world whose registry world.yaml
+    hash differs from a run's is refused, because its row (family, design point) could describe another
+    world; tier A has no world.yaml and is not checked. A registry file that differs from the one the
+    engine read (provenance ``world_registry_sha256``) only warns."""
+    for world_id in sorted(sources):
+        try:
+            source = registry.world(world_id).source
+        except ValueError:
+            continue  # not in the registry: warned with the worlds table
+        if source is None:
+            continue
+        recorded = sources[world_id] - {source.world_yaml_sha256}
+        if None in recorded:
+            raise Refused(
+                f"World {world_id}: some runs recorded no world.yaml hash, so the worlds row cannot be "
+                "verified against them"
+            )
+        if recorded:
+            found = ", ".join(sorted(str(value)[:8] for value in recorded))
+            raise Refused(
+                f"World {world_id}: the registry's world.yaml hash {source.world_yaml_sha256[:8]} "
+                f"differs from the one its runs recorded ({found}); export with the registry the runs "
+                "used"
+            )
+    used = {record["provenance_id"] for _, record, _ in finals if record["provenance_id"]}
+    hashes = {(documents.get(identity) or {}).get("world_registry_sha256") for identity in used}
+    # provenance version 1 (before the registry) records no hash: nothing to compare
+    other = sorted(str(value)[:8] for value in hashes - {registry.sha256, None})
+    if not other:
+        return []
+    return [
+        f"world registry: the export read {registry.sha256[:8]}, the runs' engines read "
+        f"{', '.join(other)}; the worlds table and descriptor pins come from the export's"
+    ]
+
+
 def _build(workspace: Path, study_id: str, staging: Path, host_name: str) -> dict[str, Any]:
     snap = snapshot(workspace, study_id)
     run_rows, finals = _run_rows(snap)
     recorded = []
+    sources: dict[str, set[str | None]] = defaultdict(set)
     for attempt, record, _ in finals:
         if record["record_kind"] == "full":
             configuration = (
@@ -1073,7 +1222,14 @@ def _build(workspace: Path, study_id: str, staging: Path, host_name: str) -> dic
                 (str(configuration.get("project_root") or ""), "<checkout>"),
                 (str(configuration.get("suite_workspace") or ""), "<workspace>"),
             ]
+            source = (configuration.get("scenario") or {}).get("source") or {}
+            sources[record["world_id"]].add(source.get("world_yaml_sha256"))
     pairs = _scrubber(workspace, recorded)
+    try:
+        registry = WorldRegistry.load(_checkout(workspace))
+    except ValueError as exc:
+        raise Refused(f"World registry of the checkout: {exc}") from exc
+    world_warnings = _registry_matches_runs(registry, sources, finals, snap.documents)
     tables: dict[str, pa.Schema] = {}
     tables["runs"] = _write(
         staging,
@@ -1120,7 +1276,26 @@ def _build(workspace: Path, study_id: str, staging: Path, host_name: str) -> dic
         ),
         pairs,
     )
-    coverage, trajectory, derived, references = _per_run(workspace, staging, finals, pairs)
+    coverage, trajectory, derived, references = _per_run(
+        workspace, staging, finals, pairs, registry, world_warnings
+    )
+    used_worlds = {record["world_id"] for _, record, _ in finals}
+    try:
+        world_rows = [row for row in registry.worlds_table() if row["world_id"] in used_worlds]
+    except (OSError, ValueError) as exc:
+        raise Refused(f"World registry of the checkout, worlds table: {exc}") from exc
+    world_warnings += [
+        f"world {world}: not in the registry; it has no row in the worlds table"
+        for world in sorted(used_worlds - {row["world_id"] for row in world_rows})
+    ]
+    tables["worlds"] = _write(
+        staging,
+        "worlds",
+        pa.Table.from_pylist(
+            world_rows, schema=_schema_of(DESCRIPTIONS["worlds"], {"seed": pa.int64()})
+        ),
+        pairs,
+    )
     coverage_types = {
         "t_s": pa.float64(),
         "t_activation_s": pa.float64(),
@@ -1172,16 +1347,32 @@ def _build(workspace: Path, study_id: str, staging: Path, host_name: str) -> dic
     )
     homogeneity = _homogeneity(snap, finals)
     studies = [c["specification"].get("study") or {} for c in snap.campaigns]
+    try:
+        facts = world_facts(registry)  # the same facts Library uses at submission
+    except ContractError as exc:
+        raise Refused(f"World registry of the checkout: {exc}") from exc
     analysis, digest, plan_warnings = _plan(
         workspace,
         staging,
         next((study for study in studies if study), {}),
         sorted({str(study.get("plan_sha256")) for study in studies}),
         pairs,
+        facts,
     )
     homogeneity["warnings"] += plan_warnings
     _study_files(
-        staging, study_id, snap, finals, defaults, references, homogeneity, pairs, analysis, digest
+        staging,
+        study_id,
+        snap,
+        finals,
+        defaults,
+        references,
+        homogeneity,
+        pairs,
+        analysis,
+        digest,
+        registry.sha256,
+        world_warnings,
     )
     with (staging / "codebook.csv").open("w", newline="") as handle:
         writer = csv.DictWriter(
@@ -1195,7 +1386,7 @@ def _build(workspace: Path, study_id: str, staging: Path, host_name: str) -> dic
         files=listed + 1,
         bytes=sum(p.stat().st_size for p in staging.rglob("*") if p.is_file()),
         final_runs=len(finals),
-        warnings=homogeneity["warnings"],
+        warnings=homogeneity["warnings"] + world_warnings,
     )
 
 

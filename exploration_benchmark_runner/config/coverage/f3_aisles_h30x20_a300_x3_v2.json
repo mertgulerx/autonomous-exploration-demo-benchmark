@@ -1,0 +1,1156 @@
+{
+  "id": "f3_aisles_h30x20_a300_x3_coverage_v2",
+  "metric_version": 2,
+  "target_margin_m": 0.1,
+  "world": "f3_aisles_h30x20_a300_x3",
+  "spawn": [
+    12.625,
+    8.625,
+    0.1,
+    3.141593
+  ],
+  "resolution": 0.05,
+  "origin": [
+    -16.6,
+    -11.2,
+    0.0
+  ],
+  "width": 664,
+  "height": 448,
+  "target_cells": 196272,
+  "target_area_m2": 490.6800000000001,
+  "grid_file": "f3_aisles_h30x20_a300_x3.npz",
+  "grid_sha256": "ce630ab700e8d3ba50c86cd79a262c3745a0d17749a87fe599784eb0c1eebc7c",
+  "source_sha256": {
+    "world_collection/worlds/F3_aisles_h30x20_a300_x3/F3_aisles_h30x20_a300_x3.sdf": "42259d59a78aa2304dea29e3afa9b89722ba5ebf4c817d5cb3d9d0e7b65d14c4",
+    "exploration_benchmark_runner/config/coverage/f3_aisles_h30x20_a300_x3_scenario.yaml": "08eb21efdf1f4419f150911967eb22862a7175e3f6578a8e682c88128da02027",
+    "simulation/Week-7-8-ROS2-Navigation/bme_ros2_navigation/urdf/mogi_bot.urdf": "11b3a0684efb4f44bd12719f36ed6732b6dbf1d4570ea14580f4e81ba8af263a"
+  },
+  "generation": {
+    "body_height_slab": [
+      0.03,
+      0.35
+    ],
+    "settings": {
+      "bounds": [
+        -16.6,
+        -11.2,
+        16.6,
+        11.2
+      ],
+      "inclusion_polygons": [
+        [
+          [
+            -15.4,
+            -3.7
+          ],
+          [
+            -15.0,
+            -3.7
+          ],
+          [
+            -15.0,
+            -10.0
+          ],
+          [
+            15.0,
+            -10.0
+          ],
+          [
+            15.0,
+            -8.0
+          ],
+          [
+            15.4,
+            -8.0
+          ],
+          [
+            15.4,
+            -7.0
+          ],
+          [
+            15.0,
+            -7.0
+          ],
+          [
+            15.0,
+            0.5
+          ],
+          [
+            15.4,
+            0.5
+          ],
+          [
+            15.4,
+            1.5
+          ],
+          [
+            15.0,
+            1.5
+          ],
+          [
+            15.0,
+            5.9
+          ],
+          [
+            15.4,
+            5.9
+          ],
+          [
+            15.4,
+            6.9
+          ],
+          [
+            15.0,
+            6.9
+          ],
+          [
+            15.0,
+            10.0
+          ],
+          [
+            -15.0,
+            10.0
+          ],
+          [
+            -15.0,
+            6.6
+          ],
+          [
+            -15.4,
+            6.6
+          ],
+          [
+            -15.4,
+            5.6
+          ],
+          [
+            -15.0,
+            5.6
+          ],
+          [
+            -15.0,
+            1.0
+          ],
+          [
+            -15.4,
+            1.0
+          ],
+          [
+            -15.4,
+            0.0
+          ],
+          [
+            -15.0,
+            0.0
+          ],
+          [
+            -15.0,
+            -2.7
+          ],
+          [
+            -15.4,
+            -2.7
+          ]
+        ]
+      ],
+      "exclusion_polygons": [],
+      "review": "F3-04 Warehouse aisles 30\u00d720 m, 3.0 m aisles, 3 cross-aisles: inclusion polygon of world.yaml; bounds = T0 grid extent",
+      "source": {
+        "world_yaml": "world_collection/worlds/F3_aisles_h30x20_a300_x3/world.yaml",
+        "worldgen_version": "1.0.1"
+      }
+    },
+    "connectivity": "4-connected free floor from spawn; not a footprint planner",
+    "unreachable_free_cells": 0,
+    "collision_records": [
+      {
+        "model": "ground_plane",
+        "collision": "ground_collision",
+        "bounds": [
+          [
+            -17.6,
+            -12.2,
+            -0.05
+          ],
+          [
+            17.6,
+            12.2,
+            0.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "outer_e_00_col",
+        "bounds": [
+          [
+            15.0,
+            -10.0,
+            0.0
+          ],
+          [
+            15.2,
+            -8.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "outer_e_01_col",
+        "bounds": [
+          [
+            15.0,
+            -7.0,
+            0.0
+          ],
+          [
+            15.2,
+            0.5,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "outer_e_02_col",
+        "bounds": [
+          [
+            15.0,
+            1.5,
+            0.0
+          ],
+          [
+            15.2,
+            5.9,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "outer_e_03_col",
+        "bounds": [
+          [
+            15.0,
+            6.8999999999999995,
+            0.0
+          ],
+          [
+            15.2,
+            10.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "outer_n_00_col",
+        "bounds": [
+          [
+            -15.2,
+            10.0,
+            0.0
+          ],
+          [
+            15.2,
+            10.2,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "outer_s_00_col",
+        "bounds": [
+          [
+            -15.2,
+            -10.2,
+            0.0
+          ],
+          [
+            15.2,
+            -10.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "outer_w_00_col",
+        "bounds": [
+          [
+            -15.2,
+            -10.0,
+            0.0
+          ],
+          [
+            -15.0,
+            -3.6999999999999997,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "outer_w_01_col",
+        "bounds": [
+          [
+            -15.2,
+            -2.7,
+            0.0
+          ],
+          [
+            -15.0,
+            0.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "outer_w_02_col",
+        "bounds": [
+          [
+            -15.2,
+            1.0,
+            0.0
+          ],
+          [
+            -15.0,
+            5.6,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "outer_w_03_col",
+        "bounds": [
+          [
+            -15.2,
+            6.6000000000000005,
+            0.0
+          ],
+          [
+            -15.0,
+            10.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "recess_e1_a_col",
+        "bounds": [
+          [
+            15.200000000000001,
+            -8.2,
+            0.0
+          ],
+          [
+            15.6,
+            -8.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "recess_e1_b_col",
+        "bounds": [
+          [
+            15.200000000000001,
+            -7.0,
+            0.0
+          ],
+          [
+            15.6,
+            -6.800000000000001,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "recess_e1_back_col",
+        "bounds": [
+          [
+            15.4,
+            -8.0,
+            0.0
+          ],
+          [
+            15.6,
+            -7.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "recess_e2_a_col",
+        "bounds": [
+          [
+            15.200000000000001,
+            0.30000000000000004,
+            0.0
+          ],
+          [
+            15.6,
+            0.5,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "recess_e2_b_col",
+        "bounds": [
+          [
+            15.200000000000001,
+            1.5,
+            0.0
+          ],
+          [
+            15.6,
+            1.7000000000000002,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "recess_e2_back_col",
+        "bounds": [
+          [
+            15.4,
+            0.5,
+            0.0
+          ],
+          [
+            15.6,
+            1.5,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "recess_e3_a_col",
+        "bounds": [
+          [
+            15.200000000000001,
+            5.7,
+            0.0
+          ],
+          [
+            15.6,
+            5.8999999999999995,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "recess_e3_b_col",
+        "bounds": [
+          [
+            15.200000000000001,
+            6.9,
+            0.0
+          ],
+          [
+            15.6,
+            7.1,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "recess_e3_back_col",
+        "bounds": [
+          [
+            15.4,
+            5.9,
+            0.0
+          ],
+          [
+            15.6,
+            6.9,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "recess_w1_a_col",
+        "bounds": [
+          [
+            -15.6,
+            -3.9,
+            0.0
+          ],
+          [
+            -15.200000000000001,
+            -3.6999999999999997,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "recess_w1_b_col",
+        "bounds": [
+          [
+            -15.6,
+            -2.7,
+            0.0
+          ],
+          [
+            -15.200000000000001,
+            -2.5,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "recess_w1_back_col",
+        "bounds": [
+          [
+            -15.6,
+            -3.7,
+            0.0
+          ],
+          [
+            -15.4,
+            -2.7,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "recess_w2_a_col",
+        "bounds": [
+          [
+            -15.6,
+            -0.2,
+            0.0
+          ],
+          [
+            -15.200000000000001,
+            0.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "recess_w2_b_col",
+        "bounds": [
+          [
+            -15.6,
+            1.0,
+            0.0
+          ],
+          [
+            -15.200000000000001,
+            1.2000000000000002,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "recess_w2_back_col",
+        "bounds": [
+          [
+            -15.6,
+            0.0,
+            0.0
+          ],
+          [
+            -15.4,
+            1.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "recess_w3_a_col",
+        "bounds": [
+          [
+            -15.6,
+            5.4,
+            0.0
+          ],
+          [
+            -15.200000000000001,
+            5.6,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "recess_w3_b_col",
+        "bounds": [
+          [
+            -15.6,
+            6.6000000000000005,
+            0.0
+          ],
+          [
+            -15.200000000000001,
+            6.8,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "recess_w3_back_col",
+        "bounds": [
+          [
+            -15.6,
+            5.6,
+            0.0
+          ],
+          [
+            -15.4,
+            6.6,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "rack_000_col",
+        "bounds": [
+          [
+            -12.0,
+            -6.0,
+            0.0
+          ],
+          [
+            -11.0,
+            -5.699999999999999,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "rack_001_col",
+        "bounds": [
+          [
+            -10.0,
+            -6.0,
+            0.0
+          ],
+          [
+            -8.7,
+            -5.699999999999999,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "rack_002_col",
+        "bounds": [
+          [
+            0.7999999999999999,
+            -6.0,
+            0.0
+          ],
+          [
+            2.0,
+            -5.699999999999999,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "rack_003_col",
+        "bounds": [
+          [
+            3.0000000000000004,
+            -6.0,
+            0.0
+          ],
+          [
+            5.800000000000001,
+            -5.699999999999999,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "rack_004_col",
+        "bounds": [
+          [
+            -5.7,
+            -6.0,
+            0.0
+          ],
+          [
+            -2.2,
+            -4.300000000000001,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "rack_005_col",
+        "bounds": [
+          [
+            8.8,
+            -6.0,
+            0.0
+          ],
+          [
+            12.0,
+            -4.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "rack_006_col",
+        "bounds": [
+          [
+            -12.0,
+            -5.7,
+            0.0
+          ],
+          [
+            -8.7,
+            -4.3,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "rack_007_col",
+        "bounds": [
+          [
+            0.7999999999999998,
+            -5.699999999999999,
+            0.0
+          ],
+          [
+            5.8,
+            -3.9999999999999996,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "rack_008_col",
+        "bounds": [
+          [
+            -12.0,
+            -4.300000000000001,
+            0.0
+          ],
+          [
+            -10.399999999999999,
+            -4.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "rack_009_col",
+        "bounds": [
+          [
+            -9.4,
+            -4.300000000000001,
+            0.0
+          ],
+          [
+            -8.700000000000001,
+            -4.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "rack_010_col",
+        "bounds": [
+          [
+            -5.7,
+            -4.300000000000001,
+            0.0
+          ],
+          [
+            -5.1000000000000005,
+            -4.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "rack_011_col",
+        "bounds": [
+          [
+            -4.1,
+            -4.300000000000001,
+            0.0
+          ],
+          [
+            -2.2,
+            -4.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "rack_012_col",
+        "bounds": [
+          [
+            -12.0,
+            -1.0,
+            0.0
+          ],
+          [
+            -10.899999999999999,
+            -0.7,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "rack_013_col",
+        "bounds": [
+          [
+            -9.9,
+            -1.0,
+            0.0
+          ],
+          [
+            -8.700000000000001,
+            -0.7,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "rack_014_col",
+        "bounds": [
+          [
+            -5.7,
+            -1.0,
+            0.0
+          ],
+          [
+            -2.2,
+            0.7,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "rack_015_col",
+        "bounds": [
+          [
+            0.7999999999999998,
+            -1.0,
+            0.0
+          ],
+          [
+            5.8,
+            0.7,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "rack_016_col",
+        "bounds": [
+          [
+            8.8,
+            -1.0,
+            0.0
+          ],
+          [
+            12.0,
+            0.7,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "rack_017_col",
+        "bounds": [
+          [
+            -12.0,
+            -0.7,
+            0.0
+          ],
+          [
+            -8.7,
+            1.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "rack_018_col",
+        "bounds": [
+          [
+            -5.7,
+            0.7,
+            0.0
+          ],
+          [
+            -3.8,
+            1.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "rack_019_col",
+        "bounds": [
+          [
+            -2.8,
+            0.7,
+            0.0
+          ],
+          [
+            -2.2,
+            1.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "rack_020_col",
+        "bounds": [
+          [
+            0.7999999999999999,
+            0.7,
+            0.0
+          ],
+          [
+            1.5,
+            1.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "rack_021_col",
+        "bounds": [
+          [
+            2.5000000000000004,
+            0.7,
+            0.0
+          ],
+          [
+            5.800000000000001,
+            1.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "rack_022_col",
+        "bounds": [
+          [
+            8.8,
+            0.7,
+            0.0
+          ],
+          [
+            10.2,
+            1.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "rack_023_col",
+        "bounds": [
+          [
+            11.2,
+            0.7,
+            0.0
+          ],
+          [
+            12.0,
+            1.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "rack_024_col",
+        "bounds": [
+          [
+            -12.0,
+            3.9999999999999996,
+            0.0
+          ],
+          [
+            -8.7,
+            5.699999999999999,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "rack_025_col",
+        "bounds": [
+          [
+            -5.7,
+            3.9999999999999996,
+            0.0
+          ],
+          [
+            -2.2,
+            5.699999999999999,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "rack_026_col",
+        "bounds": [
+          [
+            0.7999999999999998,
+            4.0,
+            0.0
+          ],
+          [
+            5.8,
+            6.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "rack_027_col",
+        "bounds": [
+          [
+            8.8,
+            4.0,
+            0.0
+          ],
+          [
+            12.0,
+            6.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "rack_028_col",
+        "bounds": [
+          [
+            -12.0,
+            5.699999999999999,
+            0.0
+          ],
+          [
+            -10.3,
+            6.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "rack_029_col",
+        "bounds": [
+          [
+            -9.3,
+            5.699999999999999,
+            0.0
+          ],
+          [
+            -8.7,
+            6.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "rack_030_col",
+        "bounds": [
+          [
+            -5.7,
+            5.699999999999999,
+            0.0
+          ],
+          [
+            -3.7,
+            6.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F3_04_structure",
+        "collision": "rack_031_col",
+        "bounds": [
+          [
+            -2.7,
+            5.699999999999999,
+            0.0
+          ],
+          [
+            -2.2,
+            6.0,
+            2.0
+          ]
+        ]
+      }
+    ],
+    "generator_sha256": "5613e07de31429608b7bb91a5d931b4983603c26a7c5bfece3de7a0979f760a0",
+    "tool_versions": {
+      "numpy": "2.4.4",
+      "scipy": "1.17.1",
+      "shapely": "2.1.2",
+      "trimesh": "4.12.2"
+    },
+    "world_yaml": "world_collection/worlds/F3_aisles_h30x20_a300_x3/world.yaml",
+    "worldgen_version": "1.0.1",
+    "seed": 404000,
+    "registry_id": "f3_aisles_h30x20_a300_x3"
+  }
+}

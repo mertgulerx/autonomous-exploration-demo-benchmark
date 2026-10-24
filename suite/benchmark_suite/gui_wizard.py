@@ -443,6 +443,14 @@ def seconds(value: float) -> str:
     return f"{value:.6f}".rstrip("0").rstrip(".")
 
 
+def grouped_seconds(value: float) -> str:
+    """A time limit as the world cards show it: "1,800", "1,800.5" (``seconds`` with grouped thousands)."""
+    whole, _, fraction = seconds(value).partition(".")
+    sign = "-" if whole.startswith("-") else ""
+    grouped = sign + f"{int(whole.lstrip('-') or 0):,}"
+    return grouped + ("." + fraction if fraction else "")
+
+
 def search_text(event: QtGui.QKeyEvent) -> str:
     """The text a key press types into a list's search field ("" for keys that keep their own meaning:
     Space, shortcuts and keys without printable text)."""
@@ -587,6 +595,7 @@ GROUP_HEAD = TextStyle(12, 600, 18)
 CHANGE_TEXT = TextStyle(12.5, 500, 18)
 COUNT_TEXT = TextStyle(13, 600, 18, tabular=True)
 SUMMARY_NOTE = TextStyle(12, 400, 18)
+SUMMARY_MONO = TextStyle(12, 400, 18, mono=True)
 
 
 class NotesEdit(QtWidgets.QTextEdit):
@@ -974,6 +983,7 @@ class SummaryItem:
     name: str
     detail: str
     count: int | None = None
+    mono: bool = False  # the detail is an identifier ("kinematic-time-limit-v1", 38)
 
 
 @dataclass(frozen=True, slots=True)
@@ -1106,5 +1116,6 @@ class DraftSummary(Card):
             draw_text(painter, x, line_top, text, COUNT_TEXT, theme.color("text.ink"))
         detail_left = left + 150 + 12
         room = right - detail_left - (count_width + 12 if item.count is not None else 0)
-        detail = BODY.elide(item.detail, max(0.0, room))
-        draw_text(painter, detail_left, line_top, detail, BODY, theme.color("text.secondary"))
+        style = SUMMARY_MONO if item.mono else BODY
+        detail = style.elide(item.detail, max(0.0, room))
+        draw_text(painter, detail_left, line_top, detail, style, theme.color("text.secondary"))

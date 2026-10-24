@@ -66,3 +66,14 @@ RUN /bin/bash -c "source /opt/ros/jazzy/setup.bash && source install/setup.bash 
     colcon build --symlink-install --executor sequential \
     --packages-select exploration_benchmark_interfaces frontier_exploration_ros2 bme_ros2_navigation bme_ros2_navigation_py exploration_benchmark_robots exploration_benchmark_runner rviz_autonomous_exploration_benchmark \
     --cmake-args -DBUILD_TESTING=OFF"
+# Rebuild the E0 moving-object system from the current sources (Dockerfile has the same step; the variable
+# is repeated for bases built before it).
+RUN rm -rf /opt/benchmark_ws/world_collection/plugins/moving_objects /opt/benchmark-moving-objects
+COPY world_collection/plugins/moving_objects /opt/benchmark_ws/world_collection/plugins/moving_objects
+RUN /bin/bash -c "source /opt/ros/jazzy/setup.bash && \
+    cmake -S /opt/benchmark_ws/world_collection/plugins/moving_objects -B /opt/benchmark-moving-objects/build \
+    -DMOVING_OBJECTS_LIB_DIR=/opt/benchmark-moving-objects/lib && \
+    CMAKE_BUILD_PARALLEL_LEVEL=2 cmake --build /opt/benchmark-moving-objects/build && \
+    cmake --install /opt/benchmark-moving-objects/build && \
+    rm -rf /opt/benchmark-moving-objects/build"
+ENV GZ_SIM_SYSTEM_PLUGIN_PATH=/opt/benchmark-moving-objects/lib

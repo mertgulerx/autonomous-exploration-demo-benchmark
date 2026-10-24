@@ -104,7 +104,9 @@ def main(argv: list[str] | None = None) -> int:
                 from .native import NativeBackend
 
                 backend = NativeBackend(
-                    arguments.root, diagnostics=not arguments.without_diagnostics
+                    arguments.root,
+                    diagnostics=not arguments.without_diagnostics,
+                    registry=library.registry,
                 )
             engine = Engine(workspace, backend, library.resolve_campaign, library)
             for value in (signal.SIGINT, signal.SIGTERM):

@@ -30,12 +30,18 @@ Thumbs.db
 .venv-analysis
 # The offline analysis package (RESULTS_OVERHAUL R5) has its own environment; never in an image.
 analysis
+# Host-side world integration tools (plans/worlds/I2 O-2); never in an image.
+tools
+# World collection: host build outputs and unredistributed sources; the image builds the plugin itself.
+world_collection/plugins/lib
+world_collection/plugins/moving_objects/build
+world_collection/sources
 # Local suite development files; the image installs only the benchmark_suite package.
 suite/.venv
 suite/uv.lock
 suite/tools
-.mypy_cache
-.ruff_cache
+**/.mypy_cache
+**/.ruff_cache
 .pytest_cache
 .codex
 

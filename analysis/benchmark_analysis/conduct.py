@@ -19,11 +19,18 @@
   summed over strata. Above 3 profiles or 1 robot the figure is a pointer to T1 (Pocock 2007 rec. 11).
 - F10: the trial strip (FX-15): one row per robot, world and spawn, the blocks in execution order (first attempt
   start), the profiles of a block adjacent in study order; a cell's fill is its final run's outcome (FP-4), its
-  text R_completion or "> L", glyphs mark low RTF, parallel execution and replaced attempts.
+  text R_completion or "> L", glyphs mark low RTF, parallel execution and replaced attempts; one figure per
+  world group and page (``figures.grouped``).
 - F11: timing validity: ECDFs of the worst 5-s RTF and the mean RTF of the reported runs per profile, one row per
   execution mode (T8's populations), and each run's wall seconds below 0.90.
 - F12: the world atlas: each world's coverage reference at one scale (millimetres per metre the same in every
-  panel), its spawn poses, a 5 m bar and the reference's free area, cells and L, ordered by free area.
+  panel), its spawn poses, a 5 m bar, ordered by the reference's target area; one figure per world group and page
+  (``figures.grouped``, plans/worlds/I8 §3.1). With the export's official descriptors (export version 2,
+  ``descriptors.json``, plans/worlds/I8 §3.2) each panel is labelled with the free area, L, regions, dead ends
+  and narrowest passage and the T1 regions are outlined thin (``regionmaps.draw_boundaries``); without them, with
+  the target area, cells and L. A study with several world groups also writes the overview ``F12_all``: every
+  world ordered by target area with its group in its label, at most ``PAGE_PANELS`` worlds a page
+  (``F12_all_p<k>``), one scale per page.
 
 Every figure here names the export files it reads in ``FigureOut.inputs``.
 """
@@ -51,23 +58,29 @@ from .data import (
 )
 from .figures import (
     GREY,
+    PAGE_PANELS,
     REFERENCE_PAD_M,
     Extent,
     FigureContext,
     FigureOut,
     draw_reference,
     finish,
+    grouped,
     legend,
     load_reference,
     message_figure,
+    page_context,
     panel_message,
     panel_title,
     reference_files,
     reference_meta,
     reference_name,
 )
+from .regionmaps import draw_boundaries
+from .streams import Reads
 from .style import EDGE, OUTCOMES, PAGE_MAX_MM, PRESETS, RTF_LINES, figure, page_note
 from .tables import DISCARD_TRIGGERS, accounting
+from .worlds import Regions, descriptors, regions
 
 CHAR_MM = 1.5  # an upper bound on one 7 pt character's width, to wrap side-box lines
 LABEL_CHAR_MM = 1.7  # the same for 8 pt row labels
@@ -355,7 +368,11 @@ def _strip_rows(ctx: FigureContext) -> list[StripRow]:
     cells: dict[tuple[str, str, str], dict[str, dict[str, Row]]] = defaultdict(
         lambda: defaultdict(dict)
     )
+    # the page's worlds (``figures.page_context`` narrows the runs to them; the whole study without a page)
+    worlds = {r["world_id"] for r in study.runs}
     for row in experiments:
+        if row["world_id"] not in worlds and ctx.whole is not None:
+            continue
         cell = (row["robot_id"], row["world_id"], row["spawn_id"])
         cells[cell][row["block_id"]][row["profile_id"]] = row
     stratum_of = {(s.robot_id, s.world_id, s.spawn_id): s for s in study.strata}
@@ -370,7 +387,7 @@ def _strip_rows(ctx: FigureContext) -> list[StripRow]:
         profiles = {p for planned in by_block.values() for p in planned}
         rows.append(
             StripRow(
-                study.label(*cell),
+                ctx.full_study.label(*cell),
                 stratum_of.get(cell),
                 sorted(by_block, key=first_start),
                 sorted(profiles, key=lambda p: (order.get(p, len(order)), p)),
@@ -456,9 +473,27 @@ def _strip_cell(
     return outcome, drawn
 
 
-def f10(ctx: FigureContext) -> FigureOut:
+@dataclass(frozen=True, slots=True)
+class StripLayout:
+    """F10's layout: the rows, the label column, the cell width, whether cells hold times, blocks per line and
+    the strip's height (mm, without the legend)."""
+
+    rows: list[StripRow]
+    label_mm: float
+    cell_w: float
+    with_text: bool
+    per_line: int
+    height: float
+
+    @property
+    def total_mm(self) -> float:
+        """The figure's height."""
+        return self.height + 4 + LEGEND_MM
+
+
+def _f10_layout(ctx: FigureContext) -> StripLayout:
+    """The rows at full cell width with times, or at the small width without them when that is too tall."""
     rows = _strip_rows(ctx)
-    runs = {r["attempt_id"]: r for r in ctx.study.runs}
     width_mm = PRESETS[ctx.preset].widths_mm["double"]
     longest = max((len(r.label) for r in rows), default=0)
     label_mm = min(LABEL_MAX_MM, max(LABEL_MIN_MM, longest * LABEL_CHAR_MM + 2))
@@ -467,6 +502,15 @@ def f10(ctx: FigureContext) -> FigureOut:
     if height > PAGE_MAX_MM - LEGEND_MM:
         cell_w, with_text = CELL_SMALL_MM, False
         per_line, height = _strip_layout(rows, width_mm, cell_w, label_mm)
+    return StripLayout(rows, label_mm, cell_w, with_text, per_line, height)
+
+
+def f10(ctx: FigureContext) -> FigureOut:
+    layout = _f10_layout(ctx)
+    rows, label_mm, cell_w = layout.rows, layout.label_mm, layout.cell_w
+    with_text, per_line, height = layout.with_text, layout.per_line, layout.height
+    runs = {r["attempt_id"]: r for r in ctx.study.runs}
+    width_mm = PRESETS[ctx.preset].widths_mm["double"]
     total = height + 4
     fig, axes = figure(ctx.preset, "double", aspect=(total + LEGEND_MM) / width_mm)
     ax = axes[0][0]
@@ -657,6 +701,8 @@ def f11(ctx: FigureContext) -> FigureOut:
 # F12 world atlas ----------------------------------------------------------------------------------------------
 
 ATLAS_GAP_MM, ATLAS_LABEL_MM, ATLAS_MIN_SLOT_MM, ATLAS_MAX_H_MM = 5.0, 14.0, 36.0, 110.0
+# a panel labelled with the descriptors: four title lines, each up to about 24 characters
+ATLAS_DESCRIPTOR_LABEL_MM, ATLAS_DESCRIPTOR_SLOT_MM = 18.0, 42.0
 ATLAS_FOOT_MM = 8.0  # kept free under the panels for the evidence label
 ATLAS_MIN_SCALE = 0.2  # mm per metre: below it the 5 m bar is 1 mm and the atlas no longer reads
 SPAWN_ARROW_M = 2.0
@@ -674,6 +720,9 @@ class AtlasPanel:
     extent: Extent
     limits: list[float]
     spawns: dict[str, tuple[str, Pose]]  # spawn -> (attempt, pose)
+    # the reference's official descriptors and region raster (export version 2), when exported and readable
+    descriptors: dict[str, Any] | None = None
+    raster: Regions | None = None
 
     @property
     def size_m(self) -> tuple[float, float]:
@@ -718,6 +767,7 @@ def _atlas_panels(ctx: FigureContext) -> tuple[list[AtlasPanel], list[str]]:
         if pose is not None and run["spawn_id"] not in spawns[run["world_id"]]:
             spawns[run["world_id"]][run["spawn_id"]] = (run["attempt_id"], pose)
     panels, unreadable = [], []
+    reads = Reads(study.export)
     for world, (name, attempt) in chosen.items():
         loaded = load_reference(ctx, attempt)
         if loaded is None:
@@ -725,6 +775,9 @@ def _atlas_panels(ctx: FigureContext) -> tuple[list[AtlasPanel], list[str]]:
             continue
         meta = reference_meta(ctx, name)
         area, cells = meta.get("target_area_m2"), meta.get("target_cells")
+        raster = regions(reads, name)
+        if raster is not None and raster.labels.shape != loaded[0].shape:
+            raster = None  # a raster that does not match the reference grid is not drawn
         panels.append(
             AtlasPanel(
                 world,
@@ -734,6 +787,8 @@ def _atlas_panels(ctx: FigureContext) -> tuple[list[AtlasPanel], list[str]]:
                 *loaded,
                 sorted({s.limit_s for s in study.strata if s.world_id == world}),
                 dict(spawns[world]),
+                descriptors(reads, name),
+                raster,
             )
         )
     ordered = sorted(panels, key=lambda p: (p.area_m2 is None, p.area_m2 or 0.0, p.world))
@@ -741,10 +796,11 @@ def _atlas_panels(ctx: FigureContext) -> tuple[list[AtlasPanel], list[str]]:
 
 
 def _atlas_rows(
-    panels: list[AtlasPanel], width_mm: float
+    panels: list[AtlasPanel], width_mm: float, label_mm: float, min_slot_mm: float
 ) -> tuple[list[list[int]], list[float], float, float]:
-    """Rows of panels packed left to right at one scale (mm per metre), shrunk until the figure fits the page
-    or the scale reaches its floor; returns the rows, their heights, the scale and the total height in mm."""
+    """Rows of panels packed left to right at one scale (mm per metre), each slot at least ``min_slot_mm`` wide
+    and ``label_mm`` kept above the maps for the labels, shrunk until the figure fits the page or the scale
+    reaches its floor; returns the rows, their heights, the scale and the total height in mm."""
     sizes = [p.size_m for p in panels]
     scale = min(
         ATLAS_MAX_H_MM / max((h for _, h in sizes), default=1.0),
@@ -754,24 +810,52 @@ def _atlas_rows(
         rows: list[list[int]] = [[]]
         used = 0.0
         for i, (w, _) in enumerate(sizes):
-            slot = max(w * scale, ATLAS_MIN_SLOT_MM)
+            slot = max(w * scale, min_slot_mm)
             if rows[-1] and used + ATLAS_GAP_MM + slot > width_mm:
                 rows.append([])
                 used = 0.0
             used += (ATLAS_GAP_MM if rows[-1] else 0.0) + slot
             rows[-1].append(i)
-        heights = [
-            max((sizes[i][1] * scale for i in row), default=0.0) + ATLAS_LABEL_MM for row in rows
-        ]
+        heights = [max((sizes[i][1] * scale for i in row), default=0.0) + label_mm for row in rows]
         total = sum(heights) + ATLAS_FOOT_MM
         if total <= PAGE_MAX_MM or scale <= ATLAS_MIN_SCALE:
             return rows, heights, scale, total
         scale = max(ATLAS_MIN_SCALE, scale * PAGE_MAX_MM / total)
 
 
-def _atlas_panel(ax: Any, index: int, panel: AtlasPanel) -> None:
+def _count(value: Any, one: str, many: str) -> str:
+    if value is None:
+        return f"— {many}"
+    return f"{value} {one if value == 1 else many}"
+
+
+def _metres(value: Any, decimals: int) -> str:
+    return "—" if value is None else f"{float(value):.{decimals}f}"
+
+
+def _atlas_label(panel: AtlasPanel, group: str | None) -> str:
+    """A panel's label: the world (and its group in the overview), then the official descriptors (free area,
+    L, regions, dead ends, narrowest passage) when exported, else the target area, cells and L."""
+    head = panel.world if group is None else f"{panel.world} · {group}"
+    limits = f"L = {_seconds(panel.limits)} s"
+    d = panel.descriptors
+    if d is None:
+        area = "—" if panel.area_m2 is None else f"{panel.area_m2:.0f}"
+        cells = "—" if panel.cells is None else f"{panel.cells:,}"
+        return f"{head}\n{area} m², {cells} cells\n{limits}"
+    return (
+        f"{head}\n{_metres(d.get('area_m2'), 0)} m² free, {limits}\n"
+        f"{_count(d.get('regions'), 'region', 'regions')}, "
+        f"{_count(d.get('dead_ends'), 'dead end', 'dead ends')}\n"
+        f"narrowest passage {_metres(d.get('narrowest_passage_m'), 2)} m"
+    )
+
+
+def _atlas_panel(ax: Any, index: int, panel: AtlasPanel, group: str | None) -> None:
     ax.set_axis_off()
     draw_reference(ax, panel.codes, panel.extent)
+    if panel.raster is not None:
+        draw_boundaries(ax, panel.raster)
     for spawn, (_, (x, y, yaw)) in sorted(panel.spawns.items()):
         ax.plot([x], [y], marker="o", mfc="#FFFFFF", mec="#000000", mew=0.8, ms=3.5, zorder=4)
         if yaw is not None:
@@ -785,17 +869,23 @@ def _atlas_panel(ax: Any, index: int, panel: AtlasPanel) -> None:
             )
         if len(panel.spawns) > 1:
             ax.text(x, y - 0.6, spawn, fontsize=7, ha="center", va="top")
-    area = "—" if panel.area_m2 is None else f"{panel.area_m2:.0f}"
-    cells = "—" if panel.cells is None else f"{panel.cells:,}"
-    panel_title(
-        ax, index, f"{panel.world}\n{area} m², {cells} cells\nL = {_seconds(panel.limits)} s"
-    )
+    panel_title(ax, index, _atlas_label(panel, group))
 
 
-def f12(ctx: FigureContext) -> FigureOut:
+def _group_keys(ctx: FigureContext) -> dict[str, str]:
+    """Each world's group key (``FigureContext.groups``; empty for an export without a ``worlds`` table)."""
+    return {w: g.key for g in ctx.groups if g.key is not None for w in g.worlds}
+
+
+def f12(ctx: FigureContext, *, overview: bool = False) -> FigureOut:
+    """The atlas of the context's worlds; ``overview`` labels each panel with its world group (``F12_all``)."""
     panels, unreadable = _atlas_panels(ctx)
+    groups = _group_keys(ctx) if overview else {}
     width_mm = PRESETS[ctx.preset].widths_mm["double"]
-    rows, heights, scale, total = _atlas_rows(panels, width_mm)
+    labelled = any(p.descriptors is not None for p in panels)
+    label_mm = ATLAS_DESCRIPTOR_LABEL_MM if labelled else ATLAS_LABEL_MM
+    min_slot = ATLAS_DESCRIPTOR_SLOT_MM if labelled else ATLAS_MIN_SLOT_MM
+    rows, heights, scale, total = _atlas_rows(panels, width_mm, label_mm, min_slot)
     # The panels are placed in millimetres with add_axes, which the constrained layout leaves alone; the empty
     # grid axis keeps the engine from warning (a figure without one gets the engine back from rcParams on save).
     fig, axes = figure(ctx.preset, "double", aspect=max(total, 30.0) / width_mm)
@@ -809,24 +899,52 @@ def f12(ctx: FigureContext) -> FigureOut:
         for i in row:
             panel = panels[i]
             w, h = panel.size_m
-            slot = max(w * scale, ATLAS_MIN_SLOT_MM)
+            slot = max(w * scale, min_slot)
             box = (
                 (left + (slot - w * scale) / 2) / width_mm,
-                (top + row_height - ATLAS_LABEL_MM - h * scale) / total,
+                (top + row_height - label_mm - h * scale) / total,
                 w * scale / width_mm,
                 h * scale / total,
             )
-            _atlas_panel(fig.add_axes(box), i, panel)
+            _atlas_panel(fig.add_axes(box), i, panel, groups.get(panel.world))
             left += slot + ATLAS_GAP_MM
     finish(fig, ctx)
     mm_per_m = round(scale, 4)
-    notes = [
-        f"All panels at {scale:.3g} mm per metre (5 m bar). Free floor counted by the coverage metric white "
-        "(target cells, metric version in T2), other inside cells light grey, obstacles dark grey, outside the "
-        "reference hatched (FP-5). Dot and arrow: the spawn pose, the first ground-truth pose after explorer "
-        "activation of the earliest final run of each spawn. Ordered by free area until world descriptors are "
-        "integrated."
-    ]
+    if labelled:
+        notes = [
+            f"All panels at {scale:.3g} mm per metre (5 m bar). Free floor counted by the coverage metric white "
+            "(target cells, metric version in T2), other inside cells light grey, obstacles dark grey, outside "
+            "the reference hatched (FP-5); dashed lines: the boundaries between T1 regions (geodesic "
+            "nearest-core growth; regions under 4.0 m² outlined but not counted). Dot and arrow: the spawn "
+            "pose, the first ground-truth pose after explorer activation of the earliest final run of each "
+            "spawn. Ordered by the reference's target area (free floor more than 0.10 m from walls).",
+            "Labels: the official descriptors of the coverage reference grid (world-descriptors-v1, "
+            "descriptors.json): free area = the free floor F (inclusion and not collision), larger than the "
+            "target area used for ordering; L the stratum time limit; regions counted (at least 4.0 m²); dead "
+            "ends; narrowest passage (m). Descriptors describe worlds; they are not outcomes.",
+        ]
+        missing = sorted(p.world for p in panels if p.descriptors is None)
+        if missing:
+            notes.append(
+                "No descriptors exported (labelled with target area, cells and L): "
+                f"{', '.join(missing)}."
+            )
+        unlined = sorted(p.world for p in panels if p.raster is None)
+        if unlined:
+            notes.append(f"No region raster matching the reference grid: {', '.join(unlined)}.")
+    else:
+        notes = [
+            f"All panels at {scale:.3g} mm per metre (5 m bar). Free floor counted by the coverage metric white "
+            "(target cells, metric version in T2), other inside cells light grey, obstacles dark grey, outside the "
+            "reference hatched (FP-5). Dot and arrow: the spawn pose, the first ground-truth pose after explorer "
+            "activation of the earliest final run of each spawn. Ordered by free area until world descriptors are "
+            "integrated."
+        ]
+    if overview:
+        notes.append(
+            "Overview of every study world across world groups (the label names the group). It compares "
+            "worlds, never explorers; groups are never pooled (METHODOLOGY §2.1)."
+        )
     tall = page_note(total)
     if tall is not None:
         notes.append(tall)
@@ -837,13 +955,15 @@ def f12(ctx: FigureContext) -> FigureOut:
         )
     # reference_name read provenance.json for every final run, whether or not a panel was drawn
     files = reference_files(ctx, None).union(*(reference_files(ctx, p.reference) for p in panels))
+    order = "reference target area" if labelled else "reference free area"
     return FigureOut(
         "F12",
         fig,
         "double",
         {attempt for panel in panels for attempt, _ in panel.spawns.values()},
-        f"Coverage reference maps of the {len(panels)} worlds at one scale with their spawn poses, ordered by "
-        "reference free area.",
+        f"Coverage reference maps of the {len(panels)} worlds at one scale with their spawn poses"
+        + (", region boundaries and descriptors" if labelled else "")
+        + f", ordered by {order}.",
         notes,
         {
             "atlas": [
@@ -853,6 +973,17 @@ def f12(ctx: FigureContext) -> FigureOut:
                     target_area_m2=p.area_m2,
                     target_cells=p.cells,
                     limits_s=p.limits,
+                    **(
+                        {}
+                        if not labelled
+                        else dict(
+                            group=groups.get(p.world),
+                            descriptors=None
+                            if p.descriptors is None
+                            else {key: p.descriptors.get(key) for key in ATLAS_DESCRIPTORS},
+                            region_outlines=p.raster is not None,
+                        )
+                    ),
                 )
                 for p in panels
             ],
@@ -862,9 +993,54 @@ def f12(ctx: FigureContext) -> FigureOut:
     )
 
 
+ATLAS_DESCRIPTORS = ("version", "area_m2", "regions", "dead_ends", "narrowest_passage_m")
+
+
+def _split(count: int, pages: int) -> list[int]:
+    """``count`` items in ``pages`` pages of balanced size, the larger ones first (10 on 4 pages: 3, 3, 2, 2)."""
+    size, extra = divmod(count, pages)
+    return [size + (index < extra) for index in range(pages)]
+
+
+def f12_overview(ctx: FigureContext) -> Iterator[FigureOut]:
+    """``F12_all`` when the study has several world groups: every world ordered by target area with its group
+    in its label, at most ``PAGE_PANELS`` worlds a page (``F12_all_p<k>``), each page at its own scale; the
+    worlds whose reference is not readable are named on the last page. Its sidecar's ``extra["group"]`` has key
+    None, the title "All worlds", the place after every group and ``overview`` True."""
+    if len(ctx.groups) < 2:
+        return
+    panels, unreadable = _atlas_panels(ctx)
+    if not panels:
+        return
+    sizes = _split(len(panels), math.ceil(len(panels) / PAGE_PANELS))
+    starts = [sum(sizes[:index]) for index in range(len(sizes))]
+    for number, (start, size) in enumerate(zip(starts, sizes, strict=True), 1):
+        worlds = [p.world for p in panels[start : start + size]]
+        if number == len(sizes):
+            worlds += unreadable
+        strata = tuple(s for s in ctx.study.strata if s.world_id in worlds)
+        built = f12(page_context(ctx, strata, worlds), overview=True)
+        built.name = "F12_all" + (f"_p{number}" if len(sizes) > 1 else "")
+        built.extra["group"] = dict(
+            key=None,
+            title="All worlds",
+            index=len(ctx.groups),
+            page=number,
+            pages=len(sizes),
+            variant="F12",
+            overview=True,
+        )
+        built.inputs.add("worlds.parquet")
+        yield built
+
+
 def figures(ctx: FigureContext) -> Iterator[FigureOut]:
     """F9–F12, each built when the caller asks for it (it saves and closes one before the next is drawn)."""
     yield f9(ctx)
-    yield f10(ctx)
+    # once per world group and page, no taller than a page (plans/worlds/I8 §3.1)
+    yield from grouped(ctx, f10, lambda page: _f10_layout(page).total_mm <= PAGE_MAX_MM)
     yield f11(ctx)
-    yield f12(ctx)
+    # once per world group and page, a panel per world (plans/worlds/I8 §3.1); the atlas shrinks to the page
+    yield from grouped(ctx, f12, panels=lambda _strata, worlds: len(worlds), worlds_only=True)
+    # every world across groups, ordered by target area (plans/worlds/I8 §3.2)
+    yield from f12_overview(ctx)

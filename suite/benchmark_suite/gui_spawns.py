@@ -12,12 +12,15 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Worlds & Spawns (15): a world's starting positions, the pose form and the map.
+"""Worlds & Spawns (15, 40): a world's starting positions, the pose form and the map.
 
 D1: a saved pose (or the world's Default) is a template; every save creates a new spawn named "Spawn N" unless a
 name is typed, Revert returns the form to the template, and the positions card's menu imports and exports spawn
 YAML. The validity line checks the footprint against the ``spawns.map`` image (inside the world, clear of
 walls); the engine stays authoritative when it saves.
+
+A collection world (``spawn_policy: predefined``, 40) lists its predefined spawns read-only: no form, no
+Delete or YAML menu, no saved spawns; choosing a row shows that pose on the map.
 """
 
 from collections.abc import Sequence
@@ -40,6 +43,7 @@ from .gui_menus import Menu
 from .gui_style import fixed
 from .gui_support import Transport, stale_engine_message
 from .gui_theme import ThemeManager, font, snap
+from .gui_worlds import is_predefined, predefined_spawns, world_title
 from .gui_widgets import (
     BODY,
     BODY_MEDIUM,
@@ -91,6 +95,9 @@ class Pose:
     y: float
     yaw: float  # radians, counter-clockwise from east
     family: str = ""  # the saved spawn's stable key (``family_id``); empty for the Default
+    fixed: bool = (
+        False  # an original world's registry spawn (decision 60): a template, never edited
+    )
 
     @property
     def default(self) -> bool:
@@ -233,14 +240,15 @@ class PositionsTable(PaintedTable):
         spans = self.column_spans()
         line_top = rect.top() + (content - 18) / 2
         tertiary = theme.color("text.tertiary")
-        number = tertiary if pose.default else theme.color("text.body")
+        number = tertiary if pose.default or pose.fixed else theme.color("text.body")
         left, width = spans[0]
         room = width - 20 - 10
-        if pose.default:
+        if pose.default or pose.fixed:  # the world file's Default and the registry's fixed spawns
+            name, tag = ("Default", "world") if pose.default else (pose.name, "registry")
             x = 20 + draw_text(
-                painter, 20, line_top, "Default", BODY_MEDIUM, theme.color("text.secondary")
+                painter, 20, line_top, name, BODY_MEDIUM, theme.color("text.secondary")
             )
-            x += 6 + draw_text(painter, x + 6, line_top, "world", WORLD_TAG, tertiary)
+            x += 6 + draw_text(painter, x + 6, line_top, tag, WORLD_TAG, tertiary)
             origin = QtCore.QPointF(x + 6, snap(rect.top() + (content - 14) / 2))
             gui_icons.draw(painter, "lock", tertiary, origin, 14)
         else:
@@ -257,9 +265,32 @@ class PositionsTable(PaintedTable):
             draw_text(painter, x, line_top, text, BODY_TABULAR, number)
 
 
+class ReadOnlyNote(Themed, CssBox):
+    """``.saved .ro`` (40): a 14 px lock (``text.tertiary``) and "Predefined by the world collection"
+    (12.5 px, ``text.secondary``) 6 px after it."""
+
+    TEXT = "Predefined by the world collection"
+    STYLE = TextStyle(12.5, 400, 18)
+
+    def natural_width(self) -> float:
+        return 14 + 6 + self.STYLE.advance(self.TEXT)
+
+    def sizeHint(self) -> QtCore.QSize:
+        return QtCore.QSize(math.ceil(self.natural_width()), 18)
+
+    def paintEvent(self, event: QtGui.QPaintEvent) -> None:
+        painter = QtGui.QPainter(self)
+        top = (self.height() - 18) / 2
+        origin = QtCore.QPointF(snap(self.shift), snap(top + 2))
+        gui_icons.draw(painter, "lock", self.color("text.tertiary"), origin, 14)
+        draw_text(
+            painter, self.shift + 20, top, self.TEXT, self.STYLE, self.color("text.secondary")
+        )
+
+
 class PositionsCard(Card):
     """``.saved``: "Starting positions" with Delete… (the selected saved spawn) and the ⋯ menu (Import YAML,
-    Export YAML; D1) over the table."""
+    Export YAML; D1) over the table; for a collection world the read-only note instead (40)."""
 
     def __init__(self, themes: ThemeManager, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(themes, parent)
@@ -271,7 +302,16 @@ class PositionsCard(Card):
         self.more.setToolTip("Import YAML, Export YAML")
         self.more.setAccessibleName("Spawn YAML")
         self.head.add(self.more)
+        self.note = ReadOnlyNote(themes)
+        self.head.add(self.note)
+        self.note.hide()
         self.table = PositionsTable(themes, self)
+
+    def set_read_only(self, read_only: bool) -> None:
+        self.delete.setVisible(not read_only)
+        self.more.setVisible(not read_only)
+        self.note.setVisible(read_only)
+        self.head.row.relayout()
 
     def natural_height(self, rows: int) -> int:
         return 2 + 52 + 36 + 40 * rows
@@ -517,6 +557,8 @@ class SpawnMap(LiveMap):
         self._press: QtCore.QPointF | None = None
         self._moved = False
         self._turning = False
+        # A collection world's predefined poses (40): the chosen one selected, no edited pose, clicks pan only.
+        self.read_only = False
 
     def set_world(self, world: WorldMap | None) -> None:
         """Free cells read as the Monitor shows them fully explored (``data.coverage`` at the explored
@@ -600,6 +642,8 @@ class SpawnMap(LiveMap):
             self.setCursor(QtCore.Qt.CursorShape.SizeAllCursor)
         elif not self.fitted():
             self.setCursor(QtCore.Qt.CursorShape.OpenHandCursor)
+        elif self.read_only:
+            self.setCursor(QtCore.Qt.CursorShape.ArrowCursor)
         else:
             self.setCursor(QtCore.Qt.CursorShape.CrossCursor)
 
@@ -608,7 +652,12 @@ class SpawnMap(LiveMap):
         if self._turning:
             self._turning = False
             return
-        if self._press is not None and not self._moved and placement is not None:
+        if (
+            self._press is not None
+            and not self._moved
+            and placement is not None
+            and not self.read_only
+        ):
             box = self.visible_box()
             if box is not None and box.contains(event.position()):
                 self.positioned.emit(*to_world(placement, event.position()))
@@ -641,8 +690,16 @@ class SpawnMap(LiveMap):
             if pose.key == self.current_key and self.pose is not None:
                 continue
             point = placement.point(pose.x, pose.y)
-            paint_spawn(painter, point, placement.heading(pose.yaw), theme, picked=True)
-            paint_spawn_label(painter, placement, point, pose.name, theme, size=11, bold=False)
+            chosen = self.read_only and pose.key == self.current_key
+            paint_spawn(
+                painter,
+                point,
+                placement.heading(pose.yaw),
+                theme,
+                picked=chosen or not self.read_only,
+                selected=chosen,
+            )
+            paint_spawn_label(painter, placement, point, pose.name, theme, size=11, bold=chosen)
         self._paint_pose(painter, placement)
         painter.restore()
         if self.controls.isVisible():
@@ -741,11 +798,57 @@ class LegendLine(Themed):
     swatch and "Other saved poses", and the interaction hint at the right (``text.tertiary``)."""
 
     HINT_TEXT = "Click to position · drag the arrow to turn · scroll to zoom"
+    READ_ONLY_HINT = "Read-only · scroll to zoom"
 
     def __init__(self, themes: ThemeManager, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(themes, parent)
         self.selected = ""
+        self.read_only = False  # 40: the selected and the other predefined poses
         self.setFixedHeight(40)
+
+    def set_read_only(self, read_only: bool) -> None:
+        if read_only != self.read_only:
+            self.read_only = read_only
+            self.update()
+
+    def _arrow(self, painter: QtGui.QPainter, x: float, y: float, solid: bool) -> None:
+        """The legend's 16 × 14 pose arrow, solid or outlined (``paint_spawn``'s colours)."""
+        theme = self.theme
+        painter.save()
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+        outline = QtGui.QPen(theme.color("data.path"), 1.3)
+        outline.setJoinStyle(QtCore.Qt.PenJoinStyle.RoundJoin)
+        painter.setPen(outline)
+        painter.setBrush(theme.color("data.path") if solid else theme.map_color("free"))
+        painter.drawPolygon(
+            QtGui.QPolygonF(
+                [
+                    QtCore.QPointF(x + px, y + py)
+                    for px, py in ((14, 7), (3, 1.5), (6, 7), (3, 12.5))
+                ]
+            )
+        )
+        painter.restore()
+
+    def _paint_read_only(self, painter: QtGui.QPainter) -> None:
+        theme = self.theme
+        top = 1 + (39 - 18) / 2
+        y = round(1 + (39 - 14) / 2)
+        secondary = theme.color("text.secondary")
+        x = 20.0
+        for solid, text in ((True, "Selected pose"), (False, "Other predefined poses")):
+            self._arrow(painter, x, y, solid)
+            x += 16 + 7
+            x += draw_text(painter, x, top, text, HINT, secondary) + 22
+        hint = HINT.elide(self.READ_ONLY_HINT, max(0.0, self.width() - 20 - x))
+        draw_text(
+            painter,
+            self.width() - 20 - HINT.advance(hint),
+            top,
+            hint,
+            HINT,
+            theme.color("text.tertiary"),
+        )
 
     def set_selected(self, text: str) -> None:
         if text != self.selected:
@@ -756,6 +859,9 @@ class LegendLine(Themed):
         painter = QtGui.QPainter(self)
         theme = self.theme
         painter.fillRect(QtCore.QRect(0, 0, self.width(), 1), theme.color("border.line"))
+        if self.read_only:
+            self._paint_read_only(painter)
+            return
         top = 1 + (39 - 18) / 2
         secondary = theme.color("text.secondary")
         accent = theme.color("data.path")  # the edited pose's colour
@@ -775,21 +881,7 @@ class LegendLine(Themed):
         painter.restore()
         x = 20.0 + 22 + 7
         x += draw_text(painter, x, top, self.selected, HINT, secondary) + 22
-        painter.save()
-        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
-        outline = QtGui.QPen(theme.color("data.path"), 1.3)  # as ``paint_spawn`` draws saved poses
-        outline.setJoinStyle(QtCore.Qt.PenJoinStyle.RoundJoin)
-        painter.setPen(outline)
-        painter.setBrush(theme.color("data.path"))
-        painter.drawPolygon(
-            QtGui.QPolygonF(
-                [
-                    QtCore.QPointF(x + px, y + py)
-                    for px, py in ((14, 7), (3, 1.5), (6, 7), (3, 12.5))
-                ]
-            )
-        )
-        painter.restore()
+        self._arrow(painter, x, y, True)  # as ``paint_spawn`` draws saved poses
         x += 16 + 7
         x += draw_text(painter, x, top, "Other saved poses", HINT, secondary)
         hint = HINT.elide(self.HINT_TEXT, max(0.0, self.width() - 20 - x - 22))
@@ -908,6 +1000,7 @@ class WorldsPage(QtWidgets.QWidget):
             None  # world and offset of the list request in flight
         )
         self.stale = False
+        self.read_only = False  # a collection world: its predefined spawns only (40)
         self._page: list[dict[str, Any]] = []
         self.engine_problem = ""  # the engine's reason when it rejected the last save
         self.exact_yaw = ("", 0.0)  # the template's heading text and its exact yaw
@@ -963,7 +1056,8 @@ class WorldsPage(QtWidgets.QWidget):
             select.blockSignals(True)
             select.clear()
             for item in items:
-                select.addItem(item["label"], item["id"])
+                label = world_title(item) if select is self.spawn_world else item["label"]
+                select.addItem(label, item["id"])
             select.setCurrentIndex(max(0, select.findData(chosen)))
             select.blockSignals(False)
         self.load_world_map()
@@ -985,24 +1079,50 @@ class WorldsPage(QtWidgets.QWidget):
         self.map_card.map.set_message("Loading the world map…")
         width = info["width"] * info["resolution"]
         height = info["height"] * info["resolution"]
-        self.map_card.set_world(info["label"], f"{width:.1f} × {height:.1f} m")
+        self.map_card.set_world(world_title(info), f"{width:.1f} × {height:.1f} m")
         default = info["default_spawn"]
-        self.poses = [Pose(DEFAULT_KEY, "Default", default["x"], default["y"], default["yaw"])]
+        self.set_read_only(is_predefined(info))
+        if self.read_only:
+            self.poses = [
+                Pose(spawn["id"], spawn["name"], spawn["x"], spawn["y"], spawn["yaw"])
+                for spawn in predefined_spawns(info)
+            ] or [Pose(DEFAULT_KEY, "Default", default["x"], default["y"], default["yaw"])]
+        else:  # Default, then the registry's fixed spawns (decision 60), then the saved ones as they arrive
+            self.poses = [
+                Pose(DEFAULT_KEY, "Default", default["x"], default["y"], default["yaw"]),
+                *(
+                    Pose(
+                        spawn["id"], spawn["name"], spawn["x"], spawn["y"], spawn["yaw"], fixed=True
+                    )
+                    for spawn in predefined_spawns(info)
+                ),
+            ]
         self._page = []
         self.stale = self.pending is not None  # the reply in flight is for the previous world
         self.template = 0
         self.positions.table.set_poses(self.poses, 0)
         self.choose(0)
-        self.suggest_name(info["id"])
-        self.refresh()
+        if not self.read_only:
+            self.suggest_name(info["id"])
+            self.refresh()
         self.transport.submit("spawn-map", "spawns.map", {"world_id": info["id"]})
         self._layout()
+
+    def set_read_only(self, read_only: bool) -> None:
+        """A collection world's predefined spawns (40): no form, Delete or YAML menu; the map shows the chosen
+        pose among the others."""
+        self.read_only = read_only
+        self.positions.set_read_only(read_only)
+        self.form.setVisible(not read_only)
+        self.positions_split.gutter.setVisible(not read_only)
+        self.map_card.map.read_only = read_only
+        self.map_card.legend.set_read_only(read_only)
 
     # the list of saved spawns
 
     def refresh(self) -> None:
         info = self.world_info()
-        if info is None:
+        if info is None or self.read_only:  # collection worlds have no saved spawns
             return
         if self.pending is not None:
             self.stale = True
@@ -1021,6 +1141,9 @@ class WorldsPage(QtWidgets.QWidget):
         self.pending = None
         info = self.world_info()
         if info is None:
+            return
+        if self.read_only:
+            self.stale = False
             return
         if self.stale or world != info["id"]:
             self.stale = False
@@ -1051,7 +1174,7 @@ class WorldsPage(QtWidgets.QWidget):
                 )
             )
         saved.sort(key=lambda pose: (pose.name.casefold(), pose.key))  # by name, as 06 and 15
-        poses = self.poses[:1] + saved
+        poses = [pose for pose in self.poses if pose.default or pose.fixed] + saved
         if [p.key for p in poses] != [p.key for p in self.poses]:
             key = self.poses[self.template].key if self.template < len(self.poses) else DEFAULT_KEY
             self.poses = poses
@@ -1143,6 +1266,8 @@ class WorldsPage(QtWidgets.QWidget):
             robot = self.robot_info()
             footprint = list(robot.get("footprint") or []) if robot else []
         key = self.poses[self.template].key if self.template < len(self.poses) else ""
+        if self.read_only:  # the chosen predefined pose, without an edited pose or footprint
+            pose, footprint = None, []
         self.map_card.map.set_scene(self.poses, key, pose, footprint)
 
     # saving, names, YAML
@@ -1216,7 +1341,7 @@ class WorldsPage(QtWidgets.QWidget):
         host = self.window().findChild(PopupHost)
         if host is None:
             return
-        saved = not self.poses[self.template].default if self.template < len(self.poses) else False
+        saved = self.selected_saved() is not None
         menu = Menu(self.themes)
         menu.add_item("Import YAML", self.import_spawn, icon="upload")
         menu.add_item(
@@ -1224,12 +1349,12 @@ class WorldsPage(QtWidgets.QWidget):
             self.export_spawn,
             icon="download",
             enabled=saved,
-            reason="" if saved else "Default",
+            reason="" if saved else "Not a saved spawn",
         )
         menu.popup(host, self.positions.more)
 
     def selected_saved(self) -> Pose | None:
-        """The selected row when it is a saved spawn (the Default cannot be deleted)."""
+        """The selected row when it is a saved spawn (the Default and registry spawns cannot be deleted)."""
         pose = self.poses[self.template] if self.template < len(self.poses) else None
         return None if pose is None or pose.default or not pose.family else pose
 
@@ -1237,7 +1362,9 @@ class WorldsPage(QtWidgets.QWidget):
         pose = self.selected_saved()
         self.positions.delete.setEnabled(pose is not None)
         self.positions.delete.setToolTip(
-            "" if pose else "Select a saved spawn; the world's Default cannot be deleted"
+            ""
+            if pose
+            else "Select a saved spawn; the Default and registry spawns cannot be deleted"
         )
 
     def delete_spawn(self) -> None:
@@ -1264,7 +1391,7 @@ class WorldsPage(QtWidgets.QWidget):
 
     def export_spawn(self) -> None:
         pose = self.poses[self.template] if self.template < len(self.poses) else None
-        if pose is None or pose.default:
+        if pose is None or pose.default or pose.fixed:
             return
         path, _ = QtWidgets.QFileDialog.getSaveFileName(
             self, "Export spawn", "spawn.yaml", "YAML (*.yaml)"
@@ -1365,6 +1492,12 @@ class WorldsPage(QtWidgets.QWidget):
         self.head.setGeometry(0, 0, width, 36)
         body = height - 52
         side = self.side.resolve(440, 380, width - 16 - 400)
+        if self.read_only:  # 40: the positions card as tall as its rows, no form
+            rows = max(1, min(len(self.poses), int((body - 2 - 52 - 36) // 40)))
+            place(self.positions, 0, 52, side, self.positions.natural_height(rows))
+            place(self.map_card, side + 16, 52, max(0, width - side - 16), body)
+            self.side.place(side, 52, 16, body)
+            return
         room = max(1, int((body - 16 - 364 - 2 - 52 - 36) // 40))  # the form needs 364 px
         rows = max(1, min(len(self.poses), room))
         positions = self.positions_split.resolve(

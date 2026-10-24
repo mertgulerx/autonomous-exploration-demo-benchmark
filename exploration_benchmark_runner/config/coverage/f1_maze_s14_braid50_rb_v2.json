@@ -1,0 +1,2260 @@
+{
+  "id": "f1_maze_s14_braid50_rb_coverage_v2",
+  "metric_version": 2,
+  "target_margin_m": 0.1,
+  "world": "f1_maze_s14_braid50_rb",
+  "spawn": [
+    -16.25,
+    8.75,
+    0.1,
+    1.570796
+  ],
+  "resolution": 0.05,
+  "origin": [
+    -18.6,
+    -18.6,
+    0.0
+  ],
+  "width": 744,
+  "height": 744,
+  "target_cells": 412951,
+  "target_area_m2": 1032.3775000000003,
+  "grid_file": "f1_maze_s14_braid50_rb.npz",
+  "grid_sha256": "8f8c7d48d8cc908070264f0518204c549470f47a6893e8b76c4bf7735e0c26f5",
+  "source_sha256": {
+    "world_collection/worlds/F1_maze_s14_braid50_rb/F1_maze_s14_braid50_rb.sdf": "92f28e144b4ea4168a93ce4e0f2f01730d217aa96ec840ed59155d41eeae14ee",
+    "exploration_benchmark_runner/config/coverage/f1_maze_s14_braid50_rb_scenario.yaml": "1d3bbb3a6d672d68e6a663adaf68090ef7551ddf60077583a76cab181d111ac0",
+    "simulation/Week-7-8-ROS2-Navigation/bme_ros2_navigation/urdf/mogi_bot.urdf": "11b3a0684efb4f44bd12719f36ed6732b6dbf1d4570ea14580f4e81ba8af263a"
+  },
+  "generation": {
+    "body_height_slab": [
+      0.03,
+      0.35
+    ],
+    "settings": {
+      "bounds": [
+        -18.6,
+        -18.6,
+        18.6,
+        18.6
+      ],
+      "inclusion_polygons": [
+        [
+          [
+            -17.4,
+            -17.4
+          ],
+          [
+            17.4,
+            -17.4
+          ],
+          [
+            17.4,
+            17.4
+          ],
+          [
+            -17.4,
+            17.4
+          ]
+        ]
+      ],
+      "exclusion_polygons": [],
+      "review": "F1-07 Maze 14\u00d714, braid 0.5, recursive backtracker: inclusion polygon of world.yaml; bounds = T0 grid extent",
+      "source": {
+        "world_yaml": "world_collection/worlds/F1_maze_s14_braid50_rb/world.yaml",
+        "worldgen_version": "1.0.1"
+      }
+    },
+    "connectivity": "4-connected free floor from spawn; not a footprint planner",
+    "unreachable_free_cells": 0,
+    "collision_records": [
+      {
+        "model": "ground_plane",
+        "collision": "ground_collision",
+        "bounds": [
+          [
+            -19.6,
+            -19.6,
+            -0.05
+          ],
+          [
+            19.6,
+            19.6,
+            0.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "outer_e_00_col",
+        "bounds": [
+          [
+            17.4,
+            -17.4,
+            0.0
+          ],
+          [
+            17.6,
+            17.4,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "outer_n_00_col",
+        "bounds": [
+          [
+            -17.6,
+            17.4,
+            0.0
+          ],
+          [
+            17.6,
+            17.6,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "outer_s_00_col",
+        "bounds": [
+          [
+            -17.6,
+            -17.6,
+            0.0
+          ],
+          [
+            17.6,
+            -17.4,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "outer_w_00_col",
+        "bounds": [
+          [
+            -17.6,
+            -17.4,
+            0.0
+          ],
+          [
+            -17.4,
+            17.4,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_000_col",
+        "bounds": [
+          [
+            12.4,
+            -17.4,
+            0.0
+          ],
+          [
+            12.6,
+            -7.6,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_001_col",
+        "bounds": [
+          [
+            -12.6,
+            -15.1,
+            0.0
+          ],
+          [
+            -9.9,
+            -14.9,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_002_col",
+        "bounds": [
+          [
+            -7.6,
+            -15.1,
+            0.0
+          ],
+          [
+            -2.4,
+            -14.9,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_003_col",
+        "bounds": [
+          [
+            -0.09999999999999964,
+            -15.1,
+            0.0
+          ],
+          [
+            10.1,
+            -14.9,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_004_col",
+        "bounds": [
+          [
+            -15.1,
+            -15.1,
+            0.0
+          ],
+          [
+            -14.9,
+            -12.6,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_005_col",
+        "bounds": [
+          [
+            -12.6,
+            -14.9,
+            0.0
+          ],
+          [
+            -12.4,
+            -12.6,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_006_col",
+        "bounds": [
+          [
+            -7.6,
+            -14.9,
+            0.0
+          ],
+          [
+            -7.4,
+            -12.6,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_007_col",
+        "bounds": [
+          [
+            -0.1,
+            -14.9,
+            0.0
+          ],
+          [
+            0.1,
+            -12.4,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_008_col",
+        "bounds": [
+          [
+            4.9,
+            -14.9,
+            0.0
+          ],
+          [
+            5.1,
+            -12.4,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_009_col",
+        "bounds": [
+          [
+            -2.6,
+            -14.9,
+            0.0
+          ],
+          [
+            -2.4,
+            -10.1,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_010_col",
+        "bounds": [
+          [
+            9.9,
+            -14.9,
+            0.0
+          ],
+          [
+            10.1,
+            -2.4000000000000004,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_011_col",
+        "bounds": [
+          [
+            -15.1,
+            -12.6,
+            0.0
+          ],
+          [
+            -12.4,
+            -12.4,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_012_col",
+        "bounds": [
+          [
+            -10.1,
+            -12.6,
+            0.0
+          ],
+          [
+            -7.4,
+            -12.4,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_013_col",
+        "bounds": [
+          [
+            -5.1,
+            -12.6,
+            0.0
+          ],
+          [
+            -4.9,
+            -10.1,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_014_col",
+        "bounds": [
+          [
+            2.4,
+            -12.6,
+            0.0
+          ],
+          [
+            2.6,
+            -10.1,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_015_col",
+        "bounds": [
+          [
+            7.4,
+            -12.6,
+            0.0
+          ],
+          [
+            7.6,
+            -10.1,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_016_col",
+        "bounds": [
+          [
+            14.9,
+            -12.6,
+            0.0
+          ],
+          [
+            15.1,
+            -10.1,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_017_col",
+        "bounds": [
+          [
+            -10.1,
+            -12.4,
+            0.0
+          ],
+          [
+            -9.9,
+            -10.1,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_018_col",
+        "bounds": [
+          [
+            -15.1,
+            -12.4,
+            0.0
+          ],
+          [
+            -14.9,
+            -7.4,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_019_col",
+        "bounds": [
+          [
+            -12.6,
+            -10.1,
+            0.0
+          ],
+          [
+            -9.9,
+            -9.9,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_020_col",
+        "bounds": [
+          [
+            -5.1,
+            -10.1,
+            0.0
+          ],
+          [
+            2.6,
+            -9.9,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_021_col",
+        "bounds": [
+          [
+            4.9,
+            -10.1,
+            0.0
+          ],
+          [
+            7.6,
+            -9.9,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_022_col",
+        "bounds": [
+          [
+            14.899999999999999,
+            -10.1,
+            0.0
+          ],
+          [
+            17.4,
+            -9.9,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_023_col",
+        "bounds": [
+          [
+            -7.6,
+            -10.1,
+            0.0
+          ],
+          [
+            -7.4,
+            -7.6,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_024_col",
+        "bounds": [
+          [
+            2.4,
+            -9.9,
+            0.0
+          ],
+          [
+            2.6,
+            -7.6,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_025_col",
+        "bounds": [
+          [
+            -10.1,
+            -9.9,
+            0.0
+          ],
+          [
+            -9.9,
+            -7.4,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_026_col",
+        "bounds": [
+          [
+            7.4,
+            -9.9,
+            0.0
+          ],
+          [
+            7.6,
+            -5.1,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_027_col",
+        "bounds": [
+          [
+            -2.6,
+            -9.9,
+            0.0
+          ],
+          [
+            -2.4,
+            2.4000000000000004,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_028_col",
+        "bounds": [
+          [
+            -7.6,
+            -7.6,
+            0.0
+          ],
+          [
+            -4.9,
+            -7.4,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_029_col",
+        "bounds": [
+          [
+            2.4,
+            -7.6,
+            0.0
+          ],
+          [
+            5.1,
+            -7.4,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_030_col",
+        "bounds": [
+          [
+            12.4,
+            -7.6,
+            0.0
+          ],
+          [
+            15.1,
+            -7.4,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_031_col",
+        "bounds": [
+          [
+            -12.6,
+            -7.6,
+            0.0
+          ],
+          [
+            -12.4,
+            -5.1,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_032_col",
+        "bounds": [
+          [
+            -0.1,
+            -7.6,
+            0.0
+          ],
+          [
+            0.1,
+            -5.1,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_033_col",
+        "bounds": [
+          [
+            -7.6,
+            -7.4,
+            0.0
+          ],
+          [
+            -7.4,
+            -5.1,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_034_col",
+        "bounds": [
+          [
+            12.4,
+            -7.4,
+            0.0
+          ],
+          [
+            12.6,
+            -2.6,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_035_col",
+        "bounds": [
+          [
+            -15.1,
+            -5.1,
+            0.0
+          ],
+          [
+            -7.4,
+            -4.9,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_036_col",
+        "bounds": [
+          [
+            -0.10000000000000009,
+            -5.1,
+            0.0
+          ],
+          [
+            7.6,
+            -4.9,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_037_col",
+        "bounds": [
+          [
+            14.899999999999999,
+            -5.1,
+            0.0
+          ],
+          [
+            17.4,
+            -4.9,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_038_col",
+        "bounds": [
+          [
+            -5.1,
+            -5.1,
+            0.0
+          ],
+          [
+            -4.9,
+            -2.6,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_039_col",
+        "bounds": [
+          [
+            -0.1,
+            -4.9,
+            0.0
+          ],
+          [
+            0.1,
+            -0.10000000000000009,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_040_col",
+        "bounds": [
+          [
+            -15.1,
+            -4.9,
+            0.0
+          ],
+          [
+            -14.9,
+            0.10000000000000009,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_041_col",
+        "bounds": [
+          [
+            -12.6,
+            -2.6,
+            0.0
+          ],
+          [
+            -4.9,
+            -2.4,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_042_col",
+        "bounds": [
+          [
+            2.4,
+            -2.6,
+            0.0
+          ],
+          [
+            7.6,
+            -2.4,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_043_col",
+        "bounds": [
+          [
+            12.4,
+            -2.6,
+            0.0
+          ],
+          [
+            15.1,
+            -2.4,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_044_col",
+        "bounds": [
+          [
+            -5.1,
+            -2.4,
+            0.0
+          ],
+          [
+            -4.9,
+            -0.10000000000000009,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_045_col",
+        "bounds": [
+          [
+            7.4,
+            -2.4,
+            0.0
+          ],
+          [
+            7.6,
+            -0.10000000000000009,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_046_col",
+        "bounds": [
+          [
+            -12.6,
+            -2.4,
+            0.0
+          ],
+          [
+            -12.4,
+            2.4,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_047_col",
+        "bounds": [
+          [
+            -7.6,
+            -0.1,
+            0.0
+          ],
+          [
+            -4.9,
+            0.1,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_048_col",
+        "bounds": [
+          [
+            -0.10000000000000009,
+            -0.1,
+            0.0
+          ],
+          [
+            5.1,
+            0.1,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_049_col",
+        "bounds": [
+          [
+            7.4,
+            -0.1,
+            0.0
+          ],
+          [
+            15.1,
+            0.1,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_050_col",
+        "bounds": [
+          [
+            -10.1,
+            -0.10000000000000009,
+            0.0
+          ],
+          [
+            -9.9,
+            2.4,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_051_col",
+        "bounds": [
+          [
+            4.9,
+            0.10000000000000009,
+            0.0
+          ],
+          [
+            5.1,
+            2.4,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_052_col",
+        "bounds": [
+          [
+            12.4,
+            0.10000000000000009,
+            0.0
+          ],
+          [
+            12.6,
+            2.4,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_053_col",
+        "bounds": [
+          [
+            7.4,
+            0.10000000000000009,
+            0.0
+          ],
+          [
+            7.6,
+            4.9,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_054_col",
+        "bounds": [
+          [
+            -0.1,
+            0.10000000000000009,
+            0.0
+          ],
+          [
+            0.1,
+            7.4,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_055_col",
+        "bounds": [
+          [
+            -15.1,
+            2.4,
+            0.0
+          ],
+          [
+            -12.4,
+            2.6,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_056_col",
+        "bounds": [
+          [
+            -10.1,
+            2.4,
+            0.0
+          ],
+          [
+            -2.4,
+            2.6,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_057_col",
+        "bounds": [
+          [
+            2.4,
+            2.4,
+            0.0
+          ],
+          [
+            5.1,
+            2.6,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_058_col",
+        "bounds": [
+          [
+            12.4,
+            2.4,
+            0.0
+          ],
+          [
+            15.1,
+            2.6,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_059_col",
+        "bounds": [
+          [
+            9.9,
+            2.4,
+            0.0
+          ],
+          [
+            10.1,
+            4.9,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_060_col",
+        "bounds": [
+          [
+            -12.6,
+            2.6,
+            0.0
+          ],
+          [
+            -12.4,
+            4.9,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_061_col",
+        "bounds": [
+          [
+            -2.6,
+            2.6,
+            0.0
+          ],
+          [
+            -2.4,
+            5.1,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_062_col",
+        "bounds": [
+          [
+            14.9,
+            2.6,
+            0.0
+          ],
+          [
+            15.1,
+            7.4,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_063_col",
+        "bounds": [
+          [
+            -7.6,
+            2.5999999999999996,
+            0.0
+          ],
+          [
+            -7.4,
+            14.9,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_064_col",
+        "bounds": [
+          [
+            -17.4,
+            4.9,
+            0.0
+          ],
+          [
+            -14.899999999999999,
+            5.1,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_065_col",
+        "bounds": [
+          [
+            -12.6,
+            4.9,
+            0.0
+          ],
+          [
+            -9.9,
+            5.1,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_066_col",
+        "bounds": [
+          [
+            2.4,
+            4.9,
+            0.0
+          ],
+          [
+            7.6,
+            5.1,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_067_col",
+        "bounds": [
+          [
+            9.9,
+            4.9,
+            0.0
+          ],
+          [
+            12.6,
+            5.1,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_068_col",
+        "bounds": [
+          [
+            -5.1,
+            4.9,
+            0.0
+          ],
+          [
+            -4.9,
+            7.4,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_069_col",
+        "bounds": [
+          [
+            9.9,
+            5.1,
+            0.0
+          ],
+          [
+            10.1,
+            7.4,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_070_col",
+        "bounds": [
+          [
+            2.4,
+            5.1,
+            0.0
+          ],
+          [
+            2.6,
+            7.6,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_071_col",
+        "bounds": [
+          [
+            4.9,
+            5.1,
+            0.0
+          ],
+          [
+            5.1,
+            9.9,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_072_col",
+        "bounds": [
+          [
+            -12.6,
+            5.1,
+            0.0
+          ],
+          [
+            -12.4,
+            12.4,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_073_col",
+        "bounds": [
+          [
+            -5.1,
+            7.4,
+            0.0
+          ],
+          [
+            0.10000000000000009,
+            7.6,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_074_col",
+        "bounds": [
+          [
+            7.4,
+            7.4,
+            0.0
+          ],
+          [
+            10.1,
+            7.6,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_075_col",
+        "bounds": [
+          [
+            12.4,
+            7.4,
+            0.0
+          ],
+          [
+            15.1,
+            7.6,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_076_col",
+        "bounds": [
+          [
+            -15.1,
+            7.4,
+            0.0
+          ],
+          [
+            -14.9,
+            10.1,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_077_col",
+        "bounds": [
+          [
+            -10.1,
+            7.4,
+            0.0
+          ],
+          [
+            -9.9,
+            15.1,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_078_col",
+        "bounds": [
+          [
+            -0.1,
+            7.6,
+            0.0
+          ],
+          [
+            0.1,
+            9.9,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_079_col",
+        "bounds": [
+          [
+            9.9,
+            7.6,
+            0.0
+          ],
+          [
+            10.1,
+            10.1,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_080_col",
+        "bounds": [
+          [
+            7.4,
+            7.6,
+            0.0
+          ],
+          [
+            7.6,
+            12.4,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_081_col",
+        "bounds": [
+          [
+            -5.1,
+            7.6,
+            0.0
+          ],
+          [
+            -4.9,
+            12.6,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_082_col",
+        "bounds": [
+          [
+            14.9,
+            7.6,
+            0.0
+          ],
+          [
+            15.1,
+            12.6,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_083_col",
+        "bounds": [
+          [
+            12.4,
+            7.6,
+            0.0
+          ],
+          [
+            12.6,
+            17.4,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_084_col",
+        "bounds": [
+          [
+            -0.10000000000000009,
+            9.9,
+            0.0
+          ],
+          [
+            5.1,
+            10.1,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_085_col",
+        "bounds": [
+          [
+            -2.6,
+            9.9,
+            0.0
+          ],
+          [
+            -2.4,
+            12.4,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_086_col",
+        "bounds": [
+          [
+            2.4,
+            10.1,
+            0.0
+          ],
+          [
+            2.6,
+            14.9,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_087_col",
+        "bounds": [
+          [
+            -15.1,
+            12.4,
+            0.0
+          ],
+          [
+            -12.4,
+            12.6,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_088_col",
+        "bounds": [
+          [
+            -2.6,
+            12.4,
+            0.0
+          ],
+          [
+            0.10000000000000009,
+            12.6,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_089_col",
+        "bounds": [
+          [
+            4.9,
+            12.4,
+            0.0
+          ],
+          [
+            10.1,
+            12.6,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_090_col",
+        "bounds": [
+          [
+            -2.6,
+            12.6,
+            0.0
+          ],
+          [
+            -2.4,
+            14.9,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_091_col",
+        "bounds": [
+          [
+            -12.6,
+            12.6,
+            0.0
+          ],
+          [
+            -12.4,
+            15.1,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_092_col",
+        "bounds": [
+          [
+            9.9,
+            12.6,
+            0.0
+          ],
+          [
+            10.1,
+            15.1,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_093_col",
+        "bounds": [
+          [
+            -7.6,
+            14.9,
+            0.0
+          ],
+          [
+            -2.4,
+            15.1,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_094_col",
+        "bounds": [
+          [
+            -0.10000000000000009,
+            14.9,
+            0.0
+          ],
+          [
+            7.6,
+            15.1,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_095_col",
+        "bounds": [
+          [
+            14.899999999999999,
+            14.9,
+            0.0
+          ],
+          [
+            17.4,
+            15.1,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_096_col",
+        "bounds": [
+          [
+            -15.1,
+            14.899999999999999,
+            0.0
+          ],
+          [
+            -14.9,
+            17.4,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "wall_097_col",
+        "bounds": [
+          [
+            -2.6,
+            15.1,
+            0.0
+          ],
+          [
+            -2.4,
+            17.4,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "landmark_00_col",
+        "bounds": [
+          [
+            -10.25,
+            8.15,
+            0.0
+          ],
+          [
+            -10.100000000000001,
+            9.15,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "landmark_01_col",
+        "bounds": [
+          [
+            4.199999999999999,
+            -5.25,
+            0.0
+          ],
+          [
+            4.5,
+            -5.1,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "landmark_02_col",
+        "bounds": [
+          [
+            17.25,
+            -16.25,
+            0.0
+          ],
+          [
+            17.4,
+            -15.649999999999999,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "landmark_03_col",
+        "bounds": [
+          [
+            -14.899999999999999,
+            -9.200000000000001,
+            0.0
+          ],
+          [
+            -14.75,
+            -8.9,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "landmark_04_col",
+        "bounds": [
+          [
+            12.600000000000001,
+            -8.55,
+            0.0
+          ],
+          [
+            12.75,
+            -7.95,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "landmark_05_col",
+        "bounds": [
+          [
+            -8.700000000000001,
+            -17.4,
+            0.0
+          ],
+          [
+            -8.4,
+            -17.25,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "landmark_06_col",
+        "bounds": [
+          [
+            12.25,
+            10.55,
+            0.0
+          ],
+          [
+            12.399999999999999,
+            11.55,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "landmark_07_col",
+        "bounds": [
+          [
+            3.6,
+            14.75,
+            0.0
+          ],
+          [
+            3.9,
+            14.899999999999999,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "landmark_08_col",
+        "bounds": [
+          [
+            -2.0,
+            12.25,
+            0.0
+          ],
+          [
+            -1.7000000000000002,
+            12.399999999999999,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "landmark_09_col",
+        "bounds": [
+          [
+            9.75,
+            3.25,
+            0.0
+          ],
+          [
+            9.899999999999999,
+            4.25,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "landmark_10_col",
+        "bounds": [
+          [
+            3.05,
+            0.09999999999999999,
+            0.0
+          ],
+          [
+            4.05,
+            0.25,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "landmark_11_col",
+        "bounds": [
+          [
+            -11.6,
+            -4.9,
+            0.0
+          ],
+          [
+            -11.299999999999999,
+            -4.75,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "landmark_12_col",
+        "bounds": [
+          [
+            8.45,
+            7.6,
+            0.0
+          ],
+          [
+            9.45,
+            7.75,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "landmark_13_col",
+        "bounds": [
+          [
+            7.6,
+            -9.4,
+            0.0
+          ],
+          [
+            7.75,
+            -9.1,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "landmark_14_col",
+        "bounds": [
+          [
+            -11.65,
+            -10.25,
+            0.0
+          ],
+          [
+            -11.049999999999999,
+            -10.100000000000001,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "landmark_15_col",
+        "bounds": [
+          [
+            -10.25,
+            13.45,
+            0.0
+          ],
+          [
+            -10.100000000000001,
+            14.45,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "landmark_16_col",
+        "bounds": [
+          [
+            17.25,
+            3.1,
+            0.0
+          ],
+          [
+            17.4,
+            3.4,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "landmark_17_col",
+        "bounds": [
+          [
+            1.05,
+            -14.899999999999999,
+            0.0
+          ],
+          [
+            2.05,
+            -14.75,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "landmark_18_col",
+        "bounds": [
+          [
+            17.25,
+            -14.25,
+            0.0
+          ],
+          [
+            17.4,
+            -13.649999999999999,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "landmark_19_col",
+        "bounds": [
+          [
+            5.1,
+            0.44999999999999996,
+            0.0
+          ],
+          [
+            5.25,
+            1.45,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "landmark_20_col",
+        "bounds": [
+          [
+            -2.75,
+            16.5,
+            0.0
+          ],
+          [
+            -2.5999999999999996,
+            16.799999999999997,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "landmark_21_col",
+        "bounds": [
+          [
+            8.549999999999999,
+            7.25,
+            0.0
+          ],
+          [
+            9.15,
+            7.4,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "landmark_22_col",
+        "bounds": [
+          [
+            -5.25,
+            10.4,
+            0.0
+          ],
+          [
+            -5.1,
+            10.700000000000001,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "landmark_23_col",
+        "bounds": [
+          [
+            3.45,
+            -4.9,
+            0.0
+          ],
+          [
+            4.45,
+            -4.75,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "landmark_24_col",
+        "bounds": [
+          [
+            6.45,
+            17.25,
+            0.0
+          ],
+          [
+            7.05,
+            17.4,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "landmark_25_col",
+        "bounds": [
+          [
+            17.25,
+            -9.5,
+            0.0
+          ],
+          [
+            17.4,
+            -9.2,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "landmark_26_col",
+        "bounds": [
+          [
+            10.100000000000001,
+            -3.65,
+            0.0
+          ],
+          [
+            10.25,
+            -3.0500000000000003,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "landmark_27_col",
+        "bounds": [
+          [
+            1.45,
+            -4.9,
+            0.0
+          ],
+          [
+            2.05,
+            -4.75,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "landmark_28_col",
+        "bounds": [
+          [
+            -11.75,
+            17.25,
+            0.0
+          ],
+          [
+            -10.75,
+            17.4,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "landmark_29_col",
+        "bounds": [
+          [
+            -6.75,
+            2.25,
+            0.0
+          ],
+          [
+            -5.75,
+            2.4000000000000004,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "landmark_30_col",
+        "bounds": [
+          [
+            10.75,
+            -0.25,
+            0.0
+          ],
+          [
+            11.75,
+            -0.09999999999999999,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "landmark_31_col",
+        "bounds": [
+          [
+            -1.35,
+            12.600000000000001,
+            0.0
+          ],
+          [
+            -0.75,
+            12.75,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "F1_07_structure",
+        "collision": "landmark_32_col",
+        "bounds": [
+          [
+            -7.4,
+            -9.15,
+            0.0
+          ],
+          [
+            -7.25,
+            -8.549999999999999,
+            2.0
+          ]
+        ]
+      }
+    ],
+    "generator_sha256": "5613e07de31429608b7bb91a5d931b4983603c26a7c5bfece3de7a0979f760a0",
+    "tool_versions": {
+      "numpy": "2.4.4",
+      "scipy": "1.17.1",
+      "shapely": "2.1.2",
+      "trimesh": "4.12.2"
+    },
+    "world_yaml": "world_collection/worlds/F1_maze_s14_braid50_rb/world.yaml",
+    "worldgen_version": "1.0.1",
+    "seed": 107000,
+    "registry_id": "f1_maze_s14_braid50_rb"
+  }
+}

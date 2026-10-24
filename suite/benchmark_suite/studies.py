@@ -33,6 +33,7 @@ import sqlite3
 from typing import Any, cast
 
 from .contracts import UNASSIGNED, ContractError, canonical
+from .provenance import REGISTRY_FILES
 from .run_record import (
     FIELDS,
     INDEX_COLUMNS,
@@ -358,12 +359,17 @@ def homogeneity(
     studies = [specification.get("study") or {} for specification in specifications]
     for name in ("plan_sha256", "evidence_level"):
         values[f"study.{name}"] = sorted({canonical(study.get(name)) for study in studies})
-    values["default_parameter_hashes"] = sorted(
-        {
-            canonical(specification.get("default_parameter_hashes"))
-            for specification in specifications
-        }
-    )
+    for name in ("default_parameter_hashes", "time_limit_rule"):
+        values[name] = sorted(
+            {canonical(specification.get(name)) for specification in specifications}
+        )
+    # The registry and robot catalog the engine read (provenance version 2; null in version 1 documents,
+    # so a study mixing both warns too: the registry did not exist then).
+    identities = {record["provenance_id"] for record in full if record["provenance_id"]}
+    for name in REGISTRY_FILES:
+        values[name] = sorted(
+            {canonical((documents.get(identity) or {}).get(name)) for identity in identities}
+        )
     cells: dict[str, set[str]] = defaultdict(set)
     for record in full:
         cells[f"{record['robot_id']}/{record['world_id']}/{record['spawn_id']}"].add(
@@ -377,7 +383,7 @@ def homogeneity(
         for cell, found in sorted(cells.items())
         if len(found) > 1
     ]
-    for identity in sorted({r["provenance_id"] for r in full if r["provenance_id"]}):
+    for identity in sorted(identities):
         repositories = (documents.get(identity) or {}).get("repositories") or {}
         if any((state or {}).get("dirty") for state in repositories.values()):
             warnings.append(

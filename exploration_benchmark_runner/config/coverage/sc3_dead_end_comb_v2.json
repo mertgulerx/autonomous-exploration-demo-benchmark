@@ -1,0 +1,500 @@
+{
+  "id": "sc3_dead_end_comb_coverage_v2",
+  "metric_version": 2,
+  "target_margin_m": 0.1,
+  "world": "sc3_dead_end_comb",
+  "spawn": [
+    -17.0,
+    0.0,
+    0.1,
+    0.0
+  ],
+  "resolution": 0.05,
+  "origin": [
+    -21.2,
+    -11.2,
+    0.0
+  ],
+  "width": 848,
+  "height": 448,
+  "target_cells": 81338,
+  "target_area_m2": 203.34500000000003,
+  "grid_file": "sc3_dead_end_comb.npz",
+  "grid_sha256": "eb679a0f48332a819542268a0d14d35db90411f094c8a3d658fe0e39b15a9013",
+  "source_sha256": {
+    "world_collection/worlds/SC3_dead_end_comb/SC3_dead_end_comb.sdf": "ebb86df5f0217bcc86135f7e19a93ad39f42b1c3257b3fe096af75d6addae5ed",
+    "exploration_benchmark_runner/config/coverage/sc3_dead_end_comb_scenario.yaml": "f23e17014375bbec27abcfea80398f95bec48103132e857ea147fb292ba02805",
+    "simulation/Week-7-8-ROS2-Navigation/bme_ros2_navigation/urdf/mogi_bot.urdf": "11b3a0684efb4f44bd12719f36ed6732b6dbf1d4570ea14580f4e81ba8af263a"
+  },
+  "generation": {
+    "body_height_slab": [
+      0.03,
+      0.35
+    ],
+    "settings": {
+      "bounds": [
+        -21.2,
+        -11.2,
+        21.2,
+        11.2
+      ],
+      "inclusion_polygons": [
+        [
+          [
+            -20.0,
+            -1.5
+          ],
+          [
+            -15.0,
+            -1.5
+          ],
+          [
+            -15.0,
+            -8.0
+          ],
+          [
+            -13.0,
+            -8.0
+          ],
+          [
+            -13.0,
+            -1.5
+          ],
+          [
+            -5.0,
+            -1.5
+          ],
+          [
+            -5.0,
+            -10.0
+          ],
+          [
+            -3.0,
+            -10.0
+          ],
+          [
+            -3.0,
+            -1.5
+          ],
+          [
+            5.0,
+            -1.5
+          ],
+          [
+            5.0,
+            -6.0
+          ],
+          [
+            7.0,
+            -6.0
+          ],
+          [
+            7.0,
+            -1.5
+          ],
+          [
+            18.0,
+            -1.5
+          ],
+          [
+            18.0,
+            -7.0
+          ],
+          [
+            20.0,
+            -7.0
+          ],
+          [
+            20.0,
+            1.5
+          ],
+          [
+            12.0,
+            1.5
+          ],
+          [
+            12.0,
+            7.0
+          ],
+          [
+            10.0,
+            7.0
+          ],
+          [
+            10.0,
+            1.5
+          ],
+          [
+            2.0,
+            1.5
+          ],
+          [
+            2.0,
+            10.0
+          ],
+          [
+            0.0,
+            10.0
+          ],
+          [
+            0.0,
+            1.5
+          ],
+          [
+            -8.0,
+            1.5
+          ],
+          [
+            -8.0,
+            6.0
+          ],
+          [
+            -10.0,
+            6.0
+          ],
+          [
+            -10.0,
+            1.5
+          ],
+          [
+            -18.0,
+            1.5
+          ],
+          [
+            -18.0,
+            9.0
+          ],
+          [
+            -20.0,
+            9.0
+          ]
+        ]
+      ],
+      "exclusion_polygons": [],
+      "review": "SC3 Dead-end comb: inclusion polygon of world.yaml; bounds = T0 grid extent",
+      "source": {
+        "world_yaml": "world_collection/worlds/SC3_dead_end_comb/world.yaml",
+        "worldgen_version": "1.0.1"
+      }
+    },
+    "connectivity": "4-connected free floor from spawn; not a footprint planner",
+    "unreachable_free_cells": 0,
+    "collision_records": [
+      {
+        "model": "ground_plane",
+        "collision": "ground_collision",
+        "bounds": [
+          [
+            -22.25,
+            -12.2,
+            -0.05
+          ],
+          [
+            22.25,
+            12.2,
+            0.0
+          ]
+        ]
+      },
+      {
+        "model": "SC3_structure",
+        "collision": "outer_e_00_col",
+        "bounds": [
+          [
+            20.0,
+            -10.0,
+            0.0
+          ],
+          [
+            20.200000000000003,
+            10.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC3_structure",
+        "collision": "outer_n_00_col",
+        "bounds": [
+          [
+            -20.2,
+            10.0,
+            0.0
+          ],
+          [
+            20.2,
+            10.2,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC3_structure",
+        "collision": "outer_s_00_col",
+        "bounds": [
+          [
+            -20.2,
+            -10.2,
+            0.0
+          ],
+          [
+            20.2,
+            -10.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC3_structure",
+        "collision": "outer_w_00_col",
+        "bounds": [
+          [
+            -20.200000000000003,
+            -10.0,
+            0.0
+          ],
+          [
+            -20.0,
+            10.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC3_structure",
+        "collision": "fn1_col",
+        "bounds": [
+          [
+            -18.0,
+            1.5,
+            0.0
+          ],
+          [
+            -10.0,
+            10.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC3_structure",
+        "collision": "fn2_col",
+        "bounds": [
+          [
+            -8.0,
+            1.5,
+            0.0
+          ],
+          [
+            0.0,
+            10.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC3_structure",
+        "collision": "fn3_col",
+        "bounds": [
+          [
+            2.0,
+            1.5,
+            0.0
+          ],
+          [
+            10.0,
+            10.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC3_structure",
+        "collision": "fn4_col",
+        "bounds": [
+          [
+            12.0,
+            1.5,
+            0.0
+          ],
+          [
+            20.0,
+            10.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC3_structure",
+        "collision": "fn5_col",
+        "bounds": [
+          [
+            -20.0,
+            9.0,
+            0.0
+          ],
+          [
+            -18.0,
+            10.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC3_structure",
+        "collision": "fn6_col",
+        "bounds": [
+          [
+            -10.0,
+            6.0,
+            0.0
+          ],
+          [
+            -8.0,
+            10.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC3_structure",
+        "collision": "fn7_col",
+        "bounds": [
+          [
+            10.0,
+            7.0,
+            0.0
+          ],
+          [
+            12.0,
+            10.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC3_structure",
+        "collision": "fs1_col",
+        "bounds": [
+          [
+            -20.0,
+            -10.0,
+            0.0
+          ],
+          [
+            -15.0,
+            -1.5,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC3_structure",
+        "collision": "fs2_col",
+        "bounds": [
+          [
+            -13.0,
+            -10.0,
+            0.0
+          ],
+          [
+            -5.0,
+            -1.5,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC3_structure",
+        "collision": "fs3_col",
+        "bounds": [
+          [
+            -3.0,
+            -10.0,
+            0.0
+          ],
+          [
+            5.0,
+            -1.5,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC3_structure",
+        "collision": "fs4_col",
+        "bounds": [
+          [
+            7.0,
+            -10.0,
+            0.0
+          ],
+          [
+            18.0,
+            -1.5,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC3_structure",
+        "collision": "fs5_col",
+        "bounds": [
+          [
+            -15.0,
+            -10.0,
+            0.0
+          ],
+          [
+            -13.0,
+            -8.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC3_structure",
+        "collision": "fs6_col",
+        "bounds": [
+          [
+            5.0,
+            -10.0,
+            0.0
+          ],
+          [
+            7.0,
+            -6.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC3_structure",
+        "collision": "fs7_col",
+        "bounds": [
+          [
+            18.0,
+            -10.0,
+            0.0
+          ],
+          [
+            20.0,
+            -7.0,
+            2.0
+          ]
+        ]
+      }
+    ],
+    "generator_sha256": "5613e07de31429608b7bb91a5d931b4983603c26a7c5bfece3de7a0979f760a0",
+    "tool_versions": {
+      "numpy": "2.4.4",
+      "scipy": "1.17.1",
+      "shapely": "2.1.2",
+      "trimesh": "4.12.2"
+    },
+    "world_yaml": "world_collection/worlds/SC3_dead_end_comb/world.yaml",
+    "worldgen_version": "1.0.1",
+    "seed": null,
+    "registry_id": "sc3_dead_end_comb"
+  }
+}

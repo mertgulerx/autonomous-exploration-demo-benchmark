@@ -33,12 +33,17 @@ def export_robot(root: Path, output: Path, robot_id: str) -> None:
     from exploration_benchmark_robots.catalog import RobotCatalog
     from exploration_benchmark_robots.runtime import package_lookup
     from exploration_benchmark_runner.configuration import scenario
+    from exploration_benchmark_runner.worlds import WorldRegistry
 
-    catalog = RobotCatalog(root / "exploration_benchmark_robots")
-    profile = catalog.require(robot_id, "warehouse")
+    catalog = RobotCatalog(root / "exploration_benchmark_robots", worlds=WorldRegistry.load(root))
+    # The robot is prepared in the registry's default world; only its description is exported.
+    world = catalog.registry.default_world
+    profile = catalog.require(robot_id, world)
     lookup = package_lookup(profile, catalog.lookup)
     with TemporaryDirectory(prefix=robot_id + "-", dir=output) as staging:
-        generated, _ = prepare(profile, scenario(root, "warehouse"), Path(staging), lookup)
+        generated, _ = prepare(
+            profile, scenario(root, world, registry=catalog.registry), Path(staging), lookup
+        )
     robot = ET.fromstring(generated["robot_description"])
     appearance = json.loads(
         Path(__file__).with_name("robot_preview_appearance.json").read_text()
@@ -155,8 +160,11 @@ def main() -> None:
         return
     from exploration_benchmark_robots.catalog import RobotCatalog
     from exploration_benchmark_robots.runtime import environment
+    from exploration_benchmark_runner.worlds import WorldRegistry
 
-    catalog = RobotCatalog(args.root / "exploration_benchmark_robots")
+    catalog = RobotCatalog(
+        args.root / "exploration_benchmark_robots", worlds=WorldRegistry.load(args.root)
+    )
     for robot_id in catalog.profiles:
         subprocess.run(
             [

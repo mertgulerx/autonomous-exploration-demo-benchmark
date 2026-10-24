@@ -22,6 +22,7 @@ compacted) only after its records exist, because the job reads the segments.
 """
 
 from collections import OrderedDict
+from collections.abc import Mapping
 import json
 from pathlib import Path
 import time
@@ -55,10 +56,19 @@ JOB_TIMEOUT_SECONDS = 600.0
 
 
 class RunRecords:
-    def __init__(self, store: Store, workspace: Path, provenance_id: str):
+    def __init__(
+        self,
+        store: Store,
+        workspace: Path,
+        provenance_id: str,
+        world_families: Mapping[str, str | None] | None = None,
+    ):
         self.store = store
         self.workspace = workspace
         self.provenance_id = provenance_id
+        # world_family per world from the registry (Library.world_families): the family of a generated
+        # world, null for every other tier and for worlds the engine's registry does not list.
+        self.world_families = dict(world_families or {})
         self.job: Job | None = None
         self.building: str | None = None
         self.building_campaign: str | None = None
@@ -203,7 +213,7 @@ class RunRecords:
             spawn_id=experiment["spawn_id"],
             repetition=experiment["repetition"],
             block_id=experiment["block_id"],
-            world_family=None,
+            world_family=self.world_families.get(experiment["world_id"]),
             profile_id=experiment["profile_id"],
             profile_revision=profile.get("revision"),
             explorer_id=EXPLORER_ID,

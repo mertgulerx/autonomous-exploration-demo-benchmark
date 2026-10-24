@@ -178,9 +178,10 @@ FIELDS: tuple[Field, ...] = (
     *_fields("bool", "", "no exit line", "explorer_exited_before_stop"),
     *_fields("int", "", "parser not run (stub)", "goal_match_mismatches", "log_unmapped_lines"),
     *_fields("text", "sha256", "recorded before suite image 17", "provenance_id"),
-    *_fields("int", "", "no moving objects", "contact_events", "ghost_cells"),
-    *_fields("float", "m", "no moving objects", "moving_object_min_distance_m"),
-    *_fields("float", "sim s", "no moving objects", "moving_object_time_within_0_5_m_s"),
+    # Reserved by RD-51; never measured since decision 59 (no moving-object measures).
+    *_fields("int", "", "not measured", "contact_events", "ghost_cells"),
+    *_fields("float", "m", "not measured", "moving_object_min_distance_m"),
+    *_fields("float", "sim s", "not measured", "moving_object_time_within_0_5_m_s"),
     *_fields("int", "UTC ns", "never", "recorded_ns"),
 )
 NAMES = tuple(field.name for field in FIELDS)

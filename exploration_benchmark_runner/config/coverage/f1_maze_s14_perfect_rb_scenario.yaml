@@ -1,0 +1,15 @@
+# Coverage settings of f1_maze_s14_perfect_rb (docs/plans/worlds/I2-references-and-scenarios.md §3.3),
+# written by benchmark_reference import; hashed into f1_maze_s14_perfect_rb_v2.json.
+resolution: 0.05
+body_height_slab: [0.03, 0.35]
+scenarios:
+  f1_maze_s14_perfect_rb:
+    bounds: [-18.6, -18.6, 18.6, 18.6]
+    inclusion_polygons:
+    - - [-17.4, -17.4]
+      - [17.4, -17.4]
+      - [17.4, 17.4]
+      - [-17.4, 17.4]
+    exclusion_polygons: []
+    review: 'F1-05 Maze 14×14, perfect, recursive backtracker: inclusion polygon of world.yaml; bounds = T0 grid extent'
+    source: {world_yaml: world_collection/worlds/F1_maze_s14_perfect_rb/world.yaml, worldgen_version: 1.0.1}

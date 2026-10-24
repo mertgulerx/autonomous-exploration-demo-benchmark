@@ -1,0 +1,724 @@
+{
+  "id": "sc2b_narrow_passage_2m0_coverage_v2",
+  "metric_version": 2,
+  "target_margin_m": 0.1,
+  "world": "sc2b_narrow_passage_2m0",
+  "spawn": [
+    -10.5,
+    0.0,
+    0.1,
+    0.0
+  ],
+  "resolution": 0.05,
+  "origin": [
+    -19.6,
+    -9.1,
+    0.0
+  ],
+  "width": 784,
+  "height": 364,
+  "target_cells": 180378,
+  "target_area_m2": 450.9450000000001,
+  "grid_file": "sc2b_narrow_passage_2m0.npz",
+  "grid_sha256": "214253a7dc84decc6bf179f62cec24fd402ae3c530154f682a89f8a4414b2bff",
+  "source_sha256": {
+    "world_collection/worlds/SC2b_narrow_passage_2m0/SC2b_narrow_passage_2m0.sdf": "bfccfd90d63a2da3c350419207fb093095bb23871fb89d51f622a217c9bfbefe",
+    "exploration_benchmark_runner/config/coverage/sc2b_narrow_passage_2m0_scenario.yaml": "2d9f5cdd555b2e04622070b702d1f683dda2a75c30591d2344445961da0f2077",
+    "simulation/Week-7-8-ROS2-Navigation/bme_ros2_navigation/urdf/mogi_bot.urdf": "11b3a0684efb4f44bd12719f36ed6732b6dbf1d4570ea14580f4e81ba8af263a"
+  },
+  "generation": {
+    "body_height_slab": [
+      0.03,
+      0.35
+    ],
+    "settings": {
+      "bounds": [
+        -19.6,
+        -9.1,
+        19.6,
+        9.1
+      ],
+      "inclusion_polygons": [
+        [
+          [
+            -18.4,
+            3.0
+          ],
+          [
+            -18.0,
+            3.0
+          ],
+          [
+            -18.0,
+            -7.5
+          ],
+          [
+            -13.5,
+            -7.5
+          ],
+          [
+            -13.5,
+            -7.9
+          ],
+          [
+            -12.5,
+            -7.9
+          ],
+          [
+            -12.5,
+            -7.5
+          ],
+          [
+            -3.0,
+            -7.5
+          ],
+          [
+            -3.0,
+            -1.0
+          ],
+          [
+            3.0,
+            -1.0
+          ],
+          [
+            3.0,
+            -7.5
+          ],
+          [
+            13.5,
+            -7.5
+          ],
+          [
+            13.5,
+            -7.9
+          ],
+          [
+            14.5,
+            -7.9
+          ],
+          [
+            14.5,
+            -7.5
+          ],
+          [
+            18.0,
+            -7.5
+          ],
+          [
+            18.0,
+            -5.0
+          ],
+          [
+            18.4,
+            -5.0
+          ],
+          [
+            18.4,
+            -4.0
+          ],
+          [
+            18.0,
+            -4.0
+          ],
+          [
+            18.0,
+            7.5
+          ],
+          [
+            8.5,
+            7.5
+          ],
+          [
+            8.5,
+            7.9
+          ],
+          [
+            7.5,
+            7.9
+          ],
+          [
+            7.5,
+            7.5
+          ],
+          [
+            3.0,
+            7.5
+          ],
+          [
+            3.0,
+            1.0
+          ],
+          [
+            -3.0,
+            1.0
+          ],
+          [
+            -3.0,
+            7.5
+          ],
+          [
+            -18.0,
+            7.5
+          ],
+          [
+            -18.0,
+            4.0
+          ],
+          [
+            -18.4,
+            4.0
+          ]
+        ]
+      ],
+      "exclusion_polygons": [],
+      "review": "SC2b Narrow passage, 2.0 m corridor: inclusion polygon of world.yaml; bounds = T0 grid extent",
+      "source": {
+        "world_yaml": "world_collection/worlds/SC2b_narrow_passage_2m0/world.yaml",
+        "worldgen_version": "1.0.1"
+      }
+    },
+    "connectivity": "4-connected free floor from spawn; not a footprint planner",
+    "unreachable_free_cells": 0,
+    "collision_records": [
+      {
+        "model": "ground_plane",
+        "collision": "ground_collision",
+        "bounds": [
+          [
+            -20.6,
+            -10.1,
+            -0.05
+          ],
+          [
+            20.6,
+            10.1,
+            0.0
+          ]
+        ]
+      },
+      {
+        "model": "SC2b_structure",
+        "collision": "corridor_n_00_col",
+        "bounds": [
+          [
+            -2.8,
+            1.0,
+            0.0
+          ],
+          [
+            2.8,
+            1.2000000000000002,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC2b_structure",
+        "collision": "corridor_s_00_col",
+        "bounds": [
+          [
+            -2.8,
+            -1.2000000000000002,
+            0.0
+          ],
+          [
+            2.8,
+            -1.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC2b_structure",
+        "collision": "e_hall_e_00_col",
+        "bounds": [
+          [
+            18.0,
+            -7.5,
+            0.0
+          ],
+          [
+            18.200000000000003,
+            -5.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC2b_structure",
+        "collision": "e_hall_e_01_col",
+        "bounds": [
+          [
+            18.0,
+            -4.0,
+            0.0
+          ],
+          [
+            18.200000000000003,
+            7.5,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC2b_structure",
+        "collision": "e_hall_lower_w_00_col",
+        "bounds": [
+          [
+            2.8,
+            -7.5,
+            0.0
+          ],
+          [
+            3.0,
+            -1.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC2b_structure",
+        "collision": "e_hall_n_00_col",
+        "bounds": [
+          [
+            2.8000000000000003,
+            7.5,
+            0.0
+          ],
+          [
+            7.5,
+            7.699999999999999,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC2b_structure",
+        "collision": "e_hall_n_01_col",
+        "bounds": [
+          [
+            8.5,
+            7.5,
+            0.0
+          ],
+          [
+            18.2,
+            7.699999999999999,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC2b_structure",
+        "collision": "e_hall_s_00_col",
+        "bounds": [
+          [
+            2.8000000000000007,
+            -7.699999999999999,
+            0.0
+          ],
+          [
+            13.5,
+            -7.5,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC2b_structure",
+        "collision": "e_hall_s_01_col",
+        "bounds": [
+          [
+            14.500000000000002,
+            -7.699999999999999,
+            0.0
+          ],
+          [
+            18.200000000000003,
+            -7.5,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC2b_structure",
+        "collision": "e_hall_upper_w_00_col",
+        "bounds": [
+          [
+            2.8,
+            1.0,
+            0.0
+          ],
+          [
+            3.0,
+            7.5,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC2b_structure",
+        "collision": "recess_l1_a_col",
+        "bounds": [
+          [
+            -13.7,
+            -8.1,
+            0.0
+          ],
+          [
+            -13.5,
+            -7.7,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC2b_structure",
+        "collision": "recess_l1_b_col",
+        "bounds": [
+          [
+            -12.5,
+            -8.1,
+            0.0
+          ],
+          [
+            -12.3,
+            -7.7,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC2b_structure",
+        "collision": "recess_l1_back_col",
+        "bounds": [
+          [
+            -13.5,
+            -8.1,
+            0.0
+          ],
+          [
+            -12.5,
+            -7.9,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC2b_structure",
+        "collision": "recess_l2_a_col",
+        "bounds": [
+          [
+            -18.599999999999998,
+            2.8,
+            0.0
+          ],
+          [
+            -18.2,
+            3.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC2b_structure",
+        "collision": "recess_l2_b_col",
+        "bounds": [
+          [
+            -18.599999999999998,
+            3.9999999999999996,
+            0.0
+          ],
+          [
+            -18.2,
+            4.199999999999999,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC2b_structure",
+        "collision": "recess_l2_back_col",
+        "bounds": [
+          [
+            -18.6,
+            3.0,
+            0.0
+          ],
+          [
+            -18.4,
+            4.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC2b_structure",
+        "collision": "recess_l3_a_col",
+        "bounds": [
+          [
+            7.300000000000001,
+            7.7,
+            0.0
+          ],
+          [
+            7.5,
+            8.1,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC2b_structure",
+        "collision": "recess_l3_b_col",
+        "bounds": [
+          [
+            8.5,
+            7.7,
+            0.0
+          ],
+          [
+            8.7,
+            8.1,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC2b_structure",
+        "collision": "recess_l3_back_col",
+        "bounds": [
+          [
+            7.5,
+            7.9,
+            0.0
+          ],
+          [
+            8.5,
+            8.1,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC2b_structure",
+        "collision": "recess_l4_a_col",
+        "bounds": [
+          [
+            18.2,
+            -5.199999999999999,
+            0.0
+          ],
+          [
+            18.599999999999998,
+            -5.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC2b_structure",
+        "collision": "recess_l4_b_col",
+        "bounds": [
+          [
+            18.2,
+            -4.0,
+            0.0
+          ],
+          [
+            18.599999999999998,
+            -3.8,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC2b_structure",
+        "collision": "recess_l4_back_col",
+        "bounds": [
+          [
+            18.4,
+            -5.0,
+            0.0
+          ],
+          [
+            18.6,
+            -4.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC2b_structure",
+        "collision": "recess_l5_a_col",
+        "bounds": [
+          [
+            13.3,
+            -8.1,
+            0.0
+          ],
+          [
+            13.5,
+            -7.7,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC2b_structure",
+        "collision": "recess_l5_b_col",
+        "bounds": [
+          [
+            14.5,
+            -8.1,
+            0.0
+          ],
+          [
+            14.7,
+            -7.7,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC2b_structure",
+        "collision": "recess_l5_back_col",
+        "bounds": [
+          [
+            13.5,
+            -8.1,
+            0.0
+          ],
+          [
+            14.5,
+            -7.9,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC2b_structure",
+        "collision": "w_hall_lower_e_00_col",
+        "bounds": [
+          [
+            -3.0,
+            -7.5,
+            0.0
+          ],
+          [
+            -2.8,
+            -1.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC2b_structure",
+        "collision": "w_hall_n_00_col",
+        "bounds": [
+          [
+            -18.2,
+            7.5,
+            0.0
+          ],
+          [
+            -2.8,
+            7.699999999999999,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC2b_structure",
+        "collision": "w_hall_s_00_col",
+        "bounds": [
+          [
+            -18.2,
+            -7.699999999999999,
+            0.0
+          ],
+          [
+            -13.5,
+            -7.5,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC2b_structure",
+        "collision": "w_hall_s_01_col",
+        "bounds": [
+          [
+            -12.5,
+            -7.699999999999999,
+            0.0
+          ],
+          [
+            -2.8000000000000007,
+            -7.5,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC2b_structure",
+        "collision": "w_hall_upper_e_00_col",
+        "bounds": [
+          [
+            -3.0,
+            1.0,
+            0.0
+          ],
+          [
+            -2.8,
+            7.5,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC2b_structure",
+        "collision": "w_hall_w_00_col",
+        "bounds": [
+          [
+            -18.200000000000003,
+            -7.5,
+            0.0
+          ],
+          [
+            -18.0,
+            3.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC2b_structure",
+        "collision": "w_hall_w_01_col",
+        "bounds": [
+          [
+            -18.200000000000003,
+            4.0,
+            0.0
+          ],
+          [
+            -18.0,
+            7.5,
+            2.0
+          ]
+        ]
+      }
+    ],
+    "generator_sha256": "5613e07de31429608b7bb91a5d931b4983603c26a7c5bfece3de7a0979f760a0",
+    "tool_versions": {
+      "numpy": "2.4.4",
+      "scipy": "1.17.1",
+      "shapely": "2.1.2",
+      "trimesh": "4.12.2"
+    },
+    "world_yaml": "world_collection/worlds/SC2b_narrow_passage_2m0/world.yaml",
+    "worldgen_version": "1.0.1",
+    "seed": null,
+    "registry_id": "sc2b_narrow_passage_2m0"
+  }
+}

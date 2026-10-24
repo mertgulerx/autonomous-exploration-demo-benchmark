@@ -1,0 +1,516 @@
+{
+  "id": "sc8_zigzag_coverage_v2",
+  "metric_version": 2,
+  "target_margin_m": 0.1,
+  "world": "sc8_zigzag",
+  "spawn": [
+    -13.5,
+    -8.4,
+    0.1,
+    0.0
+  ],
+  "resolution": 0.05,
+  "origin": [
+    -16.2,
+    -11.6,
+    0.0
+  ],
+  "width": 648,
+  "height": 464,
+  "target_cells": 228306,
+  "target_area_m2": 570.7650000000001,
+  "grid_file": "sc8_zigzag.npz",
+  "grid_sha256": "22adfe9262e4b74a5d2af2ab64c9e118425efc98cc166b98c544edf51471138f",
+  "source_sha256": {
+    "world_collection/worlds/SC8_zigzag/SC8_zigzag.sdf": "d7074af3f3a6dfbb65909e4c6ec223f153e216ec042db1f937ef8975405378da",
+    "exploration_benchmark_runner/config/coverage/sc8_zigzag_scenario.yaml": "fd6532fd6d74769262ca8213cedcd17e9470445e37165abd3eade2ea038c2e3c",
+    "simulation/Week-7-8-ROS2-Navigation/bme_ros2_navigation/urdf/mogi_bot.urdf": "11b3a0684efb4f44bd12719f36ed6732b6dbf1d4570ea14580f4e81ba8af263a"
+  },
+  "generation": {
+    "body_height_slab": [
+      0.03,
+      0.35
+    ],
+    "settings": {
+      "bounds": [
+        -16.2,
+        -11.6,
+        16.2,
+        11.6
+      ],
+      "inclusion_polygons": [
+        [
+          [
+            -15.0,
+            -10.4
+          ],
+          [
+            -4.3,
+            -10.4
+          ],
+          [
+            -4.3,
+            -10.1
+          ],
+          [
+            -3.7,
+            -10.1
+          ],
+          [
+            -3.7,
+            -10.4
+          ],
+          [
+            15.0,
+            -10.4
+          ],
+          [
+            15.0,
+            -2.2
+          ],
+          [
+            -11.0,
+            -2.2
+          ],
+          [
+            -11.0,
+            -2.0
+          ],
+          [
+            15.0,
+            -2.0
+          ],
+          [
+            15.0,
+            6.2
+          ],
+          [
+            6.3,
+            6.2
+          ],
+          [
+            6.3,
+            5.9
+          ],
+          [
+            5.7,
+            5.9
+          ],
+          [
+            5.7,
+            6.2
+          ],
+          [
+            -11.0,
+            6.2
+          ],
+          [
+            -11.0,
+            6.4
+          ],
+          [
+            15.0,
+            6.4
+          ],
+          [
+            15.0,
+            10.4
+          ],
+          [
+            5.8,
+            10.4
+          ],
+          [
+            5.8,
+            10.1
+          ],
+          [
+            5.2,
+            10.1
+          ],
+          [
+            5.2,
+            10.4
+          ],
+          [
+            -15.0,
+            10.4
+          ],
+          [
+            -15.0,
+            2.2
+          ],
+          [
+            -2.8,
+            2.2
+          ],
+          [
+            -2.8,
+            2.5
+          ],
+          [
+            -2.2,
+            2.5
+          ],
+          [
+            -2.2,
+            2.2
+          ],
+          [
+            11.0,
+            2.2
+          ],
+          [
+            11.0,
+            2.0
+          ],
+          [
+            3.3,
+            2.0
+          ],
+          [
+            3.3,
+            1.7
+          ],
+          [
+            2.7,
+            1.7
+          ],
+          [
+            2.7,
+            2.0
+          ],
+          [
+            -15.0,
+            2.0
+          ],
+          [
+            -15.0,
+            -6.2
+          ],
+          [
+            -8.8,
+            -6.2
+          ],
+          [
+            -8.8,
+            -5.9
+          ],
+          [
+            -8.2,
+            -5.9
+          ],
+          [
+            -8.2,
+            -6.2
+          ],
+          [
+            11.0,
+            -6.2
+          ],
+          [
+            11.0,
+            -6.4
+          ],
+          [
+            7.8,
+            -6.4
+          ],
+          [
+            7.8,
+            -6.7
+          ],
+          [
+            7.2,
+            -6.7
+          ],
+          [
+            7.2,
+            -6.4
+          ],
+          [
+            -15.0,
+            -6.4
+          ]
+        ]
+      ],
+      "exclusion_polygons": [],
+      "review": "SC8 Zigzag: inclusion polygon of world.yaml; bounds = T0 grid extent",
+      "source": {
+        "world_yaml": "world_collection/worlds/SC8_zigzag/world.yaml",
+        "worldgen_version": "1.0.1"
+      }
+    },
+    "connectivity": "4-connected free floor from spawn; not a footprint planner",
+    "unreachable_free_cells": 0,
+    "collision_records": [
+      {
+        "model": "ground_plane",
+        "collision": "ground_collision",
+        "bounds": [
+          [
+            -17.2,
+            -12.6,
+            -0.05
+          ],
+          [
+            17.2,
+            12.6,
+            0.0
+          ]
+        ]
+      },
+      {
+        "model": "SC8_structure",
+        "collision": "outer_e_00_col",
+        "bounds": [
+          [
+            15.0,
+            -10.4,
+            0.0
+          ],
+          [
+            15.2,
+            10.4,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC8_structure",
+        "collision": "outer_n_00_col",
+        "bounds": [
+          [
+            -15.2,
+            10.4,
+            0.0
+          ],
+          [
+            15.2,
+            10.6,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC8_structure",
+        "collision": "outer_s_00_col",
+        "bounds": [
+          [
+            -15.2,
+            -10.6,
+            0.0
+          ],
+          [
+            15.2,
+            -10.4,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC8_structure",
+        "collision": "outer_w_00_col",
+        "bounds": [
+          [
+            -15.2,
+            -10.4,
+            0.0
+          ],
+          [
+            -15.0,
+            10.4,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC8_structure",
+        "collision": "d1_col",
+        "bounds": [
+          [
+            -15.0,
+            -6.3999999999999995,
+            0.0
+          ],
+          [
+            11.0,
+            -6.2,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC8_structure",
+        "collision": "d2_col",
+        "bounds": [
+          [
+            -11.0,
+            -2.2,
+            0.0
+          ],
+          [
+            15.0,
+            -2.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC8_structure",
+        "collision": "d3_col",
+        "bounds": [
+          [
+            -15.0,
+            2.0,
+            0.0
+          ],
+          [
+            11.0,
+            2.2,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC8_structure",
+        "collision": "d4_col",
+        "bounds": [
+          [
+            -11.0,
+            6.2,
+            0.0
+          ],
+          [
+            15.0,
+            6.3999999999999995,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC8_structure",
+        "collision": "k1_col",
+        "bounds": [
+          [
+            -4.3,
+            -10.4,
+            0.0
+          ],
+          [
+            -3.7,
+            -10.1,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC8_structure",
+        "collision": "k2_col",
+        "bounds": [
+          [
+            7.2,
+            -6.7,
+            0.0
+          ],
+          [
+            7.8,
+            -6.3999999999999995,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC8_structure",
+        "collision": "k3_col",
+        "bounds": [
+          [
+            -8.8,
+            -6.2,
+            0.0
+          ],
+          [
+            -8.2,
+            -5.8999999999999995,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC8_structure",
+        "collision": "k4_col",
+        "bounds": [
+          [
+            2.7,
+            1.7000000000000002,
+            0.0
+          ],
+          [
+            3.3,
+            2.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC8_structure",
+        "collision": "k5_col",
+        "bounds": [
+          [
+            -2.8,
+            2.2,
+            0.0
+          ],
+          [
+            -2.2,
+            2.5,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC8_structure",
+        "collision": "k6_col",
+        "bounds": [
+          [
+            5.7,
+            5.8999999999999995,
+            0.0
+          ],
+          [
+            6.3,
+            6.2,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC8_structure",
+        "collision": "k7_col",
+        "bounds": [
+          [
+            5.2,
+            10.1,
+            0.0
+          ],
+          [
+            5.8,
+            10.4,
+            2.0
+          ]
+        ]
+      }
+    ],
+    "generator_sha256": "5613e07de31429608b7bb91a5d931b4983603c26a7c5bfece3de7a0979f760a0",
+    "tool_versions": {
+      "numpy": "2.4.4",
+      "scipy": "1.17.1",
+      "shapely": "2.1.2",
+      "trimesh": "4.12.2"
+    },
+    "world_yaml": "world_collection/worlds/SC8_zigzag/world.yaml",
+    "worldgen_version": "1.0.1",
+    "seed": null,
+    "registry_id": "sc8_zigzag"
+  }
+}

@@ -529,6 +529,8 @@ class WorkerRuntime:
             goal = self.goals.feedback(
                 native_uuid, feedback.distance_remaining, feedback.number_of_recoveries
             )
+            if goal is not None and goal.new_recoveries:
+                self._recoveries(recorder, goal, feedback.current_pose)
             if not self.debug_streams:
                 return
             row = recorder.row(
@@ -548,6 +550,31 @@ class WorkerRuntime:
             # Feedback of no known goal is always kept; a goal's rows are thinned (goal_facts.py).
             if goal is None or goal.keep_feedback(row["clock_ns"], row):
                 recorder.observation("navigation", row)
+
+    @staticmethod
+    def _recoveries(recorder: Recorder, goal: Goal, pose: Any) -> None:
+        """One ``recovery`` row per count the goal's latest feedback reached first (dataset schema 11).
+
+        Written in every run, with or without debug streams; the time and place are the feedback's
+        robot pose (simulation time, SLAM map frame), so a row lags its recovery's start by at most one
+        feedback period. The caller holds worker.lock.
+        """
+        clock_ns = pose.header.stamp.sec * 10**9 + pose.header.stamp.nanosec
+        p, q = pose.pose.position, pose.pose.orientation
+        yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
+        for count in goal.new_recoveries:
+            row = recorder.row("native_action_feedback", clock_ns, clock_ns=clock_ns)
+            row.update(
+                event="recovery",
+                goal_sequence=goal.sequence,
+                native_uuid=goal.native_uuid,
+                recoveries=count,
+                frame=pose.header.frame_id,
+                x=p.x,
+                y=p.y,
+                yaw=yaw,
+            )
+            recorder.observation("navigation", row)
 
     @staticmethod
     def _goal_ended(recorder: Recorder, goal: Goal, end_clock_ns: int | None) -> None:

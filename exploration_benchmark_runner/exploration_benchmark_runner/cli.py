@@ -24,7 +24,14 @@ import time
 import rclpy
 import yaml
 from exploration_benchmark_interfaces.srv import StartComparison, StartSingleRun
-from .configuration import GAZEBO_SEED, Catalog, Specification, scenario, scenarios
+from .configuration import (
+    GAZEBO_SEED,
+    Catalog,
+    Specification,
+    installed_worlds,
+    scenario,
+    scenarios,
+)
 from .coordinator import Coordinator
 from .coverage import attach_reference
 from .parameters import ros_parameters
@@ -49,7 +56,8 @@ def main():
             raise ValueError("Configuration requires a runs list")
         if "world" not in data:
             raise ValueError("Benchmark YAML must select a world")
-        available = {item["world"] for item in scenarios(args.project_root)}
+        worlds = installed_worlds(args.project_root)
+        available = {item["world"] for item in scenarios(args.project_root, worlds)}
         if not isinstance(data["world"], str) or data["world"] not in available:
             raise ValueError(
                 "Select a supported world: " + ", ".join(sorted(available))
@@ -84,13 +92,15 @@ def main():
         single = len(specs) == 1
         robot_id = args.robot or data.get("robot_id", "mogi")
         robot_overrides = data.get("robot_overrides", {})
-        robot = RobotCatalog().require(robot_id, data["world"], robot_overrides)
+        robot = RobotCatalog(worlds=worlds).require(
+            robot_id, data["world"], robot_overrides
+        )
         specs = Catalog(root=args.project_root).validate(
             specs, limit, comparison=not single, robot=robot
         )
         accepted_scenario = attach_reference(
             str(Path(args.project_root).resolve()),
-            scenario(args.project_root, data["world"]),
+            scenario(args.project_root, data["world"], registry=worlds),
         )
         from exploration_benchmark_robots.preflight import validate_spawn
         from .coverage import Reference

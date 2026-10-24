@@ -35,6 +35,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import yaml
 
+from .data import TIME_EPSILON
 from .export import Export
 
 Row = dict[str, Any]
@@ -130,25 +131,57 @@ def reference_cells(reads: Reads, name: str) -> ReferenceCells | None:
     return ReferenceCells(rows, columns, grid.shape, origin, float(meta["resolution"]))
 
 
-def explored_snapshots(
-    reads: Reads, attempt_id: str
-) -> list[tuple[int | None, npt.NDArray[np.bool_]]]:
+Mask = npt.NDArray[np.bool_]
+# an explored-cell snapshot: (simulation_elapsed_ns, None for a pre-motion one; mask in reference order)
+Snapshot = tuple[int | None, Mask]
+
+
+@dataclass(frozen=True, slots=True)
+class SnapshotChain:
+    """An attempt's decoded explored-cell snapshots in clock order with their clocks (``clock_ns``), the rows
+    the stream holds, and the rows not decoded: ``skipped`` (a broken chain: a change row whose decoded count
+    differs from ``free_cells``, a change row without a preceding keyframe, and the change rows after it until
+    the next keyframe) and ``invalid`` (rows marked ``valid = false``, never decoded)."""
+
+    snapshots: tuple[Snapshot, ...]
+    clocks: tuple[int, ...]
+    rows: int
+    skipped: int
+    invalid: int
+
+
+def explored_chain(reads: Reads, attempt_id: str) -> SnapshotChain | None:
     """An attempt's explored-cell snapshots (the worker's coverage numerator over the reference's target cells,
-    every 5 simulated s and at the end), decoded: (``simulation_elapsed_ns``, None for the pre-motion one; mask in
-    reference order). Keyframes hold the mask, change rows the XOR with the previous snapshot. A decoded mask
-    whose count of free cells differs from the row's ``free_cells`` (a change row lost after it was queued) breaks
-    the chain: it and the following change rows are skipped until the next keyframe, as is a change row without
-    a preceding keyframe."""
+    every 5 simulated s and at the end), decoded, with what was not: None without the stream. Keyframes hold
+    the mask, change rows the XOR with the previous snapshot. A decoded mask whose count of free cells differs
+    from the row's ``free_cells`` (a change row lost after it was queued) breaks the chain: it and the following
+    change rows are skipped until the next keyframe, as is a change row without a preceding keyframe. A row
+    marked invalid is not decoded and breaks the chain the same way."""
     table = reads.raw(
         attempt_id,
         "explored_cells",
-        ["clock_ns", "simulation_elapsed_ns", "kind", "reference_cells", "free_cells", "mask"],
+        [
+            "clock_ns",
+            "simulation_elapsed_ns",
+            "kind",
+            "reference_cells",
+            "free_cells",
+            "mask",
+            "valid",
+        ],
     )
     if table is None:
-        return []
-    found: list[tuple[int | None, npt.NDArray[np.bool_]]] = []
+        return None
+    found: list[Snapshot] = []
+    clocks: list[int] = []
     previous: npt.NDArray[np.bool_] | None = None
-    for row in sorted(table.to_pylist(), key=lambda r: r["clock_ns"]):
+    skipped = invalid = 0
+    rows = sorted(table.to_pylist(), key=lambda r: r["clock_ns"])
+    for row in rows:
+        if row["valid"] is False:
+            invalid += 1
+            previous = None
+            continue
         bits = np.unpackbits(np.frombuffer(row["mask"], dtype=np.uint8))[: row["reference_cells"]]
         data = bits.astype(bool)
         if row["kind"] == "keyframe":
@@ -156,13 +189,23 @@ def explored_snapshots(
         elif previous is not None and previous.size == data.size:
             mask = previous ^ data
         else:
+            skipped += 1
             continue
         if int(np.count_nonzero(mask)) != row["free_cells"]:
             previous = None
+            skipped += 1
             continue
         previous = mask
         found.append((row["simulation_elapsed_ns"], mask))
-    return found
+        clocks.append(int(row["clock_ns"]))
+    return SnapshotChain(tuple(found), tuple(clocks), len(rows), skipped, invalid)
+
+
+def explored_snapshots(reads: Reads, attempt_id: str) -> list[Snapshot]:
+    """An attempt's decoded explored-cell snapshots (``explored_chain``), in clock order; none without the
+    stream."""
+    chain = explored_chain(reads, attempt_id)
+    return [] if chain is None else list(chain.snapshots)
 
 
 Triple = tuple[float, float, float]
@@ -200,3 +243,80 @@ def to_world(alignment: Triple, x: float, y: float) -> tuple[float, float]:
     wx, wy, yaw = alignment
     c, s = math.cos(yaw), math.sin(yaw)
     return wx + c * x - s * y, wy + s * x + c * y
+
+
+GROUND_TRUTH_COLUMNS = [
+    "clock_ns",
+    "simulation_elapsed_ns",
+    "valid",
+    "x",
+    "y",
+    "yaw",
+    "model_to_base_x",
+    "model_to_base_y",
+    "model_to_base_yaw",
+]
+
+
+def model_to_base(reads: Reads, attempt: str) -> Triple | None:
+    """The manifest's model-to-base offset, used for ground-truth rows that do not carry their own."""
+    raw = reads.file(f"raw/{attempt}/manifest.json")
+    if raw is None:
+        return None
+    return finite_triple((json.loads(raw).get("ground_truth_alignment") or {}).get("model_to_base"))
+
+
+@dataclass(frozen=True, slots=True)
+class BasePose:
+    """One valid ground-truth row's robot base position in the world frame: its simulation clock, its time on the
+    movement clock (None before movement onset) and x, y."""
+
+    clock_ns: int
+    t_s: float | None
+    x: float
+    y: float
+
+
+def base_poses(
+    reads: Reads, attempt: str, end_s: float | None, *, pre_motion: bool = False
+) -> list[BasePose] | None:
+    """A run's base positions from the 20 Hz raw ``ground_truth`` rows from movement onset to ``end_s`` (no end
+    with None; with ``pre_motion``, the rows before onset too), in clock order: the Gazebo model pose composed
+    with the row's model-to-base offset (else the manifest's), as the run record's ground-truth path is; invalid
+    rows and rows without a pose or an offset are left out. None without the stream (F17, ``regions``)."""
+    table = reads.raw(attempt, "ground_truth", GROUND_TRUTH_COLUMNS)
+    if table is None:
+        return None
+    rows = sorted(
+        (
+            r
+            for r in table.to_pylist()
+            if (
+                end_s is None or r["simulation_elapsed_ns"] / 1e9 <= end_s + TIME_EPSILON
+                if r["simulation_elapsed_ns"] is not None
+                else pre_motion
+            )
+            and r["valid"]
+            and r["clock_ns"] is not None
+        ),
+        key=lambda r: r["clock_ns"],
+    )
+    fallback: Triple | None = None
+    found: list[BasePose] = []
+    for row in rows:
+        model = finite_triple([row["x"], row["y"], row["yaw"]])
+        offset = finite_triple([row[k] for k in GROUND_TRUTH_COLUMNS[-3:]])
+        if offset is None:
+            fallback = fallback or model_to_base(reads, attempt)
+            offset = fallback
+        if model is None or offset is None:
+            continue
+        # the base pose: the model pose composed with the offset (to_world turns it by the model's yaw)
+        base_x, base_y = to_world(model, offset[0], offset[1])
+        elapsed = row["simulation_elapsed_ns"]
+        found.append(
+            BasePose(
+                int(row["clock_ns"]), None if elapsed is None else elapsed / 1e9, base_x, base_y
+            )
+        )
+    return found

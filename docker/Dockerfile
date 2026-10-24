@@ -84,10 +84,22 @@ RUN /bin/bash -lc "source /opt/ros/${ROS_DISTRO}/setup.bash && \
 RUN /bin/bash -lc "source /opt/ros/${ROS_DISTRO}/setup.bash && \
     CMAKE_BUILD_PARALLEL_LEVEL=2 colcon build --symlink-install --executor sequential --cmake-args -DBUILD_TESTING=OFF"
 
+# E0 moving-object system (world_collection/plugins/moving_objects, plain CMake; COLCON_IGNORE keeps it out of
+# the colcon build). No build type: the project's fixed flags alone, as in its agreement test. Workers launch
+# copies of the worlds, so Gazebo finds the library by its SDF filename on GZ_SIM_SYSTEM_PLUGIN_PATH.
+RUN /bin/bash -c "source /opt/ros/${ROS_DISTRO}/setup.bash && \
+    cmake -S ${WORKSPACE_DIR}/world_collection/plugins/moving_objects -B /opt/benchmark-moving-objects/build \
+    -DMOVING_OBJECTS_LIB_DIR=/opt/benchmark-moving-objects/lib && \
+    CMAKE_BUILD_PARALLEL_LEVEL=2 cmake --build /opt/benchmark-moving-objects/build && \
+    cmake --install /opt/benchmark-moving-objects/build && \
+    rm -rf /opt/benchmark-moving-objects/build"
+ENV GZ_SIM_SYSTEM_PLUGIN_PATH=/opt/benchmark-moving-objects/lib
+
 # References use immutable Fuel versions; prepare the exact geometry before
 # preflight. This starts no simulator and prevents downloads during a benchmark.
+# Without --world it fetches every Fuel model the world registry pins.
 RUN /bin/bash -c "source /opt/ros/${ROS_DISTRO}/setup.bash && \
-    source install/setup.bash && ros2 run exploration_benchmark_runner benchmark_reference fetch --world warehouse \
+    source install/setup.bash && ros2 run exploration_benchmark_runner benchmark_reference fetch \
     --project-root ${WORKSPACE_DIR}"
 
 RUN chmod +x ${WORKSPACE_DIR}/launch.sh ${WORKSPACE_DIR}/docker/entrypoint.sh

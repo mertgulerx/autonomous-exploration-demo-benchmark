@@ -18,9 +18,16 @@ from copy import deepcopy
 import hashlib
 import json
 import math
+import os
 from pathlib import Path
 import xml.etree.ElementTree as ET
 import yaml
+
+
+# The E0 moving-object system (world_collection/plugins/moving_objects) and the ROS topic its pose
+# message is bridged to for the worker's startup check (docs/plans/worlds/I5, open point 1 (a)).
+MOVING_OBJECTS_SYSTEM = "benchmark::MovingObjects"
+MOVING_OBJECTS_TOPIC = "/benchmark/moving_objects/pose"
 
 
 def sha256(path):
@@ -267,6 +274,113 @@ def turtlebot3_sensor_frames(root):
             frame.text = link.get("name")
 
 
+def system_library(filename, search_path=None):
+    """The library Gazebo loads for a system plugin's SDF ``filename``.
+
+    Workers launch a copy of the world, so a system library is found only through
+    GZ_SIM_SYSTEM_PLUGIN_PATH, searched in order like Gazebo does.
+    """
+    if search_path is None:
+        search_path = os.environ.get("GZ_SIM_SYSTEM_PLUGIN_PATH", "")
+    names = [filename, "lib" + filename + ".so", filename + ".so"]
+    for directory in filter(None, search_path.split(os.pathsep)):
+        for name in names:
+            path = Path(directory) / name
+            if path.is_file():
+                return path.resolve()
+    raise ValueError(
+        f"Moving-object system library {filename!r} is not on GZ_SIM_SYSTEM_PLUGIN_PATH"
+    )
+
+
+def moving_objects(scenario, world_root, search_path=None):
+    """Provenance of a world's moving objects: (record, bridge entry), or (None, None).
+
+    The registry entry (``scenario["moving_objects"]``) marks a moving-object world. Its
+    ``world.yaml`` (``scenario["source"]["world_yaml"]``) holds the E0 block, which must agree
+    with the registry entry and with the system plugin element of the world SDF. The record goes
+    into the attempt's manifest, the bridge entry serves the worker's startup check.
+    """
+    entry = scenario.get("moving_objects")
+    if not entry:
+        return None, None
+    if not isinstance(entry, dict):
+        raise ValueError("Registry moving_objects must be a mapping")
+    source = scenario.get("source") or {}
+    path = Path(source.get("world_yaml") or "")
+    if not path.is_absolute() or not path.is_file():
+        raise ValueError(
+            "Moving-object world requires an absolute source.world_yaml: " + str(path)
+        )
+    digest = sha256(path)
+    if source.get("world_yaml_sha256") != digest:
+        raise ValueError(f"world.yaml changed since registration: {path}")
+    block = (yaml.safe_load(path.read_text()) or {}).get("moving_objects")
+    if not isinstance(block, dict) or not isinstance(block.get("objects"), list):
+        raise ValueError(f"world.yaml has no moving_objects block with objects: {path}")
+    ids = [item.get("id") for item in block["objects"] if isinstance(item, dict)]
+    if not ids or len(ids) != len(block["objects"]) or len(set(ids)) != len(ids):
+        raise ValueError(f"world.yaml moving objects need unique ids: {path}")
+    differing = sorted(
+        key for key in entry if key in block and entry[key] != block[key]
+    )
+    if "count" in entry and entry["count"] != len(ids):
+        differing.append("count (objects)")
+    if differing:
+        raise ValueError(
+            "Registry moving_objects disagrees with world.yaml: " + ", ".join(differing)
+        )
+    system = MOVING_OBJECTS_SYSTEM
+    if block.get("system", system) != system:
+        raise ValueError(f"world.yaml moving objects need the {system} system: {path}")
+    plugins = [
+        plugin
+        for plugin in world_root.find("world").findall("plugin")
+        if plugin.get("name") == system
+    ]
+    if len(plugins) != 1:
+        raise ValueError(f"World SDF must declare the {system} system exactly once")
+    plugin = plugins[0]
+    declared = dict(
+        topic=(plugin.findtext("topic") or "").strip(),
+        velocity_mode=(plugin.findtext("velocity_mode") or "").strip(),
+        objects=[
+            (item.findtext("model") or "").strip() for item in plugin.findall("object")
+        ],
+    )
+    expected = dict(
+        topic=block.get("topic"), velocity_mode=block.get("velocity_mode"), objects=ids
+    )
+    differing = sorted(key for key in declared if declared[key] != expected[key])
+    if differing:
+        raise ValueError(
+            "World SDF moving objects disagree with world.yaml: " + ", ".join(differing)
+        )
+    library = system_library(plugin.get("filename", ""), search_path)
+    record = dict(
+        registry=entry,
+        world_yaml=str(path),
+        world_yaml_sha256=digest,
+        block=block,
+        objects=ids,
+        topic=MOVING_OBJECTS_TOPIC,
+        plugin=dict(
+            name=system,
+            filename=plugin.get("filename"),
+            library=str(library),
+            library_sha256=sha256(library),
+        ),
+    )
+    bridge = dict(
+        ros_topic_name=MOVING_OBJECTS_TOPIC,
+        gz_topic_name=block["topic"],
+        ros_type_name="tf2_msgs/msg/TFMessage",
+        gz_type_name="gz.msgs.Pose_V",
+        direction="GZ_TO_ROS",
+    )
+    return record, bridge
+
+
 def spawn_pose(profile, scenario):
     """Resolve only height; benchmark XY/yaw and MOGI's pose stay unchanged."""
     pose = list(scenario["spawn"])
@@ -318,6 +432,11 @@ def prepare(profile, scenario, directory, lookup=None):
         spawn_pose=spawn_pose(profile, scenario),
         directory=str(directory),
     )
+    movers, mover_bridge = moving_objects(scenario, world.getroot())
+    if movers:
+        # Recorded with or without diagnostics; worlds without movers record nothing new.
+        generated["moving_objects"] = movers
+        bridge.append(mover_bridge)
     family = profile["adapter"]
     if family == "mogi":
         description = xacro.process_file(str(baseline / "urdf/mogi_bot.urdf")).toxml()

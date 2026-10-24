@@ -20,7 +20,10 @@ temporary name and renamed when complete; an existing one is never overwritten, 
 both (once the outputs are complete, a stop is ignored and the run finishes). A relative ``--out`` is relative to
 the working directory. A refusal of a study export writes ``<study>/analysis/refused-<version>-<hash8>.json`` beside where the outputs would have gone (RO-22: the
 reason, the column whose values differ, the stratum and each value's runs); a later run of that version on
-that export that finishes removes it.
+that export that finishes removes it. The family estimates (``families.family_estimates``, plans/worlds/I6 §3.8)
+run with the study's load, before any directory is made: their refusals (families declared on an export without
+world metadata, a mismatched factor, runs of one family that mix robot, code, SLAM configuration, time-limit rule,
+registry or generator version) are written the same way, with the family or contrast as the stratum.
 
 ``--coding`` names the researcher's coding of runs against the plan's taxonomy (FIGURE_EXTENSION FX-19,
 ``taxonomy.read_coding``); it is never part of the export: its SHA-256, coder, procedure and number of codes are
@@ -48,6 +51,7 @@ from .data import load
 from .environment import environment
 from .errors import Refused
 from .export import Export, file_sha256, open_export
+from .families import family_estimates
 from .outputs import json_text, views_document, write_all
 from .settings import settings
 from .style import PRESETS
@@ -124,6 +128,8 @@ def _analyse(
             kept=False,
         )
     study = load(export)
+    # the family estimates' refusals (plans/worlds/I6 §3.8) are the study's, as data.load's: no directory is made
+    family = family_estimates(study, config)
     if coding is not None:
         check_runs(coding, study)  # a refused coding file leaves no directory behind
     target.parent.mkdir(parents=True, exist_ok=True)
@@ -142,7 +148,15 @@ def _analyse(
         if coding is not None:
             log(f"coding file {coding.sha256[:8]}: {len(coding.codes)} runs coded")
         for warning in write_all(
-            export, config, staging, preset=preset, sans=sans, log=log, coding=coding, study=study
+            export,
+            config,
+            staging,
+            preset=preset,
+            sans=sans,
+            log=log,
+            coding=coding,
+            study=study,
+            family=family,
         ):
             log(f"warning: {warning}")
         listing = {

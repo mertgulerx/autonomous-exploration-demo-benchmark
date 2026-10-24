@@ -44,7 +44,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from . import gui_icons
 from .gui_analysis import Jobs
 from .gui_cells import MONO_TEXT, ColumnStyle, OverlayScrollBar, TableLook, style_table
-from .gui_controls import BadgeLook, StatusBadge
+from .gui_controls import BadgeLook, KeySelect, StatusBadge
 from .gui_dialogs import wrap_text
 from .gui_marks import KeyValue, KeyValueList
 from .gui_pdf import Well
@@ -99,8 +99,10 @@ def export_hash(name: str) -> str | None:
 class OutputKind:
     """One row of the output list (RO-23): fixed files, or a family of files chosen in the viewer head
     (``variants``, a file-name prefix) with ``then`` shown under the chosen one. ``labels`` names the variants
-    (a view's ``variant_labels``; ``VARIANT_NAMES`` otherwise); ``runs`` is False for a view with no runs behind
-    it (a schematic), shown without an n line and without "Runs behind it"."""
+    (a view's ``variant_labels``; ``VARIANT_NAMES`` otherwise) and ``order`` orders them (a grouped view's
+    ``variant_order``: fixed label, world group, page; by name without it, as older analyses list them);
+    ``runs`` is False for a view with no runs behind it (a schematic), shown without an n line and without "Runs
+    behind it"."""
 
     code: str
     name: str
@@ -110,6 +112,9 @@ class OutputKind:
     then: tuple[str, ...] = ()
     labels: tuple[tuple[str, str], ...] = ()
     runs: bool = True
+    order: tuple[str, ...] = ()
+    # a grouped view's ``variant_groups`` (analysis.json), when the analysis writes them
+    groups: tuple[tuple[str, "VariantGroup"], ...] = ()
 
     @property
     def is_stats(self) -> bool:
@@ -124,9 +129,14 @@ class OutputKind:
     def variant_files(self, outputs: Mapping[str, str]) -> list[str]:
         if not self.variants:
             return []
-        return sorted(
+        files = sorted(
             name for name in outputs if name.startswith(self.variants) and name.endswith(".pdf")
         )
+        if not self.order:
+            return files
+        rank = {variant: index for index, variant in enumerate(self.order)}
+        # variants the order does not name follow it, by name
+        return sorted(files, key=lambda f: rank.get(variant_of(self, f), len(rank)))
 
     def variant_label(self, key: str) -> str:
         return dict(self.labels).get(key) or VARIANT_NAMES.get(key, key)
@@ -173,6 +183,52 @@ VARIANT_NAMES = {
 def variant_of(kind: OutputKind, file: str) -> str:
     """ "R_90" of ``figures/F2_R_90.pdf``."""
     return file.removeprefix(kind.variants).removesuffix(".pdf")
+
+
+@dataclass(frozen=True, slots=True)
+class VariantGroup:
+    """Where a grouped view's variant belongs (plans/worlds/I8 §3.1): its base variant (``R_25``; empty for a
+    view of fixed files such as F1), and the world group (``key``, its section ``index``, ``title``) and page."""
+
+    base: str
+    key: str
+    index: int
+    page: int
+    pages: int
+    title: str
+    base_label: str = ""
+
+    @property
+    def label(self) -> str:
+        """The group dropdown's entry: "Single challenge", "Single challenge · page 1 of 2"."""
+        return self.title if self.pages <= 1 else f"{self.title} · page {self.page} of {self.pages}"
+
+
+def variant_group(value: Any, stem: str) -> VariantGroup | None:
+    """A ``variant_groups`` entry of analysis.json, or a figure sidecar's ``group`` object, as a VariantGroup;
+    None when malformed. A sidecar names its base by the ungrouped variant (``variant``: "F2_R_25"), from which
+    ``stem`` ("F2_", the view's file prefix) is removed, as the analysis package does (``views_document``)."""
+    if not isinstance(value, Mapping):
+        return None
+    key, title = value.get("key"), value.get("title")
+    numbers = [value.get(name) for name in ("index", "page", "pages")]
+    if not isinstance(key, str) or not isinstance(title, str):
+        return None
+    integers = [n for n in numbers if isinstance(n, int) and not isinstance(n, bool)]
+    if len(integers) != 3:
+        return None
+    if isinstance(value.get("base"), str):
+        base = str(value["base"])
+    elif isinstance(value.get("variant"), str):
+        ungrouped = str(value["variant"])
+        base = ungrouped.removeprefix(stem) if stem and ungrouped.startswith(stem) else ""
+    else:
+        return None
+    label = value.get("base_label")
+    index, page, pages = integers
+    return VariantGroup(
+        base, key, index, page, pages, title, label if isinstance(label, str) else ""
+    )
 
 
 # a view's kind and its default icon
@@ -222,6 +278,17 @@ def view_kind(entry: Any, index: int) -> OutputKind:
         raise ViewError(f"{code}: variant_labels malformed")
     if not isinstance(runs, bool):
         raise ViewError(f"{code}: runs is not true or false")
+    order = _strings(entry.get("variant_order", []), f"{code}: variant_order")
+    raw_groups = entry.get("variant_groups", {})
+    if not isinstance(raw_groups, Mapping):
+        raise ViewError(f"{code}: variant_groups malformed")
+    stem = variants.rsplit("/", 1)[-1]
+    groups = []
+    for variant, value in raw_groups.items():
+        group = variant_group(value, stem)
+        if not isinstance(variant, str) or group is None:
+            raise ViewError(f"{code}: variant_groups malformed")
+        groups.append((variant, group))
     kind = entry.get("kind")
     if not isinstance(kind, str) or kind not in VIEW_KINDS:
         LOG.warning("analysis.json views[%d]: %s: kind %r shown as chart", index, code, kind)
@@ -232,7 +299,18 @@ def view_kind(entry: Any, index: int) -> OutputKind:
         LOG.warning(
             "analysis.json views[%d]: %s: icon %r replaced by %r", index, code, unknown, icon
         )
-    return OutputKind(code, title, icon, files, variants, then, tuple(sorted(labels.items())), runs)
+    return OutputKind(
+        code,
+        title,
+        icon,
+        files,
+        variants,
+        then,
+        tuple(sorted(labels.items())),
+        runs,
+        order,
+        tuple(sorted(groups)),
+    )
 
 
 def kinds_from_views(views: Any) -> tuple[OutputKind, ...] | None:
@@ -1043,11 +1121,14 @@ class Caption(Themed):
 
 
 class ViewerCard(Card):
-    """``.card.vw``: the head (title, a muted note, the endpoint, effect or world choice, the file and Open file),
-    the n line, the view and "Runs behind it"."""
+    """``.card.vw``: the head (title, a muted note, the endpoint, effect or world choice, a grouped study's world
+    group, the file and Open file), the n line, the view and "Runs behind it"."""
 
     variant_changed = QtCore.Signal(int)
+    group_changed = QtCore.Signal(int)
     open_file = QtCore.Signal()
+
+    GROUP_WIDTH = 260  # at most; "F3 Warehouse aisles · page 1 of 2" fits
 
     def __init__(self, themes: ThemeManager, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(themes, parent)
@@ -1058,6 +1139,14 @@ class ViewerCard(Card):
         self.choice_holder = QtWidgets.QWidget()
         self.choice: SegmentedControl | None = None
         self.head.add(self.choice_holder)
+        # A grouped study's world group and page (plans/worlds/I8 §3.1), beside the variant choice.
+        self.group = KeySelect(themes)
+        self.group.setAccessibleName("World group")
+        self.group.setFixedWidth(self.GROUP_WIDTH)
+        self.group.currentIndexChanged.connect(self._group_picked)
+        self.head.row.add(self.group, width=self.GROUP_WIDTH)
+        self.group.hide()
+        self._filling = False
         self.file = TextLine(themes, "", MONO_TEXT, "text.secondary")
         self.head.add(self.file, gap=16)
         self.open = Button(themes, "Open file", icon="aupright", variant="ghost", small=True)
@@ -1074,8 +1163,41 @@ class ViewerCard(Card):
         self.chips = Chips(themes, self)
         self.mode = PDF
 
+    def _group_picked(self, index: int) -> None:
+        if not self._filling and index >= 0:
+            self.group_changed.emit(index)
+
+    def set_groups(self, groups: Sequence[str], index: int) -> None:
+        """The world group dropdown's entries (none: hidden)."""
+        self._filling = True
+        try:
+            if [self.group.itemText(i) for i in range(self.group.count())] != list(groups):
+                self.group.clear()
+                self.group.addItems(list(groups))
+            self.group.setCurrentIndex(index if 0 <= index < len(groups) else 0)
+        finally:
+            self._filling = False
+        self.group.setVisible(bool(groups))
+        if groups:  # as wide as its longest entry, at most GROUP_WIDTH
+            width = min(self.group.sizeHint().width(), self.GROUP_WIDTH)
+            self.group.setFixedWidth(width)
+            self.head.row.set_width(self.group, width)
+            # The file name gives way to the dropdown so the title keeps its room; Open file names it.
+            self.file.setVisible(False)
+            self.open.setToolTip(self.file.text())
+        else:
+            self.open.setToolTip("")
+        self.head.row.relayout()
+
     def set_head(
-        self, title: str, note: str, file: str, choices: Sequence[str], index: int
+        self,
+        title: str,
+        note: str,
+        file: str,
+        choices: Sequence[str],
+        index: int,
+        groups: Sequence[str] = (),
+        group_index: int = 0,
     ) -> None:
         self.head.title.setText(title)
         self.note.setText(note)
@@ -1098,7 +1220,7 @@ class ViewerCard(Card):
             self.choice_holder.setFixedSize(width, 32)
             self.head.row.set_width(self.choice_holder, width)
         self.choice_holder.setVisible(bool(choices))
-        self.head.row.relayout()
+        self.set_groups(groups, group_index)
 
     def set_mode(self, mode: int, *, runs: bool = True) -> None:
         """Show ``mode``'s view; a view without runs behind it (``runs`` False) has no n line and no chips."""
@@ -1180,6 +1302,7 @@ class StudyTab(QtWidgets.QWidget):
         self.variants: dict[
             str, str
         ] = {}  # kind code -> chosen variant ("R_90"), kept across analyses
+        self.head_grouped = False  # the shown head has the world group dropdown
         self.worlds: list[str] = []
         self.world = 0  # the traces' stratum, an index into strata()
         self.stratum: dict[
@@ -1206,6 +1329,7 @@ class StudyTab(QtWidgets.QWidget):
         self.card.list.chosen.connect(self.choose)
         self.card.facts.acted.connect(self._show_log)
         self.viewer.variant_changed.connect(self._variant)
+        self.viewer.group_changed.connect(self._group)
         self.viewer.open_file.connect(self._open_file)
         self.viewer.chips.opened.connect(self.opened.emit)
         self.viewer.traces.chart.opened.connect(self._open_attempt)
@@ -1395,6 +1519,26 @@ class StudyTab(QtWidgets.QWidget):
         files = self._files(kind)
         return self.analysis.sidecars.get(sidecar_of(files[0])) if files else None
 
+    def _grouping(self, kind: OutputKind) -> dict[str, VariantGroup] | None:
+        """A grouped view's variants (file -> group) in its order, from analysis.json's ``variant_groups``, else
+        from each figure's sidecar ``group``; None for an ungrouped view, or while a sidecar is still unread
+        (the head then lists the variants as before and is rebuilt when the last one arrives)."""
+        variants = kind.variant_files(self.analysis.outputs)
+        if not kind.order or not variants:
+            return None
+        declared = dict(kind.groups)
+        stem = kind.variants.rsplit("/", 1)[-1]
+        found: dict[str, VariantGroup] = {}
+        for file in variants:
+            group = declared.get(variant_of(kind, file))
+            if group is None:
+                sidecar = self.analysis.sidecars.get(sidecar_of(file))
+                group = variant_group((sidecar or {}).get("group"), stem)
+            if group is None:
+                return None
+            found[file] = group
+        return found
+
     def _files(self, kind: OutputKind) -> list[str]:
         """The files the kind's view shows: the chosen variant and what goes under it, or its fixed files."""
         outputs = self.analysis.outputs
@@ -1402,7 +1546,12 @@ class StudyTab(QtWidgets.QWidget):
         if variants:
             keys = [variant_of(kind, f) for f in variants]
             wanted = self.variants.get(kind.code, "R_90")
-            chosen = variants[keys.index(wanted) if wanted in keys else 0]
+            if wanted in keys:
+                chosen = variants[keys.index(wanted)]
+            else:  # the default: R_90 (in a grouped view its first group), else the first in order
+                grouping = self._grouping(kind) or {}
+                matching = [f for f in variants if f in grouping and grouping[f].base == wanted]
+                chosen = matching[0] if matching else variants[0]
             return [chosen, *[f for f in kind.then if f in outputs]]
         return [f for f in kind.files if f in outputs]
 
@@ -1443,6 +1592,14 @@ class StudyTab(QtWidgets.QWidget):
             )
             if files and sidecar_of(files[0]) == path:
                 self._show_counts()
+            kind_now = self.kinds[self.current] if 0 <= self.current < len(self.kinds) else None
+            if (
+                kind_now is not None
+                and kind_now.order
+                and not self.head_grouped
+                and self._grouping(kind_now) is not None
+            ):  # the view's last sidecar arrived: its head gets the group dropdown
+                self._open_view()
         elif kind == "refusal":
             self.analysis.refusal = _json(result.get("text")) or None
             self.refresh_card()
@@ -1585,9 +1742,62 @@ class StudyTab(QtWidgets.QWidget):
             self.stratum = strata[index][1] if 0 <= index < len(strata) else {}
         else:
             files = kind.variant_files(self.analysis.outputs)
-            if 0 <= index < len(files):
+            grouping = self._grouping(kind)
+            if grouping is not None:
+                # A base variant: the current group and page when it has them, else its first in order.
+                bases = list(dict.fromkeys(group.base for group in grouping.values()))
+                if not 0 <= index < len(bases):
+                    return
+                current = grouping[self._files(kind)[0]]
+                same = [f for f in files if grouping[f].base == bases[index]]
+                place = (current.key, current.page)
+                chosen = next(
+                    (f for f in same if (grouping[f].key, grouping[f].page) == place), same[0]
+                )
+                self.variants[kind.code] = variant_of(kind, chosen)
+            elif 0 <= index < len(files):
                 self.variants[kind.code] = variant_of(kind, files[index])
         self._open_view()
+
+    def _group(self, index: int) -> None:
+        """A world group and page: the current base variant in that group."""
+        if not 0 <= self.current < len(self.kinds):
+            return
+        kind = self.kinds[self.current]
+        grouping = self._grouping(kind)
+        if grouping is None:
+            return
+        base = grouping[self._files(kind)[0]].base
+        same = [f for f in kind.variant_files(self.analysis.outputs) if grouping[f].base == base]
+        if 0 <= index < len(same):
+            self.variants[kind.code] = variant_of(kind, same[index])
+            self._open_view()
+
+    def _head_choices(
+        self, kind: OutputKind, files: Sequence[str]
+    ) -> tuple[list[str], int, list[str], int]:
+        """The variant choice and the world group dropdown of a view: for a grouped view the base variants
+        (none for a view of fixed files) and the current base's groups and pages, in the analysis's order;
+        otherwise every variant and no dropdown."""
+        variants = kind.variant_files(self.analysis.outputs)
+        grouping = self._grouping(kind)
+        if grouping is None or not files or files[0] not in grouping:
+            choices = [kind.variant_label(variant_of(kind, f)) for f in variants]
+            index = variants.index(files[0]) if files and files[0] in variants else 0
+            return choices, index, [], 0
+        current = grouping[files[0]]
+        bases = list(dict.fromkeys(group.base for group in grouping.values()))
+        labels = {
+            g.base: g.base_label or VARIANT_NAMES.get(g.base, g.base) for g in grouping.values()
+        }
+        choices = [labels[b] for b in bases] if any(bases) else []
+        same = [f for f in variants if grouping[f].base == current.base]
+        return (
+            choices,
+            bases.index(current.base),
+            [grouping[f].label for f in same],
+            same.index(files[0]),
+        )
 
     def _open_view(self) -> None:
         kind = self.kinds[self.current]
@@ -1626,12 +1836,12 @@ class StudyTab(QtWidgets.QWidget):
             self._request_traces()
             return
         files = self._files(kind)
-        variants = kind.variant_files(self.analysis.outputs)
-        choices = [kind.variant_label(variant_of(kind, f)) for f in variants]
+        choices, index, groups, group_index = self._head_choices(kind, files)
         sidecar = self.analysis.sidecars.get(sidecar_of(files[0])) if files else None
         title = self._title(kind, files, sidecar)
-        index = variants.index(files[0]) if files and files[0] in variants else 0
-        viewer.set_head(title, "", Path(files[0]).name if files else "", choices, index)
+        file = Path(files[0]).name if files else ""
+        viewer.set_head(title, "", file, choices, index, groups, group_index)
+        self.head_grouped = bool(groups)
         self.view_files = files
         if kind.is_stats:
             viewer.set_mode(STATS, runs=kind.runs)
@@ -1658,6 +1868,19 @@ class StudyTab(QtWidgets.QWidget):
     def _title(
         self, kind: OutputKind, files: Sequence[str], sidecar: Mapping[str, Any] | None
     ) -> str:
+        grouping = self._grouping(kind) if kind.variants and files else None
+        if (
+            grouping is not None and files[0] in grouping
+        ):  # the group shows in the dropdown, not the title
+            group = grouping[files[0]]
+            if not group.base:
+                return f"{kind.code} · {kind.name}"
+            label = group.base_label or VARIANT_NAMES.get(group.base, group.base)
+            if kind.code == "F2/T3":
+                return "F2 / T3 · Attainment of " + (
+                    f"{label} coverage" if label.endswith("%") else label.lower()
+                )
+            return f"{kind.code} · {kind.name} · {label}"
         if kind.variants and files:
             label = kind.variant_label(variant_of(kind, files[0]))
             if kind.code == "F2/T3":

@@ -19,15 +19,22 @@ import hashlib
 import json
 import math
 import re
-from typing import Any, Literal, Mapping
+from typing import Any, Literal, Mapping, TypedDict
 
 PROTOCOL_VERSION = 2  # 2: reports.generate removed (RESULTS_OVERHAUL R7)
 # Versions whose requests mean the same here (2 only removed a method): the engine accepts both, and a client
 # falls back to 1 for an engine image built before R7 (it may still run a campaign while the GUI is newer).
 COMPATIBLE_PROTOCOLS = frozenset({1, 2})
-DATASET_VERSION = 10  # 10: receipt clock, odom_aligned_* names, goal_facts (RESULTS_OVERHAUL R2)
+# 10: receipt clock, odom_aligned_* names, goal_facts (RESULTS_OVERHAUL R2); 11: `navigation` rows with
+# event "recovery" (world integration I5; no Arrow field changed)
+DATASET_VERSION = 11
 GAZEBO_SEED = 1234
 DEFAULT_LIMIT = 1800.0
+# Time-limit rules a campaign may name (``time_limit_rule``; I4 §3.3); CampaignSpec.accepted is the one
+# check. Must contain exploration_benchmark_runner.time_limits.TIME_LIMIT_RULE, the rule that
+# Library.resolve_campaign computes (not imported: the GUI loads this module without the runner).
+TIME_LIMIT_RULE = "kinematic-time-limit-v1"
+TIME_LIMIT_RULES = frozenset({TIME_LIMIT_RULE})
 NO_MOVEMENT_LIMIT = 180.0
 HIDDEN_GROUPS = frozenset({"Suppression", "QoS", "Visualization", "Benchmark Integration"})
 # Most campaigns or profiles one deletion request may name; the GUI checks the same bounds.
@@ -170,6 +177,88 @@ def resolve_world_time_limits(
     )
 
 
+class RuleValue(TypedDict):
+    """One rule value of a robot in a world: the catalog's ``rule_time_limits`` entries and the accepted
+    specification's ``time_limit_inputs`` entries (I4 §3.3)."""
+
+    seconds: int
+    uncapped_seconds: int
+    capped: bool
+    area_m2: float
+    range_m: float
+    speed_mps: float
+
+
+RULE_VALUE_FIELDS = tuple(RuleValue.__annotations__)
+
+
+def resolve_time_limit_inputs(
+    value: Any,
+    limits: Iterable[tuple[str, float]],
+    retained: set[tuple[str, str]],
+    *,
+    rule: str | None,
+) -> str | None:
+    """The ``time_limit_inputs`` (world -> robot -> RuleValue) as canonical JSON, checked against the
+    campaign: present exactly with a rule, one entry per selected world naming exactly the robots with a
+    retained combination in it (``retained``: (robot, world) pairs), no capped pair (I4 open point 2 (a)),
+    one limit per world, equal to ``world_time_limits``. ``Library.resolve_campaign`` computes the values;
+    a stored specification (restart) is checked as stored. The one place these refusals live."""
+    if rule is None:
+        if value is not None:
+            raise ContractError(
+                "time_limit_inputs", "Only a campaign with time_limit_rule has them"
+            )
+        return None
+    worlds = mapping(value, "time_limit_inputs")
+    expected = dict(limits)
+    if set(worlds) != set(expected):
+        raise ContractError("time_limit_inputs", "Give the rule's inputs for every selected world")
+    for world, robots in worlds.items():
+        field = "time_limit_inputs." + world
+        running = {robot for robot, used in retained if used == world}
+        if not running:
+            raise ContractError(
+                "worlds." + world, f"Every combination of {world} is excluded; remove the world"
+            )
+        if set(mapping(robots, field)) != running:
+            raise ContractError(
+                field,
+                "Give the rule's values of the robots that run it: " + ", ".join(sorted(running)),
+            )
+        for robot, entry in robots.items():
+            where = f"{field}.{robot}"
+            if set(mapping(entry, where)) != set(RULE_VALUE_FIELDS):
+                raise ContractError(where, "Expected " + ", ".join(RULE_VALUE_FIELDS))
+            seconds = integer(entry["seconds"], where + ".seconds", 1, 2**31 - 1)
+            uncapped = integer(entry["uncapped_seconds"], where + ".uncapped_seconds", 1, 2**31 - 1)
+            if entry["capped"] is not False:
+                raise ContractError(
+                    "compatibility",
+                    f"{robot} in {world}: limit above the {seconds} s cap ({uncapped} s uncapped); "
+                    "exclude this combination (decision 10)",
+                )
+            if uncapped != seconds:
+                raise ContractError(where, "Below the cap, the uncapped value is the limit")
+            for key in ("area_m2", "range_m", "speed_mps"):
+                if number(entry[key], f"{where}.{key}") <= 0:
+                    raise ContractError(f"{where}.{key}", "Expected a positive number")
+        found = {robot: entry["seconds"] for robot, entry in robots.items()}
+        if len(set(found.values())) > 1:
+            listed = ", ".join(f"{robot} {seconds} s" for robot, seconds in found.items())
+            raise ContractError(
+                "world_time_limits." + world,
+                f"The rule gives {world} different limits ({listed}); split the campaign by robot",
+            )
+        seconds = next(iter(found.values()))
+        if seconds != expected[world]:
+            raise ContractError(
+                "world_time_limits." + world,
+                f"{world}: {expected[world]:g} s differs from the rule's {seconds} s ({rule})",
+            )
+    return canonical(worlds)
+
+
 @dataclass(frozen=True, slots=True)
 class Profile:
     id: str
@@ -304,6 +393,10 @@ class CampaignSpec:
     debug_streams: bool = False
     # The Default profile's parameter hash per robot, set at submission (``is_baseline`` in run records).
     default_parameter_hashes: tuple[tuple[str, str], ...] = ()
+    # ``time_limit_rule`` and its stored inputs (canonical JSON, world -> robot -> RULE_VALUE_FIELDS; I4 §3.3):
+    # set at submission and kept as stored by a restarted copy.
+    time_limit_rule: str | None = None
+    time_limit_inputs_json: str | None = None
 
     @classmethod
     def accepted(cls, value: dict[str, Any]) -> "CampaignSpec":
@@ -323,6 +416,8 @@ class CampaignSpec:
                 "study",
                 "debug_streams",
                 "default_parameter_hashes",
+                "time_limit_rule",
+                "time_limit_inputs",
             },
             "campaign",
         )
@@ -373,6 +468,21 @@ class CampaignSpec:
         description = value.get("description", "")
         if not isinstance(description, str) or len(description) > 10000:
             raise ContractError("description", "Use at most 10000 characters")
+        rule = value.get("time_limit_rule")
+        if rule is not None and (not isinstance(rule, str) or rule not in TIME_LIMIT_RULES):
+            raise ContractError("time_limit_rule", "Use " + ", ".join(sorted(TIME_LIMIT_RULES)))
+        if rule is not None and "time_limit" in value:
+            raise ContractError(
+                "time_limit", "The rule sets each world's limit; remove the global time_limit"
+            )
+        limits = resolve_world_time_limits(value, (world for world, _ in worlds))
+        skipped = set(excluded)
+        retained = {
+            (r, w)
+            for r, _ in robots
+            for w, spawns in worlds
+            if any((r, w, s.id) not in skipped for s in spawns)
+        }
         spec = cls(
             text(value.get("name"), "name"),
             description,
@@ -380,7 +490,7 @@ class CampaignSpec:
             tuple(sorted(worlds)),
             integer(value.get("repetitions", 1), "repetitions", 1, 2**31 - 1),
             integer(value.get("concurrency", 1), "concurrency", 1, 4),
-            resolve_world_time_limits(value, (world for world, _ in worlds)),
+            limits,
             tuple(sorted(excluded)),
             text(value["source_campaign_id"], "source_campaign_id")
             if value.get("source_campaign_id") is not None
@@ -390,6 +500,10 @@ class CampaignSpec:
             else None,
             debug_streams=debug_streams,
             default_parameter_hashes=tuple(sorted(hashes.items())),
+            time_limit_rule=rule,
+            time_limit_inputs_json=resolve_time_limit_inputs(
+                value.get("time_limit_inputs"), limits, retained, rule=rule
+            ),
         )
         if not spec.count:
             raise ContractError("exclusions", "All selected combinations are excluded")
@@ -423,6 +537,14 @@ class CampaignSpec:
             **(
                 {"default_parameter_hashes": dict(self.default_parameter_hashes)}
                 if self.default_parameter_hashes
+                else {}
+            ),
+            **(
+                {
+                    "time_limit_rule": self.time_limit_rule,
+                    "time_limit_inputs": json.loads(self.time_limit_inputs_json or "{}"),
+                }
+                if self.time_limit_rule
                 else {}
             ),
         }

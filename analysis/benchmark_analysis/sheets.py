@@ -17,7 +17,9 @@
 The sheet is what the Study tab shows and a paper-format preview of the table: the title above ("TABLE <name>"),
 booktabs rules (top, middle, bottom; space between groups, no vertical rules), a repeated first-column value
 written once per group, numeric columns right-aligned, headers wrapped to their column, the cells of a wrapping
-column (``Table.wrap_column``, T9's definitions) wrapped at ``WRAP_PT``, the notes below. It is set
+column (``Table.wrap_column``, T9's definitions) wrapped at ``WRAP_PT``, the notes below. A grouped table
+(``Table.group_titles``: column 0 holds each row's group key) gets a heading row per group, its title in italics
+after a rule, instead of the key column, as its LaTeX does (plans/worlds/I8 §3.1). It is set
 at 8 pt in the preset's font at the journal's double-column width; a table too wide for it is set smaller, never
 below 7 pt (FIGURE_STYLE §2), and only then gets a wider page, which ``check_pdf`` reports.
 """
@@ -166,13 +168,37 @@ def _without_empty_counts(table: Table) -> Table:
         table.attempt_ids,
         wrap_column=None if table.wrap_column is None else keep.index(table.wrap_column),
         extra=table.extra,
+        group_titles=table.group_titles,
     )
+
+
+def _headings(table: Table) -> tuple[Table, list[str | None]]:
+    """A grouped table without its key column, and per row the title of the group it opens (None for a row
+    inside a group); an ungrouped table as it is, with no headings."""
+    if not table.group_titles:
+        return table, [None] * len(table.rows)
+    headings: list[str | None] = []
+    previous = None
+    for row in table.rows:
+        headings.append(table.group_titles.get(row[0], row[0]) if row[0] != previous else None)
+        previous = row[0]
+    body = Table(
+        table.name,
+        table.title,
+        table.columns[1:],
+        [row[1:] for row in table.rows],
+        table.notes,
+        table.attempt_ids,
+        wrap_column=None if table.wrap_column is None else table.wrap_column - 1,
+        extra=table.extra,
+    )
+    return body, headings
 
 
 def sheet(table: Table, preset: str) -> tuple[Figure, float]:
     """The table on a page of the preset's double-column width (or wider when even 7 pt does not fit); returns
     the figure and the width it was meant to have, for ``check_pdf``."""
-    table = _without_empty_counts(table)
+    table, headings = _headings(_without_empty_counts(table))
     measure = Measure()
     target = PRESETS[preset].widths_mm["double"] / MM_PER_INCH * POINTS_PER_INCH
     layout = next(
@@ -187,7 +213,12 @@ def sheet(table: Table, preset: str) -> tuple[Figure, float]:
     row = layout.size * ROW_FACTOR
     notes = _note_lines(table.notes, page_width - 2 * MARGIN_PT, measure)
     header_rows = max(len(h) for h in layout.headers)
-    groups = sum(1 for i, r in enumerate(table.rows) if i and r[0] != table.rows[i - 1][0])
+    groups = sum(
+        1
+        for i, r in enumerate(table.rows)
+        if i and r[0] != table.rows[i - 1][0] and headings[i] is None
+    )
+    titles = sum(1 for heading in headings if heading is not None)
     wrapped = _row_lines(table, layout, measure)
     body_lines = sum(1 if lines is None else len(lines) for lines in wrapped)
     height = (
@@ -196,11 +227,15 @@ def sheet(table: Table, preset: str) -> tuple[Figure, float]:
         + row * header_rows
         + row * body_lines
         + groups * row * 0.35
+        + titles * row  # heading rows
+        + max(0, titles - 1) * row * 0.25  # the rule and space above a heading after a group
         + 8.0  # rules and their padding
         + (NOTE_PT * ROW_FACTOR * len(notes) + 4.0 if notes else 0.0)
         + MARGIN_PT
     )
-    figure = _draw(table, layout, notes, page_width, height, header_rows, measure, wrapped)
+    figure = _draw(
+        table, layout, notes, page_width, height, header_rows, measure, wrapped, headings
+    )
     return figure, target
 
 
@@ -213,6 +248,7 @@ def _draw(
     header_rows: int,
     measure: Measure,
     wrapped: list[list[str] | None],
+    headings: list[str | None],
 ) -> Figure:
     """Place every text and rule; coordinates are points from the page's top-left corner."""
     size, row = layout.size, layout.size * ROW_FACTOR
@@ -222,7 +258,14 @@ def _draw(
     figure.patch.set_facecolor("white")
 
     def text(
-        x: float, y: float, value: str, size: float, *, right: bool = False, bold: bool = False
+        x: float,
+        y: float,
+        value: str,
+        size: float,
+        *,
+        right: bool = False,
+        bold: bool = False,
+        italic: bool = False,
     ) -> None:
         figure.text(
             x / page_width,
@@ -232,6 +275,7 @@ def _draw(
             ha="right" if right else "left",
             fontsize=size,
             fontweight="bold" if bold else "normal",
+            fontstyle="italic" if italic else "normal",
             parse_math=False,  # cells are text: a "$" in a definition (T9) is a dollar sign, not mathtext
         )
 
@@ -262,8 +306,20 @@ def _draw(
     rule(y + row * 0.05, 0.5)
     y += row * 0.25
     previous = None
-    for index, (cells, cell_lines) in enumerate(zip(table.rows, wrapped, strict=True)):
-        if index and cells[0] != previous:
+    for index, (cells, cell_lines, heading) in enumerate(
+        zip(table.rows, wrapped, headings, strict=True)
+    ):
+        if (
+            heading is not None
+        ):  # a group's heading row (\midrule, then \multicolumn as in the LaTeX)
+            if index:
+                y += row * 0.15
+                rule(y, 0.5)
+                y += row * 0.1
+            text(MARGIN_PT, y, heading, size, italic=True)
+            y += row
+            previous = None
+        elif index and cells[0] != previous:
             y += row * 0.35  # \addlinespace between groups
         for column, value in enumerate(cells):
             if cell_lines is not None and column == table.wrap_column:

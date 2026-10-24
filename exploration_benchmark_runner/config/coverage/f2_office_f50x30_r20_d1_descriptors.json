@@ -1,0 +1,238 @@
+{
+ "version": "world-descriptors-v1",
+ "grid": {
+  "source": "coverage_reference",
+  "reference_id": "f2_office_f50x30_r20_d1_coverage_v2",
+  "metadata_sha256": "5869e3d2863430676a8ab6ef019219b0eed921a4eff93832c7c4da03ee07fbe5",
+  "grid_sha256": "121c8a61d5ee8a52f196daab4dd174d3e89f84143877931d5e872e90285c18c1",
+  "resolution_m": 0.05,
+  "seed": 2026,
+  "free_space": "inclusion & ~collision",
+  "padding_cells": 2,
+  "free_floor_touches_grid_edge": false
+ },
+ "area_m2": 1432.37,
+ "clearance_m": {
+  "median": 0.95,
+  "p10": 0.2,
+  "p90": 2.5
+ },
+ "clearance_max_m": 4.45,
+ "char_dim_m": {
+  "median": 5.025,
+  "n": 400,
+  "mc_halfwidth": 0.25
+ },
+ "dispersion": {
+  "mean": 2.435,
+  "n": 400,
+  "mc_se": 0.07
+ },
+ "nav_complexity": {
+  "median": 1.3469,
+  "p90": 2.4193,
+  "n": 400,
+  "grid_m": 0.05
+ },
+ "narrowest_passage_m": 1.2,
+ "min_gap_m": null,
+ "loops": 0,
+ "loops_unsized": 0,
+ "dead_ends": 24,
+ "junctions": 20,
+ "regions": 21,
+ "robots": {
+  "mogi": {
+   "radius_m": 0.29,
+   "r_eff_m": 10.0,
+   "visible_area_m2": {
+    "mean": 64.45,
+    "n": 400,
+    "mc_se": 0.8
+   },
+   "visible_fraction": 0.045,
+   "area_over_pi_r2": 4.5594,
+   "spawn_visible_fraction": {
+    "S1": 0.0496
+   }
+  }
+ },
+ "regions_worldgen_watershed": 21,
+ "region_growth": "geodesic-nearest-core",
+ "region_core_min_m2": 1.0,
+ "spawns": [
+  {
+   "id": "S1",
+   "x": -11.725,
+   "y": 12.575
+  }
+ ],
+ "region_raster": {
+  "file": "regions.png",
+  "sha256": "4336c992511dced3c927444741e287084f9af459aafc763b4ab5f55b5acb97a6",
+  "encoding": "16-bit greyscale PNG; row 0 = largest y; 0 outside F; 1 … n grown regions",
+  "labels": [
+   {
+    "label": 1,
+    "cells": 23188,
+    "area_m2": 57.97,
+    "counted": true
+   },
+   {
+    "label": 2,
+    "cells": 24976,
+    "area_m2": 62.44,
+    "counted": true
+   },
+   {
+    "label": 3,
+    "cells": 84500,
+    "area_m2": 211.25,
+    "counted": true
+   },
+   {
+    "label": 4,
+    "cells": 29424,
+    "area_m2": 73.56,
+    "counted": true
+   },
+   {
+    "label": 5,
+    "cells": 33312,
+    "area_m2": 83.28,
+    "counted": true
+   },
+   {
+    "label": 6,
+    "cells": 22896,
+    "area_m2": 57.24,
+    "counted": true
+   },
+   {
+    "label": 7,
+    "cells": 19056,
+    "area_m2": 47.64,
+    "counted": true
+   },
+   {
+    "label": 8,
+    "cells": 15848,
+    "area_m2": 39.62,
+    "counted": true
+   },
+   {
+    "label": 9,
+    "cells": 23236,
+    "area_m2": 58.09,
+    "counted": true
+   },
+   {
+    "label": 10,
+    "cells": 26832,
+    "area_m2": 67.08,
+    "counted": true
+   },
+   {
+    "label": 11,
+    "cells": 14640,
+    "area_m2": 36.6,
+    "counted": true
+   },
+   {
+    "label": 12,
+    "cells": 24848,
+    "area_m2": 62.12,
+    "counted": true
+   },
+   {
+    "label": 13,
+    "cells": 20176,
+    "area_m2": 50.44,
+    "counted": true
+   },
+   {
+    "label": 14,
+    "cells": 38496,
+    "area_m2": 96.24,
+    "counted": true
+   },
+   {
+    "label": 15,
+    "cells": 22292,
+    "area_m2": 55.73,
+    "counted": true
+   },
+   {
+    "label": 16,
+    "cells": 20704,
+    "area_m2": 51.76,
+    "counted": true
+   },
+   {
+    "label": 17,
+    "cells": 31696,
+    "area_m2": 79.24,
+    "counted": true
+   },
+   {
+    "label": 18,
+    "cells": 21656,
+    "area_m2": 54.14,
+    "counted": true
+   },
+   {
+    "label": 19,
+    "cells": 24948,
+    "area_m2": 62.37,
+    "counted": true
+   },
+   {
+    "label": 20,
+    "cells": 27280,
+    "area_m2": 68.2,
+    "counted": true
+   },
+   {
+    "label": 21,
+    "cells": 22944,
+    "area_m2": 57.36,
+    "counted": true
+   }
+  ]
+ },
+ "regions_counted": [
+  1,
+  2,
+  3,
+  4,
+  5,
+  6,
+  7,
+  8,
+  9,
+  10,
+  11,
+  12,
+  13,
+  14,
+  15,
+  16,
+  17,
+  18,
+  19,
+  20,
+  21
+ ],
+ "software": {
+  "worldgen": "1.0.1",
+  "worldgen_sha256": {
+   "descriptors.py": "720ac3623029c635372f961aaf8aea6035a774e7198d056ed33139362a12e82b",
+   "raster.py": "5ead4fb5ab653b14fb46a2fbb51961fecc746507f17315cada9dd0c85d6ae59d",
+   "checks.py": "c6a98afbe31afc2d157792671da81ed6c72ab8cbe5525702be59e6b97268e329",
+   "rng.py": "b9b5716a69bcbaaf3e4ceb308341b7d40d80a1e38ddf313add3daacde65235b3"
+  },
+  "numpy": "2.2.6",
+  "scipy": "1.15.3",
+  "adapter_sha256": "358d4da244bd096d2a1d262a970276c511605fd367c003e99dc3706b6937eb50"
+ }
+}

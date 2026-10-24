@@ -1,0 +1,788 @@
+{
+  "id": "p1_racetrack_office_coverage_v2",
+  "metric_version": 2,
+  "target_margin_m": 0.1,
+  "world": "p1_racetrack_office",
+  "spawn": [
+    0.0,
+    -8.8,
+    0.1,
+    0.0
+  ],
+  "resolution": 0.05,
+  "origin": [
+    -16.6,
+    -11.6,
+    0.0
+  ],
+  "width": 664,
+  "height": 456,
+  "target_cells": 218464,
+  "target_area_m2": 546.1600000000001,
+  "grid_file": "p1_racetrack_office.npz",
+  "grid_sha256": "c97380a6493a6995032b6342bdd3ffaac1a945720048ad0e11afd615a8d76037",
+  "source_sha256": {
+    "world_collection/worlds/P1_racetrack_office/P1_racetrack_office.sdf": "8ceac38112e984c238014aae5936e099968a3994a48aea97b1eb1132505ef037",
+    "exploration_benchmark_runner/config/coverage/p1_racetrack_office_scenario.yaml": "37785b01f2659309c2a883b3c0b6c6c28577af09a323643c991dac1eeb33c534",
+    "simulation/Week-7-8-ROS2-Navigation/bme_ros2_navigation/urdf/mogi_bot.urdf": "11b3a0684efb4f44bd12719f36ed6732b6dbf1d4570ea14580f4e81ba8af263a"
+  },
+  "generation": {
+    "body_height_slab": [
+      0.03,
+      0.35
+    ],
+    "settings": {
+      "bounds": [
+        -16.6,
+        -11.6,
+        16.6,
+        11.2
+      ],
+      "inclusion_polygons": [
+        [
+          [
+            -15.4,
+            -2.0
+          ],
+          [
+            -15.0,
+            -2.0
+          ],
+          [
+            -15.0,
+            -10.0
+          ],
+          [
+            -9.5,
+            -10.0
+          ],
+          [
+            -9.5,
+            -10.4
+          ],
+          [
+            -8.5,
+            -10.4
+          ],
+          [
+            -8.5,
+            -10.0
+          ],
+          [
+            3.5,
+            -10.0
+          ],
+          [
+            3.5,
+            -10.4
+          ],
+          [
+            4.5,
+            -10.4
+          ],
+          [
+            4.5,
+            -10.0
+          ],
+          [
+            15.0,
+            -10.0
+          ],
+          [
+            15.0,
+            -5.0
+          ],
+          [
+            15.4,
+            -5.0
+          ],
+          [
+            15.4,
+            -4.0
+          ],
+          [
+            15.0,
+            -4.0
+          ],
+          [
+            15.0,
+            4.9
+          ],
+          [
+            9.6,
+            4.9
+          ],
+          [
+            9.6,
+            5.1
+          ],
+          [
+            15.0,
+            5.1
+          ],
+          [
+            15.0,
+            10.0
+          ],
+          [
+            5.1,
+            10.0
+          ],
+          [
+            5.1,
+            5.1
+          ],
+          [
+            8.4,
+            5.1
+          ],
+          [
+            8.4,
+            4.9
+          ],
+          [
+            2.1,
+            4.9
+          ],
+          [
+            2.1,
+            5.1
+          ],
+          [
+            4.9,
+            5.1
+          ],
+          [
+            4.9,
+            10.0
+          ],
+          [
+            -4.9,
+            10.0
+          ],
+          [
+            -4.9,
+            5.1
+          ],
+          [
+            0.9,
+            5.1
+          ],
+          [
+            0.9,
+            4.9
+          ],
+          [
+            -9.4,
+            4.9
+          ],
+          [
+            -9.4,
+            5.1
+          ],
+          [
+            -5.1,
+            5.1
+          ],
+          [
+            -5.1,
+            10.0
+          ],
+          [
+            -15.0,
+            10.0
+          ],
+          [
+            -15.0,
+            5.1
+          ],
+          [
+            -10.6,
+            5.1
+          ],
+          [
+            -10.6,
+            4.9
+          ],
+          [
+            -15.0,
+            4.9
+          ],
+          [
+            -15.0,
+            -1.0
+          ],
+          [
+            -15.4,
+            -1.0
+          ]
+        ]
+      ],
+      "exclusion_polygons": [],
+      "review": "P1 Pilot racetrack office: inclusion polygon of world.yaml; bounds = T0 grid extent",
+      "source": {
+        "world_yaml": "world_collection/worlds/P1_racetrack_office/world.yaml",
+        "worldgen_version": "1.0.1"
+      }
+    },
+    "connectivity": "4-connected free floor from spawn; not a footprint planner",
+    "unreachable_free_cells": 0,
+    "collision_records": [
+      {
+        "model": "ground_plane",
+        "collision": "ground_collision",
+        "bounds": [
+          [
+            -17.6,
+            -12.6,
+            -0.05
+          ],
+          [
+            17.6,
+            12.200000000000001,
+            0.0
+          ]
+        ]
+      },
+      {
+        "model": "P1_structure",
+        "collision": "outer_e_00_col",
+        "bounds": [
+          [
+            15.0,
+            -10.0,
+            0.0
+          ],
+          [
+            15.2,
+            -5.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "P1_structure",
+        "collision": "outer_e_01_col",
+        "bounds": [
+          [
+            15.0,
+            -4.0,
+            0.0
+          ],
+          [
+            15.2,
+            10.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "P1_structure",
+        "collision": "outer_n_00_col",
+        "bounds": [
+          [
+            -15.2,
+            10.0,
+            0.0
+          ],
+          [
+            15.2,
+            10.2,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "P1_structure",
+        "collision": "outer_s_00_col",
+        "bounds": [
+          [
+            -15.2,
+            -10.2,
+            0.0
+          ],
+          [
+            -9.5,
+            -10.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "P1_structure",
+        "collision": "outer_s_01_col",
+        "bounds": [
+          [
+            -8.5,
+            -10.2,
+            0.0
+          ],
+          [
+            3.5,
+            -10.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "P1_structure",
+        "collision": "outer_s_02_col",
+        "bounds": [
+          [
+            4.5,
+            -10.2,
+            0.0
+          ],
+          [
+            15.2,
+            -10.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "P1_structure",
+        "collision": "outer_w_00_col",
+        "bounds": [
+          [
+            -15.2,
+            -10.0,
+            0.0
+          ],
+          [
+            -15.0,
+            -2.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "P1_structure",
+        "collision": "outer_w_01_col",
+        "bounds": [
+          [
+            -15.2,
+            -1.0,
+            0.0
+          ],
+          [
+            -15.0,
+            10.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "P1_structure",
+        "collision": "recess_l1_a_col",
+        "bounds": [
+          [
+            -9.7,
+            -10.6,
+            0.0
+          ],
+          [
+            -9.5,
+            -10.200000000000001,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "P1_structure",
+        "collision": "recess_l1_b_col",
+        "bounds": [
+          [
+            -8.5,
+            -10.6,
+            0.0
+          ],
+          [
+            -8.3,
+            -10.200000000000001,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "P1_structure",
+        "collision": "recess_l1_back_col",
+        "bounds": [
+          [
+            -9.5,
+            -10.6,
+            0.0
+          ],
+          [
+            -8.5,
+            -10.4,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "P1_structure",
+        "collision": "recess_l2_a_col",
+        "bounds": [
+          [
+            3.3,
+            -10.6,
+            0.0
+          ],
+          [
+            3.5,
+            -10.200000000000001,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "P1_structure",
+        "collision": "recess_l2_b_col",
+        "bounds": [
+          [
+            4.5,
+            -10.6,
+            0.0
+          ],
+          [
+            4.699999999999999,
+            -10.200000000000001,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "P1_structure",
+        "collision": "recess_l2_back_col",
+        "bounds": [
+          [
+            3.5,
+            -10.6,
+            0.0
+          ],
+          [
+            4.5,
+            -10.4,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "P1_structure",
+        "collision": "recess_l3_a_col",
+        "bounds": [
+          [
+            15.200000000000001,
+            -5.199999999999999,
+            0.0
+          ],
+          [
+            15.6,
+            -5.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "P1_structure",
+        "collision": "recess_l3_b_col",
+        "bounds": [
+          [
+            15.200000000000001,
+            -4.0,
+            0.0
+          ],
+          [
+            15.6,
+            -3.8,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "P1_structure",
+        "collision": "recess_l3_back_col",
+        "bounds": [
+          [
+            15.4,
+            -5.0,
+            0.0
+          ],
+          [
+            15.6,
+            -4.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "P1_structure",
+        "collision": "recess_l4_a_col",
+        "bounds": [
+          [
+            -15.6,
+            -2.2,
+            0.0
+          ],
+          [
+            -15.200000000000001,
+            -2.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "P1_structure",
+        "collision": "recess_l4_b_col",
+        "bounds": [
+          [
+            -15.6,
+            -1.0,
+            0.0
+          ],
+          [
+            -15.200000000000001,
+            -0.8,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "P1_structure",
+        "collision": "recess_l4_back_col",
+        "bounds": [
+          [
+            -15.6,
+            -2.0,
+            0.0
+          ],
+          [
+            -15.4,
+            -1.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "P1_structure",
+        "collision": "block_divider_col",
+        "bounds": [
+          [
+            -0.1,
+            -7.3999999999999995,
+            0.0
+          ],
+          [
+            0.1,
+            2.3,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "P1_structure",
+        "collision": "block_e_col",
+        "bounds": [
+          [
+            12.4,
+            -7.3999999999999995,
+            0.0
+          ],
+          [
+            12.6,
+            2.3,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "P1_structure",
+        "collision": "block_n_00_col",
+        "bounds": [
+          [
+            -12.6,
+            2.3,
+            0.0
+          ],
+          [
+            6.4,
+            2.5,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "P1_structure",
+        "collision": "block_n_01_col",
+        "bounds": [
+          [
+            7.6,
+            2.3,
+            0.0
+          ],
+          [
+            12.6,
+            2.5,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "P1_structure",
+        "collision": "block_s_00_col",
+        "bounds": [
+          [
+            -12.6,
+            -7.6,
+            0.0
+          ],
+          [
+            -6.6,
+            -7.4,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "P1_structure",
+        "collision": "block_s_01_col",
+        "bounds": [
+          [
+            -5.4,
+            -7.6,
+            0.0
+          ],
+          [
+            12.6,
+            -7.4,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "P1_structure",
+        "collision": "block_w_col",
+        "bounds": [
+          [
+            -12.6,
+            -7.3999999999999995,
+            0.0
+          ],
+          [
+            -12.4,
+            2.3,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "P1_structure",
+        "collision": "partition_e_col",
+        "bounds": [
+          [
+            4.9,
+            5.1,
+            0.0
+          ],
+          [
+            5.1,
+            10.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "P1_structure",
+        "collision": "partition_w_col",
+        "bounds": [
+          [
+            -5.1,
+            5.1,
+            0.0
+          ],
+          [
+            -4.9,
+            10.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "P1_structure",
+        "collision": "room_wall_n_00_col",
+        "bounds": [
+          [
+            -15.0,
+            4.9,
+            0.0
+          ],
+          [
+            -10.600000000000001,
+            5.1,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "P1_structure",
+        "collision": "room_wall_n_01_col",
+        "bounds": [
+          [
+            -9.4,
+            4.9,
+            0.0
+          ],
+          [
+            0.9000000000000004,
+            5.1,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "P1_structure",
+        "collision": "room_wall_n_02_col",
+        "bounds": [
+          [
+            2.1,
+            4.9,
+            0.0
+          ],
+          [
+            8.4,
+            5.1,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "P1_structure",
+        "collision": "room_wall_n_03_col",
+        "bounds": [
+          [
+            9.600000000000001,
+            4.9,
+            0.0
+          ],
+          [
+            15.0,
+            5.1,
+            2.0
+          ]
+        ]
+      }
+    ],
+    "generator_sha256": "5613e07de31429608b7bb91a5d931b4983603c26a7c5bfece3de7a0979f760a0",
+    "tool_versions": {
+      "numpy": "2.4.4",
+      "scipy": "1.17.1",
+      "shapely": "2.1.2",
+      "trimesh": "4.12.2"
+    },
+    "world_yaml": "world_collection/worlds/P1_racetrack_office/world.yaml",
+    "worldgen_version": "1.0.1",
+    "seed": null,
+    "registry_id": "p1_racetrack_office"
+  }
+}

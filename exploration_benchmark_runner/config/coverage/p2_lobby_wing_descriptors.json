@@ -1,0 +1,138 @@
+{
+ "version": "world-descriptors-v1",
+ "grid": {
+  "source": "coverage_reference",
+  "reference_id": "p2_lobby_wing_coverage_v2",
+  "metadata_sha256": "4703801b45d3a4fe211c4a21e12559a29fb17110b9453656666761bbaf8e7c86",
+  "grid_sha256": "10a825c9a17bd6b95090d21ee46d3c130af9d35545551b5e6e88af92b87aa241",
+  "resolution_m": 0.05,
+  "seed": 2026,
+  "free_space": "inclusion & ~collision",
+  "padding_cells": 2,
+  "free_floor_touches_grid_edge": false
+ },
+ "area_m2": 438.6,
+ "clearance_m": {
+  "median": 1.0,
+  "p10": 0.2,
+  "p90": 2.45
+ },
+ "clearance_max_m": 4.092,
+ "char_dim_m": {
+  "median": 4.825,
+  "n": 400,
+  "mc_halfwidth": 0.2
+ },
+ "dispersion": {
+  "mean": 2.5,
+  "n": 400,
+  "mc_se": 0.071
+ },
+ "nav_complexity": {
+  "median": 1.0547,
+  "p90": 1.3031,
+  "n": 400,
+  "grid_m": 0.05
+ },
+ "narrowest_passage_m": 1.2,
+ "min_gap_m": 2.0,
+ "loops": 1,
+ "loops_unsized": 4,
+ "dead_ends": 4,
+ "junctions": 10,
+ "regions": 5,
+ "robots": {
+  "mogi": {
+   "radius_m": 0.29,
+   "r_eff_m": 10.0,
+   "visible_area_m2": {
+    "mean": 93.26,
+    "n": 400,
+    "mc_se": 2.77
+   },
+   "visible_fraction": 0.2126,
+   "area_over_pi_r2": 1.3961,
+   "spawn_visible_fraction": {
+    "S1": 0.4498,
+    "S2": 0.0923,
+    "S3": 0.0895
+   }
+  }
+ },
+ "regions_worldgen_watershed": 5,
+ "region_growth": "geodesic-nearest-core",
+ "region_core_min_m2": 1.0,
+ "spawns": [
+  {
+   "id": "S1",
+   "x": -12.0,
+   "y": 0.0
+  },
+  {
+   "id": "S2",
+   "x": 13.6,
+   "y": 5.2
+  },
+  {
+   "id": "S3",
+   "x": 11.0,
+   "y": 0.0
+  }
+ ],
+ "region_raster": {
+  "file": "regions.png",
+  "sha256": "fc2c420597df6aea46020055206aa81ca77f4c289967558697cfe4af44377af5",
+  "encoding": "16-bit greyscale PNG; row 0 = largest y; 0 outside F; 1 … n grown regions",
+  "labels": [
+   {
+    "label": 1,
+    "cells": 116880,
+    "area_m2": 292.2,
+    "counted": true
+   },
+   {
+    "label": 2,
+    "cells": 14640,
+    "area_m2": 36.6,
+    "counted": true
+   },
+   {
+    "label": 3,
+    "cells": 14640,
+    "area_m2": 36.6,
+    "counted": true
+   },
+   {
+    "label": 4,
+    "cells": 14640,
+    "area_m2": 36.6,
+    "counted": true
+   },
+   {
+    "label": 5,
+    "cells": 14640,
+    "area_m2": 36.6,
+    "counted": true
+   }
+  ]
+ },
+ "regions_counted": [
+  1,
+  2,
+  3,
+  4,
+  5
+ ],
+ "software": {
+  "worldgen": "1.0.1",
+  "worldgen_sha256": {
+   "descriptors.py": "720ac3623029c635372f961aaf8aea6035a774e7198d056ed33139362a12e82b",
+   "raster.py": "5ead4fb5ab653b14fb46a2fbb51961fecc746507f17315cada9dd0c85d6ae59d",
+   "checks.py": "c6a98afbe31afc2d157792671da81ed6c72ab8cbe5525702be59e6b97268e329",
+   "rng.py": "b9b5716a69bcbaaf3e4ceb308341b7d40d80a1e38ddf313add3daacde65235b3"
+  },
+  "numpy": "2.2.6",
+  "scipy": "1.15.3",
+  "adapter_sha256": "358d4da244bd096d2a1d262a970276c511605fd367c003e99dc3706b6937eb50"
+ }
+}

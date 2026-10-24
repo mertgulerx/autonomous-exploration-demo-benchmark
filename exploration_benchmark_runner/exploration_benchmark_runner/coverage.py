@@ -180,6 +180,7 @@ class Reference:
             raise ValueError("Coverage reference world hash does not match")
 
     def descriptor(self):
+        # Mirrored field by field by suite library.ReferenceHeader.descriptor: change both.
         return dict(
             id=self.identity,
             metric_version=self.metric_version,

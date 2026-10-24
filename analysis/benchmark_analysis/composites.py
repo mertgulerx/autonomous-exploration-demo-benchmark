@@ -27,11 +27,13 @@
   ended, log format 2), beside its coverage curve over the stratum's Default band (F1's pointwise median and
   IQR), the path and the curve coloured by time on one shared scale.
 
-Both teasers are descriptive: the paired comparison is F3 and F13 (``stats.json``).
+Both teasers are descriptive: the paired comparison is F3 and F13 (``stats.json``). F21 and F22_a are drawn once
+per world group and page (``figures.grouped``, plans/worlds/I8 §3.1), a page no taller than the page height.
 """
 
 from collections import Counter
 from collections.abc import Iterator
+from functools import partial
 from typing import Any
 
 from matplotlib.colors import Normalize
@@ -60,6 +62,7 @@ from .figures import (
     coverage_panel,
     coverage_trace,
     finish,
+    grouped,
     legend,
     map_panel,
     message_figure,
@@ -93,7 +96,7 @@ from .goals import (
 )
 from .streams import Reads, log_formats, world_from_map
 from .stats import JITTER_STREAM, random_stream
-from .style import PRESETS, SEQUENTIAL_CMAP, figure, page_note
+from .style import PAGE_MAX_MM, PRESETS, SEQUENTIAL_CMAP, figure, page_note
 
 # the attainment column and the paired effect of F21 (ΔR_90 is always reported)
 MAIN_ENDPOINT = "R_90"
@@ -114,6 +117,16 @@ TEASER_RUN_WIDTHS = (1.15, 1.0)  # F22_b: map, coverage
 REASON_OFFSET_PT = 4.0  # F22_b: a cancel reason is marked this far up and right of its goal
 
 
+def _rows_height_mm(row_mm: float, rows: int) -> float:
+    """The height of a composite of a row per stratum (F21, F22_a)."""
+    return row_mm * rows + FRAME_MM
+
+
+def _rows_fit(page: FigureContext, *, row_mm: float) -> bool:
+    """The page test of F21 and F22_a: a row per stratum, no taller than a page."""
+    return _rows_height_mm(row_mm, len(page.study.strata)) <= PAGE_MAX_MM
+
+
 def _panel_over_strip(fig: Any, cell: Any) -> tuple[Any, Any]:
     """Replace the axes ``cell`` with a panel over its strip or table (``ROW_RATIOS``) in the same grid cell."""
     spec = cell.get_subplotspec()
@@ -128,7 +141,7 @@ def _panel_over_strip(fig: Any, cell: Any) -> tuple[Any, Any]:
 def f21(ctx: FigureContext) -> FigureOut:
     strata = ctx.study.strata
     width_mm = PRESETS[ctx.preset].widths_mm["double"]
-    height_mm = ROW_HEIGHT_MM * len(strata) + FRAME_MM
+    height_mm = _rows_height_mm(ROW_HEIGHT_MM, len(strata))
     # per stratum, its profiles with a Default run to pair with, in F13's row order
     paired = [[(p, b) for s, p, b in paired_strata(ctx) if s is stratum] for stratum in strata]
     slots = max([1, *(len(found) for found in paired)])  # ΔR_90 strips per row: one per profile
@@ -253,7 +266,7 @@ def f22a(ctx: FigureContext) -> FigureOut:
     if not strata:
         return message_figure(ctx, "F22_a", "No strata: no teaser.")
     width_mm = PRESETS[ctx.preset].widths_mm["double"]
-    height_mm = TEASER_ROW_MM * len(strata) + FRAME_MM
+    height_mm = _rows_height_mm(TEASER_ROW_MM, len(strata))
     fig, axes = figure(
         ctx.preset,
         "double",
@@ -558,6 +571,7 @@ def f22b(ctx: FigureContext) -> FigureOut:
 
 def figures(ctx: FigureContext) -> Iterator[FigureOut]:
     """F21, F22_a and F22_b, each built when the caller asks for it."""
-    yield f21(ctx)
-    yield f22a(ctx)
+    # once per world group and page, a row per stratum, no taller than a page (plans/worlds/I8 §3.1)
+    yield from grouped(ctx, f21, partial(_rows_fit, row_mm=ROW_HEIGHT_MM))
+    yield from grouped(ctx, f22a, partial(_rows_fit, row_mm=TEASER_ROW_MM))
     yield f22b(ctx)

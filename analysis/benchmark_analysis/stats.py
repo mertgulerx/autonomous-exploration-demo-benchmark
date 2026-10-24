@@ -60,6 +60,8 @@ class Interval:
 
 BOOTSTRAP_STREAM, SIGN_FLIP_STREAM, POOLED_BOOTSTRAP_STREAM, POOLED_SIGN_FLIP_STREAM = 1, 2, 3, 4
 JITTER_STREAM = 5  # horizontal jitter of points in figures (display only)
+# 6 is taxonomy.SHEET_ORDER_STREAM (the coding sheet's order)
+LENTH_STREAM = 7  # the Monte Carlo null of Lenth's ratio (families, plans/worlds/I6 §3.4.1)
 
 
 def random_stream(seed: int, purpose: int) -> np.random.Generator:
@@ -85,7 +87,10 @@ def wilson(successes: int, trials: int, alpha: float) -> Interval:
     p, n = successes / trials, trials
     centre = (p + z * z / (2 * n)) / (1 + z * z / n)
     half = z * math.sqrt(p * (1 - p) / n + z * z / (4 * n * n)) / (1 + z * z / n)
-    return Interval(max(0.0, centre - half), min(1.0, centre + half), 1 - alpha, "Wilson")
+    # the bounds at k = 0 and k = n are exactly 0 and 1; computed, they can miss by a rounding error
+    lower = 0.0 if successes == 0 else max(0.0, centre - half)
+    upper = 1.0 if successes == trials else min(1.0, centre + half)
+    return Interval(lower, upper, 1 - alpha, "Wilson")
 
 
 def clopper_pearson(successes: int, trials: int, alpha: float) -> Interval:

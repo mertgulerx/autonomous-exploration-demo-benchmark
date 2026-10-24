@@ -540,13 +540,29 @@ class AcceptedFacts:
     worlds: tuple[AcceptedWorld, ...]
     # the study and recording rows (33): key, value, set in mono, a faint addition (the plan's hash)
     study: tuple[tuple[str, str, bool, str], ...] = ()
+    time_rule: str = ""  # the campaign's ``time_limit_rule`` (39), empty without one
 
-    def rows(self) -> list[tuple[str, str, bool, str]]:
+    def rows(self) -> list["KeyValue"]:
+        rule = [KeyValue("Time limits", "Kinematic rule", tail=self.time_rule, identifier=True)]
         return [
-            ("Execution", self.execution, False, ""),
-            ("Timing retry", self.timing_retry, False, ""),
-            *self.study,
+            KeyValue("Execution", self.execution),
+            KeyValue("Timing retry", self.timing_retry),
+            *(rule if self.time_rule else []),
+            *(KeyValue(key, value, mono, tail) for key, value, mono, tail in self.study),
         ]
+
+
+@dataclass(frozen=True, slots=True)
+class KeyValue:
+    """A ``.kv`` row of the accepted card: the value (in mono for identifiers such as the plan), then an
+    optional ``tail``: a faint note (the plan's hash) or, with ``identifier``, an ID in mono
+    ``text.secondary`` one space and 6 px after the value (the time-limit rule, 39)."""
+
+    key: str
+    value: str
+    mono: bool = False
+    tail: str = ""
+    identifier: bool = False
 
 
 def execution_text(concurrency: Any) -> str:
@@ -760,29 +776,35 @@ class AcceptedCard(Card):
             text = "".join(run.text for run in runs)
             draw_text(painter, x, who + 10 + 21 + 3 + 18 * index, text, BODY, secondary)
         painter.fillRect(QtCore.QRectF(left + 1, kv - 1, width - 2, 1), line)
-        # Execution, Timing retry and the study rows (``.kv``: 112 px keys, values 16 px further, rules between).
+        # Execution, Timing retry, the time-limit rule and the study rows (``.kv``: 112 px keys, values 16 px
+        # further, rules between).
         rows = facts.rows()
-        for index, (key, value, mono, faint) in enumerate(rows):
+        for index, item in enumerate(rows):
             row = kv + index * self.KV_ROW
             last = index == len(rows) - 1
             content = self.KV_ROW - (0 if last else 1)
             if not last:
                 painter.fillRect(QtCore.QRectF(x, row + content, inner, 1), line)
             line_top = row + (content - 18) / 2
-            draw_text(painter, x, line_top, key, BODY, secondary)
+            draw_text(painter, x, line_top, item.key, BODY, secondary)
             value_x = x + 112 + 16
-            style = VALUE_MONO if mono else VALUE
-            tail = BODY.advance(" " + faint) if faint else 0.0
-            shown = style.elide(value, x + inner - value_x - tail)
+            style = VALUE_MONO if item.mono else VALUE
+            if item.identifier:
+                tail_style, tail_text, gap = VALUE_MONO, item.tail, BODY.advance(" ") + 6
+            else:
+                tail_style, tail_text, gap = BODY, " " + item.tail, 0.0
+            tail = gap + tail_style.advance(tail_text) if item.tail else 0.0
+            shown = style.elide(item.value, x + inner - value_x - tail)
             advance = draw_text(painter, value_x, line_top, shown, style, ink)
-            if faint:
+            if item.tail:
+                room = x + inner - value_x - advance - gap
                 draw_text(
                     painter,
-                    value_x + advance,
+                    value_x + advance + gap,
                     line_top,
-                    " " + faint,
-                    BODY,
-                    theme.color("text.tertiary"),
+                    tail_style.elide(tail_text, max(0.0, room)),
+                    tail_style,
+                    theme.color("text.secondary" if item.identifier else "text.tertiary"),
                 )
         # Worlds and starting poses.
         painter.fillRect(QtCore.QRectF(left + 1, where, width - 2, 1), line)
@@ -927,6 +949,7 @@ def accepted_facts(
         str(timing_retry) if timing_retry else "—",
         tuple(worlds),
         study_rows(specification, existing),
+        str(specification.get("time_limit_rule") or ""),
     )
 
 

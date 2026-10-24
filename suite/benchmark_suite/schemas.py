@@ -105,6 +105,8 @@ FIELDS = {
         ("model_to_base_yaw", pa.float64()),
         ("odometry_drift_m", pa.float64()),
     ],
+    # Events: the navigator telemetry's goal events, the debug stream's "feedback" and, since schema 11,
+    # "recovery" (one row per new recovery count of a goal; goal_facts.py). Readers filter by event.
     "navigation": [
         ("event", pa.string()),
         ("goal_sequence", pa.int64()),
@@ -224,7 +226,11 @@ ADDED_KINDS = frozenset({"goal_facts"})
 
 
 def build(version: int) -> dict[str, pa.Schema]:
-    """Arrow schemas of the streams as written by dataset schema ``version`` (9 or 10)."""
+    """Arrow schemas of the streams as written by dataset schema ``version`` (9, 10 or 11).
+
+    Schema 11 added rows (``navigation`` recovery events), not fields: its layout is schema 10's, and only
+    the ``schema_version`` metadata tells them apart.
+    """
     added = {name for name, _ in ADDED_FIELDS} if version < 10 else set()
     common = [field for field in COMMON if field[0] not in added]
     legacy = {} if version >= 10 else LEGACY_FIELDS
@@ -253,4 +259,5 @@ def build(version: int) -> dict[str, pa.Schema]:
 
 SCHEMAS = build(DATASET_VERSION)
 # Every schema a recorded shard may have, by dataset schema version (older versions were written as 9).
-SCHEMAS_BY_VERSION = {9: build(9), DATASET_VERSION: SCHEMAS}
+# Schema 10 stays listed so its shards keep their version through compaction and in run records.
+SCHEMAS_BY_VERSION = {9: build(9), 10: build(10), DATASET_VERSION: SCHEMAS}

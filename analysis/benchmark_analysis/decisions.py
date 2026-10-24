@@ -15,7 +15,8 @@
 """Figures F18 and F19: how the explorer decides (docs/plans/FIGURE_EXTENSION.md, FX3, FX4; FIGURE_STYLE §3, §6,
 §8; METHODOLOGY §2.4).
 
-- F18: decision timing (FX-16). One panel per stratum; every row of ``explorer_decisions`` of the sequential
+- F18: decision timing (FX-16). One panel per stratum (a figure per world group and page, ``figures.grouped``,
+  plans/worlds/I8 §3.1); every row of ``explorer_decisions`` of the sequential
   reported runs (``concurrent_wall_fraction`` = 0) with both timings and a candidate count as a point: wall time
   ``search_ms + ordering_ms`` on a log axis against the candidate count. Fill shows the order: filled when the
   row's ``order_cache_misses`` rose since the run's previous row (recomputed), open when it did not (from the
@@ -68,6 +69,8 @@ from .figures import (
     MapCode,
     draw_reference,
     finish,
+    grid_fits,
+    grouped,
     ground_truth,
     legend,
     load_reference,
@@ -1191,5 +1194,5 @@ def f19(ctx: FigureContext) -> FigureOut:
 
 def figures(ctx: FigureContext) -> Iterator[FigureOut]:
     """F18 and F19, each built when the caller asks for it."""
-    yield f18(ctx)
+    yield from grouped(ctx, f18, grid_fits)  # once per world group and page (plans/worlds/I8 §3.1)
     yield f19(ctx)

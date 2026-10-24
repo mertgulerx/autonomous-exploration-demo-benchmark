@@ -14,9 +14,10 @@
 
 """Offline reference generation and cache preparation; never run by a worker.
 
-Supports the included worlds' SDF primitives, nested models and COLLADA/STL/OBJ
-collision meshes. Unsupported frame semantics fail explicitly, rather than
-silently creating an incorrect research denominator.
+Supports the included worlds' SDF primitives, vertical ``<polyline>`` prisms, nested
+models and COLLADA/STL/OBJ collision meshes. Unsupported frame semantics fail
+explicitly, rather than silently creating an incorrect research denominator.
+``import`` adds a confirmed world_collection world (``world_import``).
 """
 
 import argparse
@@ -31,6 +32,8 @@ import numpy as np
 import yaml
 
 from .configuration import scenario
+from .parameters import UniqueKeyLoader
+from .worlds import WorldRegistry
 from .coverage import (
     METRIC_VERSION,
     TARGET_MARGIN,
@@ -72,19 +75,72 @@ def pose(element):
     return t
 
 
+class Prism:
+    """A ``<polyline>`` collision: a closed polygon in its collision frame, extruded
+    from z = 0 to ``height``. Its slab footprint is the polygon itself, transformed by
+    the collision pose (I2 open point O-1 (a)), so no triangulation is needed."""
+
+    def __init__(self, points, height):
+        from shapely.geometry import Polygon
+
+        self.points = np.asarray(points, dtype=float)
+        if (
+            self.points.ndim != 2
+            or self.points.shape[1] != 2
+            or len(self.points) < 3
+            or not np.all(np.isfinite(self.points))
+            or not math.isfinite(height)
+            or height <= 0
+        ):
+            raise ValueError("Invalid polyline collision: points or height")
+        polygon = Polygon(self.points)
+        if not polygon.is_valid or polygon.area <= 0:
+            raise ValueError(
+                "Unsupported polyline collision: self-intersecting polygon"
+            )
+        self.z = (0.0, float(height))
+
+    def apply_transform(self, transform):
+        rotation = transform[:3, :3]
+        if not np.allclose(rotation[:, 2], [0.0, 0.0, 1.0], atol=1e-9):
+            raise ValueError("Unsupported polyline collision: non-zero roll or pitch")
+        self.points = self.points @ rotation[:2, :2].T + transform[:2, 3]
+        self.z = (self.z[0] + transform[2, 3], self.z[1] + transform[2, 3])
+
+    @property
+    def bounds(self):
+        low, high = self.points.min(axis=0), self.points.max(axis=0)
+        return np.array([[low[0], low[1], self.z[0]], [high[0], high[1], self.z[1]]])
+
+    def footprint(self, slab):
+        """The polygon when the prism meets the slab (the mesh rule of ``footprint``)."""
+        from shapely.geometry import Polygon
+
+        low, high = slab
+        if self.z[1] <= low or self.z[0] >= high:
+            return Polygon()
+        return Polygon(self.points)
+
+
 class Geometry:
-    def __init__(self, root):
+    def __init__(self, root, resource_paths=()):
         self.root = Path(root).resolve()
         self.assets, self.meshes, self.records = {}, {}, []
-        self.model_paths = list((self.root / "simulation/worlds").glob("*/models"))
+        # model:// search: the vendored worlds' models, then the registry's resource paths.
+        self.model_paths = list((self.root / "simulation/worlds").glob("*/models")) + [
+            self.root / path for path in resource_paths
+        ]
 
-    def asset(self, path, fuel=None):
+    def asset(self, path, fuel=None, identity=None):
+        """Hash a source file under its repository-relative (or Fuel) identity;
+        ``identity`` names a file that is staged elsewhere for a dry run."""
         path = Path(path).resolve()
-        identity = (
-            ("fuel:" + fuel[0] + "#" + str(path.relative_to(fuel[1])))
-            if fuel
-            else str(path.relative_to(self.root))
-        )
+        if identity is None:
+            identity = (
+                ("fuel:" + fuel[0] + "#" + str(path.relative_to(fuel[1])))
+                if fuel
+                else str(path.relative_to(self.root))
+            )
         self.assets[identity] = sha256(path)
         return path
 
@@ -134,6 +190,19 @@ class Geometry:
         node = geometry[0]
         if node.tag == "plane":
             return None
+        if node.tag == "polyline":
+            # One <polyline> per geometry: several would describe holes or a union.
+            if len(geometry.findall("polyline")) != 1:
+                raise ValueError(
+                    "Unsupported polyline collision: more than one polyline"
+                )
+            return Prism(
+                [
+                    [float(v) for v in point.text.split()]
+                    for point in node.findall("point")
+                ],
+                float(node.findtext("height", "1")),
+            )
         if node.tag == "box":
             return trimesh.creation.box(
                 extents=[float(v) for v in node.findtext("size").split()]
@@ -258,11 +327,14 @@ def footprint(mesh, slab):
 
     Projecting only triangle surfaces misses the interior of tall boxes; sections
     fill those solids while retaining holes (e.g. the warehouse wall enclosure).
+    A ``Prism`` gives its polygon directly.
     """
     from shapely.geometry import Polygon, LineString
     from shapely.ops import unary_union, polygonize
     import trimesh
 
+    if isinstance(mesh, Prism):
+        return mesh.footprint(slab)
     low, high = slab
     if mesh.bounds[1, 2] <= low or mesh.bounds[0, 2] >= high:
         return Polygon()
@@ -299,7 +371,77 @@ def footprint(mesh, slab):
     return unary_union(polygons)
 
 
-def generate(root, world, directory):
+def scenario_settings(root, entry):
+    """A world's coverage settings file and its settings (``resolution``,
+    ``body_height_slab``, ``bounds``, polygons): the entry ``scenario.key`` under
+    ``scenarios`` (``scenarios.yaml`` and every per-world ``<id>_scenario.yaml`` are
+    keyed). ``key: null``, which the registry loader admits, reads the file's top level
+    as the entry; no registry world uses it."""
+    settings_file = Path(root).resolve() / entry.scenario.file
+    settings = yaml.safe_load(settings_file.read_text())
+    key = entry.scenario.key
+    config = settings["scenarios"][key] if key is not None else settings
+    return settings_file, config, settings["resolution"], settings["body_height_slab"]
+
+
+def collection_provenance(world_yaml, document, world):
+    """``generation`` keys of a world_collection world's reference (I2 §3.4); additive,
+    ``coverage.Reference`` ignores them."""
+    return dict(
+        world_yaml=world_yaml,
+        worldgen_version=document.get("worldgen_version"),
+        seed=document.get("seed"),
+        registry_id=world,
+    )
+
+
+def generate(root, world, directory, registry):
+    entry = registry.world(world)
+    provenance = None
+    if entry.source is not None:
+        document = yaml.load(
+            registry.path(entry.source.world_yaml).read_bytes(), Loader=UniqueKeyLoader
+        )
+        provenance = collection_provenance(entry.source.world_yaml, document, world)
+    selected = scenario(root, world, registry=registry)
+    return build(
+        root,
+        world,
+        selected["world_file"],
+        selected["spawn"],
+        scenario_settings(root, entry),
+        directory,
+        resource_paths=entry.resource_paths,
+        provenance=provenance,
+    )
+
+
+def build(
+    root,
+    world,
+    world_file,
+    spawn,
+    settings,
+    directory,
+    *,
+    resource_paths=(),
+    provenance=None,
+    settings_identity=None,
+):
+    """Write ``<world>.npz``, ``<world>_v2.json`` and ``<world>_reference.png``.
+
+    ``settings`` is ``scenario_settings``' tuple; ``spawn`` the reference spawn
+    ``[x, y, z, yaw]``; ``settings_identity`` the repository path a staged settings
+    file is hashed under (dry runs). Returns the reference metadata.
+    """
+    directory = Path(directory)
+    # Never replace a reference: the grid file is shared by its metric versions.
+    for existing in (reference_file(directory, world), directory / (world + ".npz")):
+        if existing.exists():
+            raise ValueError(
+                f"Refusing to overwrite {existing}; a reference is never regenerated"
+            )
+
     import scipy
     import shapely
     import trimesh
@@ -308,19 +450,11 @@ def generate(root, world, directory):
     from shapely.ops import unary_union
     from shapely import contains_xy
 
-    directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
-    settings_file = directory / "scenarios.yaml"
-    settings = yaml.safe_load(settings_file.read_text())
-    config, res, slab = (
-        settings["scenarios"][world],
-        settings["resolution"],
-        settings["body_height_slab"],
-    )
-    selected = scenario(root, world)
-    geometry = Geometry(root)
-    world_file = geometry.asset(selected["world_file"])
-    geometry.asset(settings_file)
+    settings_file, config, res, slab = settings
+    geometry = Geometry(root, resource_paths)
+    world_file = geometry.asset(world_file)
+    geometry.asset(settings_file, identity=settings_identity)
     urdf = (
         Path(root)
         / "simulation/Week-7-8-ROS2-Navigation/bme_ros2_navigation/urdf/mogi_bot.urdf"
@@ -343,7 +477,7 @@ def generate(root, world, directory):
     exclusions = unary_union([Polygon(p) for p in config["exclusion_polygons"]])
     inclusion = contains_xy(roi.difference(exclusions).buffer(1e-9), x, y)
     components, _ = label(inclusion & ~collision)
-    sx, sy = selected["spawn"][:2]
+    sx, sy = spawn[:2]
     component = components[int((sy - y0) / res), int((sx - x0) / res)]
     if not component:
         raise ValueError("Spawn lies outside reference free space; review geometry/ROI")
@@ -362,7 +496,7 @@ def generate(root, world, directory):
         metric_version=METRIC_VERSION,
         target_margin_m=TARGET_MARGIN,
         world=world,
-        spawn=selected["spawn"],
+        spawn=list(spawn),
         resolution=res,
         origin=[x0, y0, 0.0],
         width=width,
@@ -385,6 +519,7 @@ def generate(root, world, directory):
                 shapely=shapely.__version__,
                 trimesh=trimesh.__version__,
             ),
+            **(provenance or {}),
         ),
     )
     reference_file(directory, world).write_text(json.dumps(metadata, indent=2) + "\n")
@@ -409,6 +544,7 @@ def generate(root, world, directory):
     fig.savefig(directory / (world + "_reference.png"), dpi=130)
     plt.close(fig)
     print(f"{world}: {count} cells, {count*res**2:.2f} m²")
+    return metadata
 
 
 def overlay(run_directory):
@@ -483,36 +619,105 @@ def overlay(run_directory):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("command", choices=["generate", "check", "fetch", "overlay"])
+    parser.add_argument(
+        "command", choices=["generate", "check", "fetch", "overlay", "import"]
+    )
     parser.add_argument("--run", help="Saved run directory for overlay")
     parser.add_argument(
-        "--world", choices=["bookstore", "corridor", "warehouse"], action="append"
+        "--world", action="append", help="Registry world ID (default: every world)"
     )
     parser.add_argument("--project-root", default=str(Path.cwd()))
-    parser.add_argument("--directory")
+    parser.add_argument(
+        "--directory",
+        help="generate, check, fetch: the coverage reference directory (default: the "
+        "installed share); import: the dry-run output directory (instead of --write)",
+    )
+    group = parser.add_argument_group("import")
+    group.add_argument(
+        "--world-dir", help="world_collection/worlds/<folder> of a confirmed world"
+    )
+    group.add_argument(
+        "--write",
+        action="store_true",
+        help="Write into the checkout's coverage directory and worlds.yaml",
+    )
+    group.add_argument("--label", help="Registry label (default: the title rule)")
+    group.add_argument(
+        "--base-world", help="Registry ID of a moving-object world's base world"
+    )
+    group.add_argument(
+        "--descriptor-python",
+        help="Python with worldgen's pins for the descriptor adapter "
+        "(default: <project root>/.venv-suite/bin/python)",
+    )
     args = parser.parse_args()
     if args.command == "overlay":
         if not args.run:
             parser.error("overlay requires --run")
         overlay(args.run)
         return
+    if args.command != "import":
+        given = [
+            flag
+            for flag, value in (
+                ("--world-dir", args.world_dir),
+                ("--write", args.write),
+                ("--label", args.label),
+                ("--base-world", args.base_world),
+                ("--descriptor-python", args.descriptor_python),
+            )
+            if value
+        ]
+        if given:
+            parser.error(f"{', '.join(given)}: only for import")
+    if args.command == "import":
+        from .world_import import import_world
+
+        if not args.world_dir:
+            parser.error("import requires --world-dir")
+        try:
+            import_world(
+                args.project_root,
+                args.world_dir,
+                directory=args.directory,
+                write=args.write,
+                label=args.label,
+                base_world=args.base_world,
+                descriptor_python=args.descriptor_python,
+            )
+        except (
+            ValueError,
+            OSError,
+            subprocess.CalledProcessError,
+            subprocess.TimeoutExpired,
+        ) as exc:
+            parser.error(str(exc))
+        return
     directory = Path(args.directory) if args.directory else reference_directory()
     try:
-        for world in args.world or ["bookstore", "corridor", "warehouse"]:
+        # Generation precedes a world's pin; check and fetch need the pinned references.
+        registry = WorldRegistry.load(
+            args.project_root,
+            references=directory,
+            pinned=args.command != "generate",
+        )
+        for world in args.world or []:
+            registry.world(world)
+        worlds = args.world or list(registry.ids())
+        if args.command == "fetch":
+            # The registry pins each world's Fuel models; without --world, all of them
+            # are fetched and the worlds that use them are verified.
+            for uri in registry.fuel_models(worlds):
+                subprocess.run(["gz", "fuel", "download", "-u", uri], check=True)
+            if not args.world:
+                worlds = [w for w in worlds if registry.world(w).fuel_models]
+        for world in worlds:
             if args.command == "generate":
-                generate(args.project_root, world, directory)
+                generate(args.project_root, world, directory, registry)
                 continue
             reference = Reference(reference_file(directory, world))
-            if args.command == "fetch":
-                uris = {
-                    key[5:].split("#", 1)[0]
-                    for key in reference.metadata["source_sha256"]
-                    if key.startswith("fuel:")
-                }
-                for uri in sorted(uris):
-                    subprocess.run(["gz", "fuel", "download", "-u", uri], check=True)
             reference.validate_scenario(
-                args.project_root, scenario(args.project_root, world)
+                args.project_root, scenario(args.project_root, world, registry=registry)
             )
             print(f"Verified {world}: {reference.area:.2f} m² ({reference.identity})")
     except (ValueError, OSError, subprocess.CalledProcessError) as exc:

@@ -1,0 +1,580 @@
+{
+  "id": "sc1_square_loop_coverage_v2",
+  "metric_version": 2,
+  "target_margin_m": 0.1,
+  "world": "sc1_square_loop",
+  "spawn": [
+    0.0,
+    -13.5,
+    0.1,
+    0.0
+  ],
+  "resolution": 0.05,
+  "origin": [
+    -16.6,
+    -16.6,
+    0.0
+  ],
+  "width": 664,
+  "height": 664,
+  "target_cells": 121642,
+  "target_area_m2": 304.1050000000001,
+  "grid_file": "sc1_square_loop.npz",
+  "grid_sha256": "b0e3c984a9c92853729b28ee40d610b99792a6a7e77c55b03ce728a07f2489a4",
+  "source_sha256": {
+    "world_collection/worlds/SC1_square_loop/SC1_square_loop.sdf": "bca8497c77baf9bff2295f00c1ff1a21bff3182b4babe127360436aa12efea61",
+    "exploration_benchmark_runner/config/coverage/sc1_square_loop_scenario.yaml": "c90c2d2e8cc28f96a2ff02b55ab24aa076df9e44c340eb747e67bb10e1ee5843",
+    "simulation/Week-7-8-ROS2-Navigation/bme_ros2_navigation/urdf/mogi_bot.urdf": "11b3a0684efb4f44bd12719f36ed6732b6dbf1d4570ea14580f4e81ba8af263a"
+  },
+  "generation": {
+    "body_height_slab": [
+      0.03,
+      0.35
+    ],
+    "settings": {
+      "bounds": [
+        -16.6,
+        -16.6,
+        16.6,
+        16.6
+      ],
+      "inclusion_polygons": [
+        [
+          [
+            -15.4,
+            5.0
+          ],
+          [
+            -15.0,
+            5.0
+          ],
+          [
+            -15.0,
+            -15.0
+          ],
+          [
+            -6.5,
+            -15.0
+          ],
+          [
+            -6.5,
+            -15.4
+          ],
+          [
+            -5.5,
+            -15.4
+          ],
+          [
+            -5.5,
+            -15.0
+          ],
+          [
+            4.0,
+            -15.0
+          ],
+          [
+            4.0,
+            -15.4
+          ],
+          [
+            5.0,
+            -15.4
+          ],
+          [
+            5.0,
+            -15.0
+          ],
+          [
+            15.0,
+            -15.0
+          ],
+          [
+            15.0,
+            -2.5
+          ],
+          [
+            15.4,
+            -2.5
+          ],
+          [
+            15.4,
+            -1.5
+          ],
+          [
+            15.0,
+            -1.5
+          ],
+          [
+            15.0,
+            15.0
+          ],
+          [
+            8.5,
+            15.0
+          ],
+          [
+            8.5,
+            15.4
+          ],
+          [
+            7.5,
+            15.4
+          ],
+          [
+            7.5,
+            15.0
+          ],
+          [
+            -15.0,
+            15.0
+          ],
+          [
+            -15.0,
+            6.0
+          ],
+          [
+            -15.4,
+            6.0
+          ]
+        ]
+      ],
+      "exclusion_polygons": [],
+      "review": "SC1 Square loop: inclusion polygon of world.yaml; bounds = T0 grid extent",
+      "source": {
+        "world_yaml": "world_collection/worlds/SC1_square_loop/world.yaml",
+        "worldgen_version": "1.0.1"
+      }
+    },
+    "connectivity": "4-connected free floor from spawn; not a footprint planner",
+    "unreachable_free_cells": 0,
+    "collision_records": [
+      {
+        "model": "ground_plane",
+        "collision": "ground_collision",
+        "bounds": [
+          [
+            -17.6,
+            -17.6,
+            -0.05
+          ],
+          [
+            17.6,
+            17.6,
+            0.0
+          ]
+        ]
+      },
+      {
+        "model": "SC1_structure",
+        "collision": "outer_e_00_col",
+        "bounds": [
+          [
+            15.0,
+            -15.0,
+            0.0
+          ],
+          [
+            15.2,
+            -2.5,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC1_structure",
+        "collision": "outer_e_01_col",
+        "bounds": [
+          [
+            15.0,
+            -1.5,
+            0.0
+          ],
+          [
+            15.2,
+            15.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC1_structure",
+        "collision": "outer_n_00_col",
+        "bounds": [
+          [
+            -15.2,
+            15.0,
+            0.0
+          ],
+          [
+            7.5,
+            15.2,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC1_structure",
+        "collision": "outer_n_01_col",
+        "bounds": [
+          [
+            8.5,
+            15.0,
+            0.0
+          ],
+          [
+            15.2,
+            15.2,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC1_structure",
+        "collision": "outer_s_00_col",
+        "bounds": [
+          [
+            -15.2,
+            -15.2,
+            0.0
+          ],
+          [
+            -6.5,
+            -15.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC1_structure",
+        "collision": "outer_s_01_col",
+        "bounds": [
+          [
+            -5.5,
+            -15.2,
+            0.0
+          ],
+          [
+            4.0,
+            -15.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC1_structure",
+        "collision": "outer_s_02_col",
+        "bounds": [
+          [
+            5.0,
+            -15.2,
+            0.0
+          ],
+          [
+            15.2,
+            -15.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC1_structure",
+        "collision": "outer_w_00_col",
+        "bounds": [
+          [
+            -15.2,
+            -15.0,
+            0.0
+          ],
+          [
+            -15.0,
+            5.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC1_structure",
+        "collision": "outer_w_01_col",
+        "bounds": [
+          [
+            -15.2,
+            6.0,
+            0.0
+          ],
+          [
+            -15.0,
+            15.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC1_structure",
+        "collision": "recess_l1_a_col",
+        "bounds": [
+          [
+            -6.699999999999999,
+            -15.6,
+            0.0
+          ],
+          [
+            -6.5,
+            -15.200000000000001,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC1_structure",
+        "collision": "recess_l1_b_col",
+        "bounds": [
+          [
+            -5.5,
+            -15.6,
+            0.0
+          ],
+          [
+            -5.300000000000001,
+            -15.200000000000001,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC1_structure",
+        "collision": "recess_l1_back_col",
+        "bounds": [
+          [
+            -6.5,
+            -15.6,
+            0.0
+          ],
+          [
+            -5.5,
+            -15.4,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC1_structure",
+        "collision": "recess_l2_a_col",
+        "bounds": [
+          [
+            3.8,
+            -15.6,
+            0.0
+          ],
+          [
+            4.0,
+            -15.200000000000001,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC1_structure",
+        "collision": "recess_l2_b_col",
+        "bounds": [
+          [
+            5.0,
+            -15.6,
+            0.0
+          ],
+          [
+            5.199999999999999,
+            -15.200000000000001,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC1_structure",
+        "collision": "recess_l2_back_col",
+        "bounds": [
+          [
+            4.0,
+            -15.6,
+            0.0
+          ],
+          [
+            5.0,
+            -15.4,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC1_structure",
+        "collision": "recess_l3_a_col",
+        "bounds": [
+          [
+            15.200000000000001,
+            -2.7,
+            0.0
+          ],
+          [
+            15.6,
+            -2.5,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC1_structure",
+        "collision": "recess_l3_b_col",
+        "bounds": [
+          [
+            15.200000000000001,
+            -1.5,
+            0.0
+          ],
+          [
+            15.6,
+            -1.2999999999999998,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC1_structure",
+        "collision": "recess_l3_back_col",
+        "bounds": [
+          [
+            15.4,
+            -2.5,
+            0.0
+          ],
+          [
+            15.6,
+            -1.5,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC1_structure",
+        "collision": "recess_l4_a_col",
+        "bounds": [
+          [
+            7.300000000000001,
+            15.200000000000001,
+            0.0
+          ],
+          [
+            7.5,
+            15.6,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC1_structure",
+        "collision": "recess_l4_b_col",
+        "bounds": [
+          [
+            8.5,
+            15.200000000000001,
+            0.0
+          ],
+          [
+            8.7,
+            15.6,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC1_structure",
+        "collision": "recess_l4_back_col",
+        "bounds": [
+          [
+            7.5,
+            15.4,
+            0.0
+          ],
+          [
+            8.5,
+            15.6,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC1_structure",
+        "collision": "recess_l5_a_col",
+        "bounds": [
+          [
+            -15.6,
+            4.800000000000001,
+            0.0
+          ],
+          [
+            -15.200000000000001,
+            5.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC1_structure",
+        "collision": "recess_l5_b_col",
+        "bounds": [
+          [
+            -15.6,
+            6.0,
+            0.0
+          ],
+          [
+            -15.200000000000001,
+            6.199999999999999,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC1_structure",
+        "collision": "recess_l5_back_col",
+        "bounds": [
+          [
+            -15.6,
+            5.0,
+            0.0
+          ],
+          [
+            -15.4,
+            6.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC1_structure",
+        "collision": "core_col",
+        "bounds": [
+          [
+            -12.0,
+            -12.0,
+            0.0
+          ],
+          [
+            12.0,
+            12.0,
+            2.0
+          ]
+        ]
+      }
+    ],
+    "generator_sha256": "5613e07de31429608b7bb91a5d931b4983603c26a7c5bfece3de7a0979f760a0",
+    "tool_versions": {
+      "numpy": "2.4.4",
+      "scipy": "1.17.1",
+      "shapely": "2.1.2",
+      "trimesh": "4.12.2"
+    },
+    "world_yaml": "world_collection/worlds/SC1_square_loop/world.yaml",
+    "worldgen_version": "1.0.1",
+    "seed": null,
+    "registry_id": "sc1_square_loop"
+  }
+}

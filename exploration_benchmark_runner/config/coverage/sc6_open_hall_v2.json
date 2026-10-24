@@ -1,0 +1,740 @@
+{
+  "id": "sc6_open_hall_coverage_v2",
+  "metric_version": 2,
+  "target_margin_m": 0.1,
+  "world": "sc6_open_hall",
+  "spawn": [
+    0.0,
+    0.0,
+    0.1,
+    0.0
+  ],
+  "resolution": 0.05,
+  "origin": [
+    -21.2,
+    -21.2,
+    0.0
+  ],
+  "width": 848,
+  "height": 848,
+  "target_cells": 624832,
+  "target_area_m2": 1562.0800000000004,
+  "grid_file": "sc6_open_hall.npz",
+  "grid_sha256": "be27ed873e6702d501cf067c6518d590a11c6b23a4ceccd1b97c622af197232b",
+  "source_sha256": {
+    "world_collection/worlds/SC6_open_hall/SC6_open_hall.sdf": "542284c2ddb7006cfae67475718cf644c6bee2f86377f67a031fa3b1ead84dcd",
+    "exploration_benchmark_runner/config/coverage/sc6_open_hall_scenario.yaml": "866048f2cb0fac8b89bc2db77c4353f86992f16a55007508bd6888598fb16fce",
+    "simulation/Week-7-8-ROS2-Navigation/bme_ros2_navigation/urdf/mogi_bot.urdf": "11b3a0684efb4f44bd12719f36ed6732b6dbf1d4570ea14580f4e81ba8af263a"
+  },
+  "generation": {
+    "body_height_slab": [
+      0.03,
+      0.35
+    ],
+    "settings": {
+      "bounds": [
+        -21.2,
+        -21.2,
+        21.2,
+        21.2
+      ],
+      "inclusion_polygons": [
+        [
+          [
+            -20.0,
+            -20.0
+          ],
+          [
+            20.0,
+            -20.0
+          ],
+          [
+            20.0,
+            20.0
+          ],
+          [
+            -20.0,
+            20.0
+          ]
+        ]
+      ],
+      "exclusion_polygons": [],
+      "review": "SC6 Open hall: inclusion polygon of world.yaml; bounds = T0 grid extent",
+      "source": {
+        "world_yaml": "world_collection/worlds/SC6_open_hall/world.yaml",
+        "worldgen_version": "1.0.1"
+      }
+    },
+    "connectivity": "4-connected free floor from spawn; not a footprint planner",
+    "unreachable_free_cells": 0,
+    "collision_records": [
+      {
+        "model": "ground_plane",
+        "collision": "ground_collision",
+        "bounds": [
+          [
+            -22.25,
+            -22.25,
+            -0.05
+          ],
+          [
+            22.25,
+            22.25,
+            0.0
+          ]
+        ]
+      },
+      {
+        "model": "SC6_structure",
+        "collision": "outer_e_00_col",
+        "bounds": [
+          [
+            20.0,
+            -20.0,
+            0.0
+          ],
+          [
+            20.200000000000003,
+            20.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC6_structure",
+        "collision": "outer_n_00_col",
+        "bounds": [
+          [
+            -20.2,
+            20.0,
+            0.0
+          ],
+          [
+            20.2,
+            20.200000000000003,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC6_structure",
+        "collision": "outer_s_00_col",
+        "bounds": [
+          [
+            -20.2,
+            -20.200000000000003,
+            0.0
+          ],
+          [
+            20.2,
+            -20.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC6_structure",
+        "collision": "outer_w_00_col",
+        "bounds": [
+          [
+            -20.200000000000003,
+            -20.0,
+            0.0
+          ],
+          [
+            -20.0,
+            20.0,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC6_structure",
+        "collision": "p1_col",
+        "bounds": [
+          [
+            -15.3,
+            -14.8,
+            0.0
+          ],
+          [
+            -14.7,
+            -14.2,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC6_structure",
+        "collision": "p10_col",
+        "bounds": [
+          [
+            2.7,
+            -10.3,
+            0.0
+          ],
+          [
+            3.3,
+            -9.7,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC6_structure",
+        "collision": "p11_col",
+        "bounds": [
+          [
+            7.7,
+            -10.3,
+            0.0
+          ],
+          [
+            8.3,
+            -9.7,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC6_structure",
+        "collision": "p12_col",
+        "bounds": [
+          [
+            15.2,
+            -8.3,
+            0.0
+          ],
+          [
+            15.8,
+            -7.7,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC6_structure",
+        "collision": "p13_col",
+        "bounds": [
+          [
+            -16.3,
+            -2.3,
+            0.0
+          ],
+          [
+            -15.7,
+            -1.7,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC6_structure",
+        "collision": "p14_col",
+        "bounds": [
+          [
+            -10.3,
+            -4.3,
+            0.0
+          ],
+          [
+            -9.7,
+            -3.7,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC6_structure",
+        "collision": "p15_col",
+        "bounds": [
+          [
+            -3.3,
+            -2.8,
+            0.0
+          ],
+          [
+            -2.7,
+            -2.2,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC6_structure",
+        "collision": "p16_col",
+        "bounds": [
+          [
+            3.7,
+            -2.3,
+            0.0
+          ],
+          [
+            4.3,
+            -1.7,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC6_structure",
+        "collision": "p17_col",
+        "bounds": [
+          [
+            9.2,
+            -3.8,
+            0.0
+          ],
+          [
+            9.8,
+            -3.2,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC6_structure",
+        "collision": "p18_col",
+        "bounds": [
+          [
+            13.7,
+            -2.8,
+            0.0
+          ],
+          [
+            14.3,
+            -2.2,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC6_structure",
+        "collision": "p19_col",
+        "bounds": [
+          [
+            -15.8,
+            3.7,
+            0.0
+          ],
+          [
+            -15.2,
+            4.3,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC6_structure",
+        "collision": "p2_col",
+        "bounds": [
+          [
+            -8.3,
+            -14.8,
+            0.0
+          ],
+          [
+            -7.7,
+            -14.2,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC6_structure",
+        "collision": "p20_col",
+        "bounds": [
+          [
+            -9.8,
+            2.2,
+            0.0
+          ],
+          [
+            -9.2,
+            2.8,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC6_structure",
+        "collision": "p21_col",
+        "bounds": [
+          [
+            -4.3,
+            2.7,
+            0.0
+          ],
+          [
+            -3.7,
+            3.3,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC6_structure",
+        "collision": "p22_col",
+        "bounds": [
+          [
+            3.2,
+            3.7,
+            0.0
+          ],
+          [
+            3.8,
+            4.3,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC6_structure",
+        "collision": "p23_col",
+        "bounds": [
+          [
+            9.2,
+            1.7,
+            0.0
+          ],
+          [
+            9.8,
+            2.3,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC6_structure",
+        "collision": "p24_col",
+        "bounds": [
+          [
+            14.7,
+            3.2,
+            0.0
+          ],
+          [
+            15.3,
+            3.8,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC6_structure",
+        "collision": "p25_col",
+        "bounds": [
+          [
+            -15.3,
+            9.2,
+            0.0
+          ],
+          [
+            -14.7,
+            9.8,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC6_structure",
+        "collision": "p26_col",
+        "bounds": [
+          [
+            -8.3,
+            7.7,
+            0.0
+          ],
+          [
+            -7.7,
+            8.3,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC6_structure",
+        "collision": "p27_col",
+        "bounds": [
+          [
+            -2.3,
+            7.7,
+            0.0
+          ],
+          [
+            -1.7,
+            8.3,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC6_structure",
+        "collision": "p28_col",
+        "bounds": [
+          [
+            3.7,
+            8.7,
+            0.0
+          ],
+          [
+            4.3,
+            9.3,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC6_structure",
+        "collision": "p29_col",
+        "bounds": [
+          [
+            8.7,
+            7.7,
+            0.0
+          ],
+          [
+            9.3,
+            8.3,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC6_structure",
+        "collision": "p3_col",
+        "bounds": [
+          [
+            -3.3,
+            -16.3,
+            0.0
+          ],
+          [
+            -2.7,
+            -15.7,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC6_structure",
+        "collision": "p30_col",
+        "bounds": [
+          [
+            15.2,
+            9.7,
+            0.0
+          ],
+          [
+            15.8,
+            10.3,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC6_structure",
+        "collision": "p31_col",
+        "bounds": [
+          [
+            -15.3,
+            14.7,
+            0.0
+          ],
+          [
+            -14.7,
+            15.3,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC6_structure",
+        "collision": "p32_col",
+        "bounds": [
+          [
+            -8.8,
+            15.2,
+            0.0
+          ],
+          [
+            -8.2,
+            15.8,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC6_structure",
+        "collision": "p33_col",
+        "bounds": [
+          [
+            -2.8,
+            13.7,
+            0.0
+          ],
+          [
+            -2.2,
+            14.3,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC6_structure",
+        "collision": "p34_col",
+        "bounds": [
+          [
+            3.7,
+            13.7,
+            0.0
+          ],
+          [
+            4.3,
+            14.3,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC6_structure",
+        "collision": "p35_col",
+        "bounds": [
+          [
+            9.2,
+            14.7,
+            0.0
+          ],
+          [
+            9.8,
+            15.3,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC6_structure",
+        "collision": "p36_col",
+        "bounds": [
+          [
+            14.2,
+            15.7,
+            0.0
+          ],
+          [
+            14.8,
+            16.3,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC6_structure",
+        "collision": "p4_col",
+        "bounds": [
+          [
+            1.7,
+            -15.8,
+            0.0
+          ],
+          [
+            2.3,
+            -15.2,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC6_structure",
+        "collision": "p5_col",
+        "bounds": [
+          [
+            9.2,
+            -14.8,
+            0.0
+          ],
+          [
+            9.8,
+            -14.2,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC6_structure",
+        "collision": "p6_col",
+        "bounds": [
+          [
+            14.2,
+            -15.8,
+            0.0
+          ],
+          [
+            14.8,
+            -15.2,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC6_structure",
+        "collision": "p7_col",
+        "bounds": [
+          [
+            -15.8,
+            -8.8,
+            0.0
+          ],
+          [
+            -15.2,
+            -8.2,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC6_structure",
+        "collision": "p8_col",
+        "bounds": [
+          [
+            -9.3,
+            -8.8,
+            0.0
+          ],
+          [
+            -8.7,
+            -8.2,
+            2.0
+          ]
+        ]
+      },
+      {
+        "model": "SC6_structure",
+        "collision": "p9_col",
+        "bounds": [
+          [
+            -3.3,
+            -8.3,
+            0.0
+          ],
+          [
+            -2.7,
+            -7.7,
+            2.0
+          ]
+        ]
+      }
+    ],
+    "generator_sha256": "5613e07de31429608b7bb91a5d931b4983603c26a7c5bfece3de7a0979f760a0",
+    "tool_versions": {
+      "numpy": "2.4.4",
+      "scipy": "1.17.1",
+      "shapely": "2.1.2",
+      "trimesh": "4.12.2"
+    },
+    "world_yaml": "world_collection/worlds/SC6_open_hall/world.yaml",
+    "worldgen_version": "1.0.1",
+    "seed": null,
+    "registry_id": "sc6_open_hall"
+  }
+}

@@ -1,0 +1,117 @@
+{
+ "version": "world-descriptors-v1",
+ "grid": {
+  "source": "coverage_reference",
+  "reference_id": "rp3_santa_maria_del_mar_coverage_v2",
+  "metadata_sha256": "9ba2cfab899c653cbc8fecb6bb09fe55d4aa23d97eb841f4692e2d9cdd97813e",
+  "grid_sha256": "1f79b7827e4fa8b5462a7ae1477b72d3f70b7ff159bbb44f17fe06ca679cefe1",
+  "resolution_m": 0.05,
+  "seed": 2026,
+  "free_space": "inclusion & ~collision",
+  "padding_cells": 2,
+  "free_floor_touches_grid_edge": false
+ },
+ "area_m2": 9104.32,
+ "clearance_m": {
+  "median": 1.304,
+  "p10": 0.269,
+  "p90": 4.025
+ },
+ "clearance_max_m": 7.337,
+ "char_dim_m": {
+  "median": 7.775,
+  "n": 400,
+  "mc_halfwidth": 1.488
+ },
+ "dispersion": {
+  "mean": 1.945,
+  "n": 400,
+  "mc_se": 0.071
+ },
+ "nav_complexity": {
+  "median": 1.2431,
+  "p90": 1.595,
+  "n": 400,
+  "grid_m": 0.1
+ },
+ "narrowest_passage_m": 1.3342,
+ "min_gap_m": 1.6705,
+ "loops": 16,
+ "loops_unsized": 16,
+ "dead_ends": 7,
+ "junctions": 37,
+ "regions": 2,
+ "robots": {
+  "mogi": {
+   "radius_m": 0.29,
+   "r_eff_m": 10.0,
+   "visible_area_m2": {
+    "mean": 136.86,
+    "n": 400,
+    "mc_se": 3.07
+   },
+   "visible_fraction": 0.015,
+   "area_over_pi_r2": 28.9799,
+   "spawn_visible_fraction": {
+    "S1": 0.0079,
+    "S2": 0.0259,
+    "S3": 0.0266
+   }
+  }
+ },
+ "regions_worldgen_watershed": 3,
+ "region_growth": "geodesic-nearest-core",
+ "region_core_min_m2": 1.0,
+ "spawns": [
+  {
+   "id": "S1",
+   "x": 46.25,
+   "y": 67.25
+  },
+  {
+   "id": "S2",
+   "x": -121.35,
+   "y": -48.55
+  },
+  {
+   "id": "S3",
+   "x": 78.35,
+   "y": -87.05
+  }
+ ],
+ "region_raster": {
+  "file": "regions.png",
+  "sha256": "6cfa6d2f72d670687abc0bf58eb1c9be2f68f8f634f45d15037cc0e769575582",
+  "encoding": "16-bit greyscale PNG; row 0 = largest y; 0 outside F; 1 … n grown regions",
+  "labels": [
+   {
+    "label": 1,
+    "cells": 3625104,
+    "area_m2": 9062.76,
+    "counted": true
+   },
+   {
+    "label": 2,
+    "cells": 16623,
+    "area_m2": 41.5575,
+    "counted": true
+   }
+  ]
+ },
+ "regions_counted": [
+  1,
+  2
+ ],
+ "software": {
+  "worldgen": "1.0.1",
+  "worldgen_sha256": {
+   "descriptors.py": "720ac3623029c635372f961aaf8aea6035a774e7198d056ed33139362a12e82b",
+   "raster.py": "5ead4fb5ab653b14fb46a2fbb51961fecc746507f17315cada9dd0c85d6ae59d",
+   "checks.py": "c6a98afbe31afc2d157792671da81ed6c72ab8cbe5525702be59e6b97268e329",
+   "rng.py": "b9b5716a69bcbaaf3e4ceb308341b7d40d80a1e38ddf313add3daacde65235b3"
+  },
+  "numpy": "2.2.6",
+  "scipy": "1.15.3",
+  "adapter_sha256": "358d4da244bd096d2a1d262a970276c511605fd367c003e99dc3706b6937eb50"
+ }
+}

@@ -31,7 +31,9 @@
   mark at distance 0 and its pre-motion coverage (FX-7). No band, no carry-forward, no distance-to-coverage table.
 
 Counts and values the figures compute (gate results, RTF extremes, end distances) are descriptive display
-quantities in the sidecar, never cited. F16's panel grid is ``figures.stratum_grid``.
+quantities in the sidecar, never cited. F16's panel grid is ``figures.stratum_grid``, one figure per world group
+and page (``figures.grouped``, plans/worlds/I8 §3.1); F15's labels name the stratum's group when the study has
+several (``figures.stratum_variants``).
 """
 
 from collections import Counter, defaultdict
@@ -54,6 +56,9 @@ from .figures import (
     FigureContext,
     FigureOut,
     finish,
+    grid_fits,
+    group_inputs,
+    grouped,
     legend,
     panel_message,
     panel_title,
@@ -750,5 +755,7 @@ def figures(ctx: FigureContext) -> Iterator[FigureOut]:
         Reads(ctx.study.export)
     )  # once for the module; each figure hashes its own reads
     for stratum, name, label in stratum_variants(ctx, "F15"):
-        yield f15(ctx, stratum, (name, label), Reads(ctx.study.export), formats)
-    yield f16(ctx)
+        built = f15(ctx, stratum, (name, label), Reads(ctx.study.export), formats)
+        built.inputs |= group_inputs(ctx, stratum)
+        yield built
+    yield from grouped(ctx, f16, grid_fits)  # once per world group and page (plans/worlds/I8 §3.1)

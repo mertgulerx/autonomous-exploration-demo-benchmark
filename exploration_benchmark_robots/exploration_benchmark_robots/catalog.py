@@ -21,6 +21,11 @@ import math
 from pathlib import Path
 import yaml
 
+# Version 2 leaves each robot's world fit and spawn heights to the world registry
+# (exploration_benchmark_runner/config/worlds.yaml).
+ROBOT_CATALOG_VERSION = 2
+REGISTRY_FILE = "exploration_benchmark_runner/config/worlds.yaml"
+
 
 def profile_hash(profile):
     return hashlib.sha256(json.dumps(profile, sort_keys=True).encode()).hexdigest()
@@ -60,14 +65,62 @@ def resolve_physical_settings(profile, overrides=None):
     return profile
 
 
+def fill_robot_profiles(catalog, registry):
+    """The profiles of a ``robots.yaml`` mapping, world fit filled from the registry.
+
+    ``registry`` is the world registry (``exploration_benchmark_runner.worlds``
+    ``WorldRegistry``; only ``runnable()`` and each world's ``id`` and ``robots`` fits
+    are read, so this package does not import the runner, which depends on it). Each
+    profile gains ``worlds`` (the runnable registry worlds that fit it, in registry
+    order, as ``scenarios`` and the suite catalog list them) and, where the registry
+    sets a height, ``spawn_z_by_world``. The catalog must be version 2, which leaves
+    both to the registry; a stale catalog that still carries them is refused.
+    """
+    if not isinstance(catalog, dict):
+        raise ValueError("Robot catalog: expected a mapping")
+    if catalog.get("catalog_version") != ROBOT_CATALOG_VERSION:
+        raise ValueError(
+            f"Robot catalog: catalog_version must be {ROBOT_CATALOG_VERSION} "
+            "(world fit and spawn heights live in the world registry)"
+        )
+    profiles = deepcopy(catalog.get("robots"))
+    if not isinstance(profiles, dict) or not profiles:
+        raise ValueError("Robot catalog: robots must be a non-empty mapping")
+    for robot_id, profile in profiles.items():
+        if not isinstance(profile, dict):
+            raise ValueError(f"{robot_id}: expected a mapping")
+        for key in ("worlds", "spawn_z_by_world"):
+            if key in profile:
+                raise ValueError(
+                    f"{robot_id}: {key} belongs in the world registry ({REGISTRY_FILE})"
+                )
+        worlds, heights = [], {}
+        for world in registry.runnable():
+            for fit in world.robots:
+                if fit.robot_id == robot_id:
+                    worlds.append(world.id)
+                    if fit.spawn_z is not None:
+                        heights[world.id] = fit.spawn_z
+        profile["worlds"] = worlds
+        if heights:
+            profile["spawn_z_by_world"] = heights
+    return profiles
+
+
 class RobotCatalog:
-    def __init__(self, directory=None, package_lookup=None):
+    def __init__(self, directory=None, package_lookup=None, *, worlds):
+        """``worlds``: the world registry (``exploration_benchmark_runner.worlds``) that
+        fills each profile's world fit (``fill_robot_profiles``): the checkout's for the
+        suite and tools, the installed one for the manual runner
+        (``configuration.installed_worlds``). Callers load it, because the runner
+        depends on this package."""
         from ament_index_python.packages import get_package_share_directory
 
         self.lookup = package_lookup or get_package_share_directory
+        self.registry = worlds
         self.directory = Path(directory or self.lookup("exploration_benchmark_robots"))
         data = yaml.safe_load((self.directory / "config/robots.yaml").read_text())
-        self.profiles = data["robots"]
+        self.profiles = fill_robot_profiles(data, self.registry)
         self.default = data["default_robot"]
         for robot_id, profile in self.profiles.items():
             if profile["id"] != robot_id:

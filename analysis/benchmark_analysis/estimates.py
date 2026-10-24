@@ -37,7 +37,7 @@ from typing import Any
 
 import numpy as np
 
-from . import stats
+from . import stats, worlds
 from .data import (
     EXCLUDED,
     REPORTED,
@@ -52,7 +52,8 @@ from .data import (
     idle_tail,
     restricted_time,
 )
-from .settings import Hypothesis, Settings
+from .settings import SINGLE_INSTANCE_FAMILIES, Hypothesis, Settings
+from .streams import Reads
 
 STATS_FORMAT = "stats-v1"
 HORIZON_ESTIMANDS: dict[str, Callable[[Study, Row, float, float], Value]] = {
@@ -774,14 +775,30 @@ def _success_split(
 # Hypotheses ----------------------------------------------------------------------------------------------------
 
 
-def _hypothesis_strata(context: EstimateContext, hypothesis: Hypothesis) -> list[Stratum]:
-    """The strata a hypothesis addresses: its profile's robot, in its world (every spawn of that world)."""
+def _hypothesis_strata(
+    context: EstimateContext, hypothesis: Hypothesis, family: frozenset[str]
+) -> list[Stratum]:
+    """The strata a hypothesis addresses: its profile's robot, in its world (every spawn of that world); a
+    pooled hypothesis takes every named world, F5-01 included, and no other world of a generated family
+    (those combine only through the family estimands, METHODOLOGY §2.5, §4.8). ``family``: the study's
+    family worlds (``_family_worlds``)."""
     robot = context.study.profiles.get(hypothesis.profile, {}).get("robot_id")
+    if hypothesis.world == "pooled":
+        return [s for s in context.study.strata if s.robot_id == robot and s.world_id not in family]
     return [
-        s
-        for s in context.study.strata
-        if s.robot_id == robot and (hypothesis.world == "pooled" or s.world_id == hypothesis.world)
+        s for s in context.study.strata if s.robot_id == robot and s.world_id == hypothesis.world
     ]
+
+
+def _family_worlds(study: Study) -> frozenset[str]:
+    """The study's worlds of a generated family with family estimands (none for an export without a ``worlds``
+    table); a single-instance family's world (F5-01) is a named world."""
+    listed = worlds.worlds(Reads(study.export)) or {}
+    return frozenset(
+        w
+        for w, world in listed.items()
+        if world.family is not None and world.family not in SINGLE_INSTANCE_FAMILIES
+    )
 
 
 def _hypothesis_read(
@@ -853,11 +870,23 @@ def _hypothesis_entry(context: EstimateContext, hypothesis: Hypothesis) -> dict[
     base: dict[str, Any] = dict(
         hypothesis_id=hypothesis.id, hypothesis_endpoint=hypothesis.endpoint, role="confirmatory"
     )
-    strata = _hypothesis_strata(context, hypothesis)
+    family = _family_worlds(context.study) if hypothesis.world == "pooled" else frozenset()
+    strata = _hypothesis_strata(context, hypothesis, family)
+    family_only = False
+    if hypothesis.world == "pooled":
+        left_out = sorted({s.world_id for s in context.study.strata} & family)
+        if left_out:
+            base["family_worlds_left_out"] = left_out
+        robot = context.study.profiles.get(hypothesis.profile, {}).get("robot_id")
+        own = [s for s in context.study.strata if s.robot_id == robot]
+        family_only = bool(own) and all(s.world_id in family for s in own)
     if not strata:
-        return _untestable(
-            hypothesis, base, f"no stratum of world {hypothesis.world} for the profile's robot"
+        why = (
+            "every world of the profile's robot is in a generated family (METHODOLOGY §2.5)"
+            if family_only
+            else f"no stratum of world {hypothesis.world} for the profile's robot"
         )
+        return _untestable(hypothesis, base, why)
     if hypothesis.world == "pooled":
         return _pooled(context, hypothesis, strata, base)
     baseline = context.study.baselines.get(strata[0].robot_id, "")

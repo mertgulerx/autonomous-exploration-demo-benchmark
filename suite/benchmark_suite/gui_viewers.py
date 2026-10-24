@@ -55,6 +55,8 @@ from .yaml_io import load_mapping
 Kind = Literal["gazebo", "rviz"]
 TITLES: dict[Kind, str] = {"gazebo": "Gazebo", "rviz": "RViz"}
 ROOT = Path(__file__).resolve().parents[2]
+# The world registry (exploration_benchmark_runner/worlds.py REGISTRY_FILE).
+REGISTRY_FILE = "exploration_benchmark_runner/config/worlds.yaml"
 NAVIGATION_VIEW = (
     ROOT / "simulation/Week-7-8-ROS2-Navigation/bme_ros2_navigation/rviz/navigation.rviz"
 )
@@ -108,7 +110,8 @@ def robot_family(robot_id: str) -> str:
 
 def gazebo_resources(directory: str) -> tuple[str, ...]:
     """The run's Gazebo resource paths: the robot's ``resource_paths`` recorded in the attempt manifest (absent
-    before the robot is prepared), then the world launch's model directories in this checkout."""
+    before the robot is prepared), then the world launch's model directories in this checkout and every
+    registry world's ``resource_paths`` (``worlds.yaml``), as the world launch adds them."""
     recorded: list[str] = []
     manifest = Path(directory) / "manifest.json"
     if directory and manifest.is_file():
@@ -119,7 +122,26 @@ def gazebo_resources(directory: str) -> tuple[str, ...]:
         recorded = [str(path) for path in configuration.get("resource_paths") or []]
     models = [ROOT / "simulation/Week-7-8-ROS2-Navigation/gazebo_models"]
     models += sorted((ROOT / "simulation/worlds").glob("*/models"))
+    models += [ROOT / path for path in registry_resource_paths()]
     return tuple(recorded + [str(path) for path in models if path.is_dir()])
+
+
+def registry_resource_paths() -> list[str]:
+    """Every registry world's extra Gazebo resource directories inside the checkout (repository-relative),
+    in file order. The GUI has no runner package, so it reads the registry as plain YAML; the engine
+    validates it."""
+    try:
+        registry = load_mapping((ROOT / REGISTRY_FILE).read_text())
+    except (OSError, ContractError) as exc:
+        raise ContractError("viewer", f"Cannot read the world registry: {exc}") from exc
+    paths: list[str] = []
+    worlds = registry.get("worlds")
+    for world in worlds.values() if isinstance(worlds, dict) else ():
+        for path in (world or {}).get("resource_paths") or []:
+            inside = isinstance(path, str) and (ROOT / path).resolve().is_relative_to(ROOT)
+            if inside and path not in paths:
+                paths.append(path)
+    return paths
 
 
 def private_directory(environment: Mapping[str, str]) -> Path:

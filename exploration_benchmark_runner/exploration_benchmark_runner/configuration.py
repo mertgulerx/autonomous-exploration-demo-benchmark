@@ -136,25 +136,53 @@ class Catalog:
         return resolved
 
 
-def scenario(root, world, spawn=None):
+def installed_worlds(root):
+    """The manual runner's world registry: the installed copy beside ``profiles.yaml``,
+    with paths relative to the project ``root`` and the installed coverage references.
+    """
+    from ament_index_python.packages import get_package_share_directory
+    from .worlds import WorldRegistry
+
+    share = Path(get_package_share_directory("exploration_benchmark_runner")) / "config"
+    return WorldRegistry.load(
+        root, share / "worlds.yaml", references=share / "coverage"
+    )
+
+
+def scenario(root, world, spawn=None, registry=None):
+    """The world's file, SDF world name and spawn ``[x, y, z, yaw]``.
+
+    A registry ID resolves through the world registry (default: the checkout's), with
+    its default spawn unless ``spawn`` is given. An absolute world file path is for
+    manual use and needs an explicit ``spawn``. ``moving_objects`` (the registry's
+    block as plain data) and ``source`` (the world.yaml of a collection world, its path
+    absolute) are null for tier A and absolute paths.
+    """
     path = Path(world)
-    if not path.is_absolute():
-        candidates = [
-            Path(root) / "simulation/worlds" / world / (world + suffix)
-            for suffix in (".world", ".sdf")
-        ]
-        path = next((p for p in candidates if p.is_file()), candidates[0])
+    moving_objects = source = None
+    if path.is_absolute():
+        if spawn is None:
+            raise ValueError(f"A world file outside the registry needs a spawn: {path}")
+        pose = spawn
+    else:
+        from .worlds import WorldRegistry
+
+        if registry is None:
+            registry = WorldRegistry.load(root)
+        entry = registry.world(world)
+        path = registry.path(entry.world_file)
+        pose = spawn or entry.default_spawn.pose()
+        moving_objects = entry.moving_objects  # a fresh plain copy, or None
+        if entry.source is not None:
+            source = {
+                "world_yaml": str(registry.path(entry.source.world_yaml).resolve()),
+                "world_yaml_sha256": entry.source.world_yaml_sha256,
+            }
     if not path.is_file():
         raise ValueError(f"World does not exist: {path}")
     import xml.etree.ElementTree as ET
 
     name = ET.parse(path).getroot().find("world").attrib["name"]
-    defaults = {
-        "bookstore": [1.23, 6.35, 0.11, -3.10],
-        "corridor": [-8.11, 0.31, 0.10, 0.0],
-        "warehouse": [-12.97, 8.23, 0.10, 1.58],
-    }
-    pose = spawn or defaults.get(world, [2.5, 1.5, 0.5, -1.5707])
     if len(pose) != 4 or not all(math.isfinite(v) for v in pose):
         raise ValueError("Spawn requires finite x, y, z, yaw")
     return {
@@ -162,9 +190,15 @@ def scenario(root, world, spawn=None):
         "world_file": str(path.resolve()),
         "world_name": name,
         "spawn": pose,
+        "moving_objects": moving_objects,
+        "source": source,
     }
 
 
-def scenarios(root):
-    """Only scenarios with established baseline spawn poses are selectable."""
-    return [scenario(root, name) for name in ("bookstore", "corridor", "warehouse")]
+def scenarios(root, registry=None):
+    """Every registry world the runner offers (not development ones), in file order."""
+    from .worlds import WorldRegistry
+
+    if registry is None:
+        registry = WorldRegistry.load(root)
+    return [scenario(root, item.id, registry=registry) for item in registry.runnable()]

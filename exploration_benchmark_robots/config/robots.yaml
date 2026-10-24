@@ -1,4 +1,4 @@
-catalog_version: 1
+catalog_version: 2
 default_robot: mogi
 robots:
   mogi:
@@ -10,10 +10,6 @@ robots:
     model: mogi_bot
     packages:
     - bme_ros2_navigation
-    worlds:
-    - bookstore
-    - corridor
-    - warehouse
     max_linear_speed: 1.0
     native_max_linear_speed: 0.8
     max_angular_speed: 1.0
@@ -55,10 +51,6 @@ robots:
     packages:
     - turtlebot3_gazebo
     - turtlebot3_description
-    worlds:
-    - bookstore
-    - corridor
-    - warehouse
     max_linear_speed: 0.22
     max_angular_speed: 1.0
     max_lateral_speed: 0.0
@@ -74,8 +66,6 @@ robots:
     - - 0.043
       - -0.094
     spawn_z: 0.01
-    spawn_z_by_world:
-      bookstore: 0.04
     physics_step: 0.001
     kinematics: differential
     required_streams:
@@ -104,10 +94,6 @@ robots:
     packages:
     - turtlebot3_gazebo
     - turtlebot3_description
-    worlds:
-    - bookstore
-    - corridor
-    - warehouse
     max_linear_speed: 0.26
     max_angular_speed: 1.0
     max_lateral_speed: 0.0
@@ -123,8 +109,6 @@ robots:
     - - 0.0735
       - -0.158
     spawn_z: 0.01
-    spawn_z_by_world:
-      bookstore: 0.04
     physics_step: 0.001
     kinematics: differential
     required_streams:
@@ -156,10 +140,6 @@ robots:
     - irobot_create_gz_bringup
     - irobot_create_control
     - gz_ros2_control
-    worlds:
-    - bookstore
-    - corridor
-    - warehouse
     max_linear_speed: 0.46
     max_angular_speed: 1.9
     max_lateral_speed: 0.0
@@ -204,10 +184,6 @@ robots:
     - husarion_components_description
     - laser_filters
     - rosbot_localization
-    worlds:
-    - bookstore
-    - corridor
-    - warehouse
     max_linear_speed: 1.1
     max_angular_speed: 3.14
     max_lateral_speed: 0.0
@@ -262,10 +238,6 @@ robots:
     - husarion_ugv_gazebo
     - husarion_components_description
     - laser_filters
-    worlds:
-    - bookstore
-    - corridor
-    - warehouse
     max_linear_speed: 1.5
     max_angular_speed: 4.0
     max_lateral_speed: 0.0

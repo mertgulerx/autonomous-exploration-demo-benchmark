@@ -1,0 +1,15 @@
+# Coverage settings of f2_office_f50x30_r08_d2 (docs/plans/worlds/I2-references-and-scenarios.md §3.3),
+# written by benchmark_reference import; hashed into f2_office_f50x30_r08_d2_v2.json.
+resolution: 0.05
+body_height_slab: [0.03, 0.35]
+scenarios:
+  f2_office_f50x30_r08_d2:
+    bounds: [-26.2, -16.2, 26.2, 16.2]
+    inclusion_polygons:
+    - - [-25.0, -15.0]
+      - [25.0, -15.0]
+      - [25.0, 15.0]
+      - [-25.0, 15.0]
+    exclusion_polygons: []
+    review: 'F2-06 Office 50×30 m, 8 rooms, 2 doors per room: inclusion polygon of world.yaml; bounds = T0 grid extent'
+    source: {world_yaml: world_collection/worlds/F2_office_f50x30_r08_d2/world.yaml, worldgen_version: 1.0.1}

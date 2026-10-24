@@ -43,7 +43,6 @@ that fits the page (not below ``MIN_SCALE``).
 from collections import Counter
 from collections.abc import Iterator
 from dataclasses import dataclass
-import json
 import math
 from typing import Any
 
@@ -69,6 +68,7 @@ from .figures import (
     panel_title,
     reference_files,
     reference_name,
+    group_inputs,
     stratum_variants,
 )
 from .goals import (
@@ -82,13 +82,12 @@ from .goals import (
     read_goals,
 )
 from .streams import (
+    Mask,
     Reads,
     ReferenceCells,
-    Triple,
+    base_poses,
     explored_snapshots,
-    finite_triple,
     reference_cells,
-    to_world,
     world_from_map,
 )
 from .style import EDGE, PAGE_MAX_MM, PRESETS, SEQUENTIAL_CMAP, figure, page_note
@@ -114,19 +113,7 @@ TITLES = (SHARE_LABEL, f"Entries per run, {BIN_M:g} m bins", "Goal poses")
 DESCRIPTIVE = "descriptive display quantity (METHODOLOGY §3), not in stats.json, never cited"
 # goal map keys (goals.Goal.map_key) in drawing order: the most frequent first, reached on top
 GOAL_DRAW_ORDER = ("canceled", ARRIVED, "preempted", "failed", "open", "other", "succeeded")
-GROUND_TRUTH_COLUMNS = [
-    "clock_ns",
-    "simulation_elapsed_ns",
-    "valid",
-    "x",
-    "y",
-    "yaw",
-    "model_to_base_x",
-    "model_to_base_y",
-    "model_to_base_yaw",
-]
 
-Mask = npt.NDArray[np.bool_]
 Floats = npt.NDArray[np.float64]
 Bin = tuple[int, int]  # bin row (row 0 at the smallest y), bin column
 
@@ -209,14 +196,6 @@ def _bins(cells: ReferenceCells) -> Bins:
     return Bins(cells.origin, shape, target)
 
 
-def _model_to_base(reads: Reads, attempt: str) -> Triple | None:
-    """The manifest's model-to-base offset, used for ground-truth rows that do not carry their own."""
-    raw = reads.file(f"raw/{attempt}/manifest.json")
-    if raw is None:
-        return None
-    return finite_triple((json.loads(raw).get("ground_truth_alignment") or {}).get("model_to_base"))
-
-
 def _explored_at(
     reads: Reads, attempt: str, limit_s: float, cells: int
 ) -> tuple[Mask | None, float | None, str | None]:
@@ -236,43 +215,19 @@ def _explored_at(
 def _arrivals(
     reads: Reads, attempt: str, end_s: float, bins: Bins
 ) -> tuple[npt.NDArray[np.intp] | None, int]:
-    """A moving run's arrivals in bins from movement onset to ``end_s`` and the rows counted: the base pose is the
-    Gazebo model pose composed with the row's model-to-base offset (else the manifest's), as the run record's
-    ground-truth path is; consecutive rows in one bin are one arrival. None without a usable row (no stream,
-    every row invalid or without an offset): unavailable, not zero."""
-    table = reads.raw(attempt, "ground_truth", GROUND_TRUTH_COLUMNS)
-    if table is None:
+    """A moving run's arrivals in bins from movement onset to ``end_s`` and the rows counted (``base_poses``);
+    consecutive rows in one bin are one arrival. None without a usable row (no stream, every row invalid or
+    without an offset): unavailable, not zero."""
+    poses = base_poses(reads, attempt, end_s)
+    if poses is None:
         return None, 0
-    rows = sorted(
-        (
-            r
-            for r in table.to_pylist()
-            if r["simulation_elapsed_ns"] is not None
-            and r["simulation_elapsed_ns"] / 1e9 <= end_s + TIME_EPSILON
-            and r["valid"]
-            and r["clock_ns"] is not None
-        ),
-        key=lambda r: r["clock_ns"],
-    )
-    fallback: Triple | None = None
     found: list[Bin] = []
-    samples = 0
-    for row in rows:
-        model = finite_triple([row["x"], row["y"], row["yaw"]])
-        offset = finite_triple([row[k] for k in GROUND_TRUTH_COLUMNS[-3:]])
-        if offset is None:
-            fallback = fallback or _model_to_base(reads, attempt)
-            offset = fallback
-        if model is None or offset is None:
-            continue
-        # the base pose: the model pose composed with the offset (to_world turns it by the model's yaw)
-        base_x, base_y = to_world(model, offset[0], offset[1])
-        bx, by = base_x - bins.origin[0], base_y - bins.origin[1]
+    for pose in poses:
+        bx, by = pose.x - bins.origin[0], pose.y - bins.origin[1]
         cell = (math.floor(by / BIN_M), math.floor(bx / BIN_M))
-        samples += 1
         if not found or found[-1] != cell:
             found.append(cell)
-    return (np.array(found, dtype=np.intp) if found else None), samples
+    return (np.array(found, dtype=np.intp) if found else None), len(poses)
 
 
 def _run_layers(
@@ -823,4 +778,6 @@ def _figure(ctx: FigureContext, stratum: Stratum, name: str, variant_label: str)
 def figures(ctx: FigureContext) -> Iterator[FigureOut]:
     """One F17 per stratum (``figures.stratum_variants``), each built when the caller asks for it."""
     for stratum, name, label in stratum_variants(ctx, "F17"):
-        yield _figure(ctx, stratum, name, label)
+        built = _figure(ctx, stratum, name, label)
+        built.inputs |= group_inputs(ctx, stratum)
+        yield built

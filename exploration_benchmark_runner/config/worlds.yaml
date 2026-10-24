@@ -1,0 +1,1367 @@
+# World registry: every world the runner and the suite can run (docs/plans/worlds/I1-world-registry.md).
+# Read by exploration_benchmark_runner/worlds.py, which rejects duplicate keys, unknown fields and drift
+# from the pinned coverage references. Paths are relative to the repository root; floats keep a decimal
+# point. World order is meaningful: robot world lists and catalog entries follow it.
+registry_version: 1
+default_world: bookstore
+worlds:
+  bookstore:
+    label: Bookstore
+    tier: A
+    family: null
+    role: evaluation
+    world_file: simulation/worlds/bookstore/bookstore.world
+    source: null
+    # Coverage settings: the frozen three-world file, hashed into every reference (never edit it).
+    scenario:
+      file: exploration_benchmark_runner/config/coverage/scenarios.yaml
+      key: bookstore
+    reference:
+      metric_version: 2
+      id: bookstore_coverage_v2
+      metadata_sha256: 1fc33a733b98446f78fd7efc5a4ab8499526ae0f377a748cb6fbd684c12f0afe
+    default_spawn: {id: default-bookstore, name: Default, x: 1.23, y: 6.35, z: 0.11, yaw: -3.10}
+    # S2 and S3: the maintainer's decision 60 (24 October 2026), farthest-point rule with 1.0 m clearance.
+    spawns:
+      - {id: S2, name: S2, x: -6.625, y: -5.925, yaw: 0.0}
+      - {id: S3, name: S3, x: 6.475, y: -5.975, yaw: 3.141593}
+    robots:
+      mogi: {}
+      tb3_burger: {spawn_z: 0.04}
+      tb3_waffle_pi: {spawn_z: 0.04}
+      tb4_standard: {}
+      rosbot_pro: {}
+      lynx: {}
+    fuel_models: []
+    resource_paths: []
+    moving_objects: null
+    descriptors:
+      file: exploration_benchmark_runner/config/coverage/bookstore_descriptors.json
+      sha256: 8954682c64265928ebe2105391cdbb9855cc0e28cb589e8dca808b77d69387a1
+  corridor:
+    label: Corridor
+    tier: A
+    family: null
+    role: evaluation
+    world_file: simulation/worlds/corridor/corridor.world
+    source: null
+    scenario:
+      file: exploration_benchmark_runner/config/coverage/scenarios.yaml
+      key: corridor
+    reference:
+      metric_version: 2
+      id: corridor_coverage_v2
+      metadata_sha256: d2ff9604ccb105040cc648d379435e58d63ab67428c1e3bad7cef9a6e80724ae
+    default_spawn: {id: default-corridor, name: Default, x: -8.11, y: 0.31, z: 0.10, yaw: 0.0}
+    # S2 and S3: the maintainer's decision 60 (24 October 2026), farthest-point rule with 1.0 m clearance.
+    spawns:
+      - {id: S2, name: S2, x: 4.575, y: -5.475, yaw: 1.570796}
+      - {id: S3, name: S3, x: 4.425, y: 5.475, yaw: -1.570796}
+    robots:
+      mogi: {}
+      tb3_burger: {}
+      tb3_waffle_pi: {}
+      tb4_standard: {}
+      rosbot_pro: {}
+      lynx: {}
+    fuel_models: []
+    resource_paths: []
+    moving_objects: null
+    descriptors:
+      file: exploration_benchmark_runner/config/coverage/corridor_descriptors.json
+      sha256: d8473087058e6d8a1a823f192fbdd07eaaf5869055cae81fa4ade824b1631b7e
+  warehouse:
+    label: Warehouse
+    tier: A
+    family: null
+    role: evaluation
+    world_file: simulation/worlds/warehouse/warehouse.sdf
+    source: null
+    scenario:
+      file: exploration_benchmark_runner/config/coverage/scenarios.yaml
+      key: warehouse
+    reference:
+      metric_version: 2
+      id: warehouse_coverage_v2
+      metadata_sha256: 900c40cf83d22f7f54b8f58318e550cfac6d615194a59ed2fe4dd2157afcdbbf
+    default_spawn: {id: default-warehouse, name: Default, x: -12.97, y: 8.23, z: 0.10, yaw: 1.58}
+    # S2: the maintainer's decision 60 (24 October 2026), farthest-point rule with 1.0 m clearance; no S3.
+    spawns:
+      - {id: S2, name: S2, x: 13.975, y: -24.025, yaw: 3.141593}
+    robots:
+      mogi: {}
+      tb3_burger: {}
+      tb3_waffle_pi: {}
+      tb4_standard: {}
+      rosbot_pro: {}
+      lynx: {}
+    # The pinned Fuel models of warehouse_v2.json (its fuel: keys, compared case-insensitively).
+    fuel_models:
+      - https://fuel.gazebosim.org/1.0/MovAi/models/shelf/1
+      - https://fuel.gazebosim.org/1.0/MovAi/models/shelf_big/2
+      - https://fuel.gazebosim.org/1.0/OpenRobotics/models/Chair/3
+      - https://fuel.gazebosim.org/1.0/OpenRobotics/models/foldable_chair/3
+      - https://fuel.gazebosim.org/1.0/OpenRobotics/models/Jersey Barrier/6
+      - https://fuel.gazebosim.org/1.0/OpenRobotics/models/MaleVisitorOnPhone/2
+      - https://fuel.gazebosim.org/1.0/OpenRobotics/models/Table/4
+      - https://fuel.gazebosim.org/1.0/OpenRobotics/models/Warehouse/5
+      - https://fuel.gazebosim.org/1.0/plateau/models/Casual female/1
+    resource_paths: []
+    moving_objects: null
+    descriptors:
+      file: exploration_benchmark_runner/config/coverage/warehouse_descriptors.json
+      sha256: bb321f6f90af5b9d0e30be7cfd541a59a0697a1768ac47f0fabcb6314afdee41
+  # World collection worlds (docs/WORLDS.md), added by `benchmark_reference import` in group order SC, P, F, RP,
+  # MO (plans/worlds/I2). role evaluation for all (P1/P2 too, decision 57); family for tier F only (R-2).
+  sc1_square_loop:
+    label: "Square loop"
+    tier: SC
+    family: null
+    role: evaluation
+    world_file: world_collection/worlds/SC1_square_loop/SC1_square_loop.sdf
+    source:
+      world_yaml: world_collection/worlds/SC1_square_loop/world.yaml
+      world_yaml_sha256: 81aee4d2e5f0c93efff0511465c2f1eeacd159cb5088da01955f5fb69ccd4c4e
+      sdf_sha256: bca8497c77baf9bff2295f00c1ff1a21bff3182b4babe127360436aa12efea61
+      worldgen_version: "1.0.1"
+    scenario:
+      file: exploration_benchmark_runner/config/coverage/sc1_square_loop_scenario.yaml
+      key: sc1_square_loop
+    reference:
+      metric_version: 2
+      id: sc1_square_loop_coverage_v2
+      metadata_sha256: 2259a652ad4bf335a72c8ab716c95e172357a742326f0587d3d1a8535f5c1df0
+    default_spawn: {id: default-sc1_square_loop, name: Default, x: 0.0, y: -13.5, z: 0.1, yaw: 0.0}
+    spawns:
+      - {id: S1, name: S1, x: 0.0, y: -13.5, yaw: 0.0}
+      - {id: S2, name: S2, x: -13.5, y: 0.0, yaw: 1.570796}
+      - {id: S3, name: S3, x: 13.5, y: 13.5, yaw: 3.141593}
+    robots:
+      mogi: {}
+    fuel_models: []
+    resource_paths: []
+    moving_objects: null
+    descriptors:
+      file: exploration_benchmark_runner/config/coverage/sc1_square_loop_descriptors.json
+      sha256: 8c54f9ce8a833c2903e65125c7c1a01ed73b05f15f8923ec471a12ef99d92f5c
+  sc2a_narrow_passage_1m2:
+    label: "Narrow passage · 1.2 m corridor"
+    tier: SC
+    family: null
+    role: evaluation
+    world_file: world_collection/worlds/SC2a_narrow_passage_1m2/SC2a_narrow_passage_1m2.sdf
+    source:
+      world_yaml: world_collection/worlds/SC2a_narrow_passage_1m2/world.yaml
+      world_yaml_sha256: e6c8d213b2542e030fd9ec130ad7c9fcdbd442e6bb5d8e85435fe51591accec3
+      sdf_sha256: ce099da1fc940196939549cf35bd73f9e9e11756d17e0d2552af4a862e68f0dc
+      worldgen_version: "1.0.1"
+    scenario:
+      file: exploration_benchmark_runner/config/coverage/sc2a_narrow_passage_1m2_scenario.yaml
+      key: sc2a_narrow_passage_1m2
+    reference:
+      metric_version: 2
+      id: sc2a_narrow_passage_1m2_coverage_v2
+      metadata_sha256: 83dc03e4398c31194f67a43d6b91b218e2ddd08e824eb64dcfb971328518ccc7
+    default_spawn: {id: default-sc2a_narrow_passage_1m2, name: Default, x: -10.5, y: 0.0, z: 0.1, yaw: 0.0}
+    spawns:
+      - {id: S1, name: S1, x: -10.5, y: 0.0, yaw: 0.0}
+      - {id: S2, name: S2, x: -15.5, y: -5.0, yaw: 1.570796}
+      - {id: S3, name: S3, x: 11.0, y: 4.0, yaw: 3.141593}
+    robots:
+      mogi: {}
+    fuel_models: []
+    resource_paths: []
+    moving_objects: null
+    descriptors:
+      file: exploration_benchmark_runner/config/coverage/sc2a_narrow_passage_1m2_descriptors.json
+      sha256: 66ae233046aaf4b787b1e7fa54fb9b1709eeb133f915315d270b230940bfe241
+  sc2b_narrow_passage_2m0:
+    label: "Narrow passage · 2.0 m corridor"
+    tier: SC
+    family: null
+    role: evaluation
+    world_file: world_collection/worlds/SC2b_narrow_passage_2m0/SC2b_narrow_passage_2m0.sdf
+    source:
+      world_yaml: world_collection/worlds/SC2b_narrow_passage_2m0/world.yaml
+      world_yaml_sha256: 6e82091bc8432e903dfff0b2e4aed9b524adf3311e48cb740f06433bc083a6b1
+      sdf_sha256: bfccfd90d63a2da3c350419207fb093095bb23871fb89d51f622a217c9bfbefe
+      worldgen_version: "1.0.1"
+    scenario:
+      file: exploration_benchmark_runner/config/coverage/sc2b_narrow_passage_2m0_scenario.yaml
+      key: sc2b_narrow_passage_2m0
+    reference:
+      metric_version: 2
+      id: sc2b_narrow_passage_2m0_coverage_v2
+      metadata_sha256: e4482e644c01b9b284b1e1dc3cce5274de4bc5783b572b5410d80f1e56843030
+    default_spawn: {id: default-sc2b_narrow_passage_2m0, name: Default, x: -10.5, y: 0.0, z: 0.1, yaw: 0.0}
+    spawns:
+      - {id: S1, name: S1, x: -10.5, y: 0.0, yaw: 0.0}
+      - {id: S2, name: S2, x: -15.5, y: -5.0, yaw: 1.570796}
+      - {id: S3, name: S3, x: 11.0, y: 4.0, yaw: 3.141593}
+    robots:
+      mogi: {}
+    fuel_models: []
+    resource_paths: []
+    moving_objects: null
+    descriptors:
+      file: exploration_benchmark_runner/config/coverage/sc2b_narrow_passage_2m0_descriptors.json
+      sha256: 8bdbb1863ae173992f21a324a761ab2b2559003466d821cb245bf6340c88e26a
+  sc3_dead_end_comb:
+    label: "Dead-end comb"
+    tier: SC
+    family: null
+    role: evaluation
+    world_file: world_collection/worlds/SC3_dead_end_comb/SC3_dead_end_comb.sdf
+    source:
+      world_yaml: world_collection/worlds/SC3_dead_end_comb/world.yaml
+      world_yaml_sha256: 7396c63d698c323f720e44da71a4bcc6bd70b62436fb58ea5ede81e2c2f269e8
+      sdf_sha256: ebb86df5f0217bcc86135f7e19a93ad39f42b1c3257b3fe096af75d6addae5ed
+      worldgen_version: "1.0.1"
+    scenario:
+      file: exploration_benchmark_runner/config/coverage/sc3_dead_end_comb_scenario.yaml
+      key: sc3_dead_end_comb
+    reference:
+      metric_version: 2
+      id: sc3_dead_end_comb_coverage_v2
+      metadata_sha256: 17adb3b15d782e95a9f5a18222de8502bdde17b31c248934367c5d88e79a9ca1
+    default_spawn: {id: default-sc3_dead_end_comb, name: Default, x: -17.0, y: 0.0, z: 0.1, yaw: 0.0}
+    spawns:
+      - {id: S1, name: S1, x: -17.0, y: 0.0, yaw: 0.0}
+      - {id: S2, name: S2, x: 3.5, y: 0.0, yaw: 3.141593}
+      - {id: S3, name: S3, x: 1.0, y: 8.0, yaw: -1.570796}
+    robots:
+      mogi: {}
+    fuel_models: []
+    resource_paths: []
+    moving_objects: null
+    descriptors:
+      file: exploration_benchmark_runner/config/coverage/sc3_dead_end_comb_descriptors.json
+      sha256: 43479299ffa947588a88d70f007b906c9435905e9228c85bb2750d456f0072cd
+  sc4_office_strip:
+    label: "Office strip"
+    tier: SC
+    family: null
+    role: evaluation
+    world_file: world_collection/worlds/SC4_office_strip/SC4_office_strip.sdf
+    source:
+      world_yaml: world_collection/worlds/SC4_office_strip/world.yaml
+      world_yaml_sha256: 397101b1823931cbc3271685c4ff042eaa441607d74e0e7cff7d7fb09196918d
+      sdf_sha256: 2991ac68f2aed35ae9cafb4c49d7cb14d11a8e8fe88b973c8b1db789ff9b413f
+      worldgen_version: "1.0.1"
+    scenario:
+      file: exploration_benchmark_runner/config/coverage/sc4_office_strip_scenario.yaml
+      key: sc4_office_strip
+    reference:
+      metric_version: 2
+      id: sc4_office_strip_coverage_v2
+      metadata_sha256: 6d140703195fd8e117f7e4e3588164ef19c51435cdf3e6db7fad749467269ad0
+    default_spawn: {id: default-sc4_office_strip, name: Default, x: -11.0, y: 0.0, z: 0.1, yaw: 0.0}
+    spawns:
+      - {id: S1, name: S1, x: -11.0, y: 0.0, yaw: 0.0}
+      - {id: S2, name: S2, x: -1.0, y: 0.0, yaw: 0.0}
+      - {id: S3, name: S3, x: 5.2, y: 4.2, yaw: -1.570796}
+    robots:
+      mogi: {}
+    fuel_models: []
+    resource_paths: []
+    moving_objects: null
+    descriptors:
+      file: exploration_benchmark_runner/config/coverage/sc4_office_strip_descriptors.json
+      sha256: 6b88fc867b576233725620d50ffae4f01d9a3811ecbddf32f412ae63a07e1850
+  sc5_nested_pockets:
+    label: "Nested pockets"
+    tier: SC
+    family: null
+    role: evaluation
+    world_file: world_collection/worlds/SC5_nested_pockets/SC5_nested_pockets.sdf
+    source:
+      world_yaml: world_collection/worlds/SC5_nested_pockets/world.yaml
+      world_yaml_sha256: 4ba6148b5116060e5dfd9cbd64e17f3c3190aeb309a7c60097d90250ecdc1442
+      sdf_sha256: e2895041d62e129eb35e649b1a8dedde931cfb98668a4b7bc1c9db4dc4f5ea21
+      worldgen_version: "1.0.1"
+    scenario:
+      file: exploration_benchmark_runner/config/coverage/sc5_nested_pockets_scenario.yaml
+      key: sc5_nested_pockets
+    reference:
+      metric_version: 2
+      id: sc5_nested_pockets_coverage_v2
+      metadata_sha256: 0e72029eaef029d1b5f26d12321e0932084230f28352ceeda3fcbba0a5797798
+    default_spawn: {id: default-sc5_nested_pockets, name: Default, x: 0.0, y: 0.0, z: 0.1, yaw: 0.0}
+    spawns:
+      - {id: S1, name: S1, x: 0.0, y: 0.0, yaw: 0.0}
+      - {id: S2, name: S2, x: 5.5, y: 3.5, yaw: 3.141593}
+      - {id: S3, name: S3, x: -5.5, y: -3.5, yaw: 0.0}
+    robots:
+      mogi: {}
+    fuel_models: []
+    resource_paths: []
+    moving_objects: null
+    descriptors:
+      file: exploration_benchmark_runner/config/coverage/sc5_nested_pockets_descriptors.json
+      sha256: 9fdf44f56c83fb6b58a6c81e313794205e04c287cdeb8951e4acd43e43b28103
+  sc6_open_hall:
+    label: "Open hall"
+    tier: SC
+    family: null
+    role: evaluation
+    world_file: world_collection/worlds/SC6_open_hall/SC6_open_hall.sdf
+    source:
+      world_yaml: world_collection/worlds/SC6_open_hall/world.yaml
+      world_yaml_sha256: 3fbf75b2cc95345af3d5a761623da454ebbe88c30c9af17b4afe285c78527aef
+      sdf_sha256: 542284c2ddb7006cfae67475718cf644c6bee2f86377f67a031fa3b1ead84dcd
+      worldgen_version: "1.0.1"
+    scenario:
+      file: exploration_benchmark_runner/config/coverage/sc6_open_hall_scenario.yaml
+      key: sc6_open_hall
+    reference:
+      metric_version: 2
+      id: sc6_open_hall_coverage_v2
+      metadata_sha256: 3a4b8325369d45e83d00b395899e8fe39e3fe3c06216aa1a4597cefd3dcae74b
+    default_spawn: {id: default-sc6_open_hall, name: Default, x: 0.0, y: 0.0, z: 0.1, yaw: 0.0}
+    spawns:
+      - {id: S1, name: S1, x: 0.0, y: 0.0, yaw: 0.0}
+      - {id: S2, name: S2, x: -17.0, y: -17.0, yaw: 0.785398}
+      - {id: S3, name: S3, x: 17.0, y: -6.0, yaw: 3.141593}
+    robots:
+      mogi: {}
+    fuel_models: []
+    resource_paths: []
+    moving_objects: null
+    descriptors:
+      file: exploration_benchmark_runner/config/coverage/sc6_open_hall_descriptors.json
+      sha256: 0d392528371ed72724512820a70f5c1d7aa0259e909f62873c0eaf2bf3463e91
+  sc7a_clutter_field_low:
+    label: "Clutter field · 45 blocks"
+    tier: SC
+    family: null
+    role: evaluation
+    world_file: world_collection/worlds/SC7a_clutter_field_low/SC7a_clutter_field_low.sdf
+    source:
+      world_yaml: world_collection/worlds/SC7a_clutter_field_low/world.yaml
+      world_yaml_sha256: 50c68be27959b76d84b292b4975d162e84d15bc167f9fae131b7db5200c9af7a
+      sdf_sha256: 80a5c9e56b1857c87dd163dbdef7cf34847a2c7b3ead1605e00c91e9e2e2a6b7
+      worldgen_version: "1.0.1"
+    scenario:
+      file: exploration_benchmark_runner/config/coverage/sc7a_clutter_field_low_scenario.yaml
+      key: sc7a_clutter_field_low
+    reference:
+      metric_version: 2
+      id: sc7a_clutter_field_low_coverage_v2
+      metadata_sha256: 63c191551b83af5f4d5e9246bc756721fd2845f264c80163b4e72bef0b23c2f4
+    default_spawn: {id: default-sc7a_clutter_field_low, name: Default, x: 0.0, y: 0.0, z: 0.1, yaw: 0.0}
+    spawns:
+      - {id: S1, name: S1, x: 0.0, y: 0.0, yaw: 0.0}
+      - {id: S2, name: S2, x: -13.0, y: -13.0, yaw: 0.785398}
+      - {id: S3, name: S3, x: 13.0, y: 6.0, yaw: 3.141593}
+    robots:
+      mogi: {}
+    fuel_models: []
+    resource_paths: []
+    moving_objects: null
+    descriptors:
+      file: exploration_benchmark_runner/config/coverage/sc7a_clutter_field_low_descriptors.json
+      sha256: f42e2e4204205360c1d0c33837e2d77959d54e80d2719fc4b5f5d1965ff3a002
+  sc7b_clutter_field_high:
+    label: "Clutter field · 90 blocks"
+    tier: SC
+    family: null
+    role: evaluation
+    world_file: world_collection/worlds/SC7b_clutter_field_high/SC7b_clutter_field_high.sdf
+    source:
+      world_yaml: world_collection/worlds/SC7b_clutter_field_high/world.yaml
+      world_yaml_sha256: b0aeb202f2ce138fc821895974047addf59e8b50bf5d5769b5f0795fe74658b3
+      sdf_sha256: ad63cb6456f2e0195858368b272ef6f923e5de6a88036335e58a84e8a3ed7cba
+      worldgen_version: "1.0.1"
+    scenario:
+      file: exploration_benchmark_runner/config/coverage/sc7b_clutter_field_high_scenario.yaml
+      key: sc7b_clutter_field_high
+    reference:
+      metric_version: 2
+      id: sc7b_clutter_field_high_coverage_v2
+      metadata_sha256: 1d03dfdf694dd2592c217c4dfb72f04ad6631d8e061bd0e2e05a6d7df0e0a0ff
+    default_spawn: {id: default-sc7b_clutter_field_high, name: Default, x: 0.0, y: 0.0, z: 0.1, yaw: 0.0}
+    spawns:
+      - {id: S1, name: S1, x: 0.0, y: 0.0, yaw: 0.0}
+      - {id: S2, name: S2, x: -13.0, y: -13.0, yaw: 0.785398}
+      - {id: S3, name: S3, x: 13.0, y: 6.0, yaw: 3.141593}
+    robots:
+      mogi: {}
+    fuel_models: []
+    resource_paths: []
+    moving_objects: null
+    descriptors:
+      file: exploration_benchmark_runner/config/coverage/sc7b_clutter_field_high_descriptors.json
+      sha256: eb279dda78e8f60a870c99dc38edcec92990eac48405a38d3a4d3d2d3f812294
+  sc8_zigzag:
+    label: "Zigzag"
+    tier: SC
+    family: null
+    role: evaluation
+    world_file: world_collection/worlds/SC8_zigzag/SC8_zigzag.sdf
+    source:
+      world_yaml: world_collection/worlds/SC8_zigzag/world.yaml
+      world_yaml_sha256: 440685846bc9e584017bc226782ef7aef6469a007b07700db01d1e4aa7d771af
+      sdf_sha256: d7074af3f3a6dfbb65909e4c6ec223f153e216ec042db1f937ef8975405378da
+      worldgen_version: "1.0.1"
+    scenario:
+      file: exploration_benchmark_runner/config/coverage/sc8_zigzag_scenario.yaml
+      key: sc8_zigzag
+    reference:
+      metric_version: 2
+      id: sc8_zigzag_coverage_v2
+      metadata_sha256: 9e371c520e6d571ea7cd6a94566f23a3ff71bdb0106393ff16094e91df1d416a
+    default_spawn: {id: default-sc8_zigzag, name: Default, x: -13.5, y: -8.4, z: 0.1, yaw: 0.0}
+    spawns:
+      - {id: S1, name: S1, x: -13.5, y: -8.4, yaw: 0.0}
+      - {id: S2, name: S2, x: 0.0, y: 0.0, yaw: 0.0}
+      - {id: S3, name: S3, x: 13.5, y: 8.4, yaw: 3.141593}
+    robots:
+      mogi: {}
+    fuel_models: []
+    resource_paths: []
+    moving_objects: null
+    descriptors:
+      file: exploration_benchmark_runner/config/coverage/sc8_zigzag_descriptors.json
+      sha256: 71518b46cd23bc72b612a230640ca2740ca934562c8c36ba45ead7f726770db9
+  p1_racetrack_office:
+    label: "Racetrack office"
+    tier: P
+    family: null
+    role: evaluation
+    world_file: world_collection/worlds/P1_racetrack_office/P1_racetrack_office.sdf
+    source:
+      world_yaml: world_collection/worlds/P1_racetrack_office/world.yaml
+      world_yaml_sha256: e5cd149228da4564bc0aff9f74d772448ac92d4c84377777e050b784e7d7465a
+      sdf_sha256: 8ceac38112e984c238014aae5936e099968a3994a48aea97b1eb1132505ef037
+      worldgen_version: "1.0.1"
+    scenario:
+      file: exploration_benchmark_runner/config/coverage/p1_racetrack_office_scenario.yaml
+      key: p1_racetrack_office
+    reference:
+      metric_version: 2
+      id: p1_racetrack_office_coverage_v2
+      metadata_sha256: a4c3e77398228dc76eccc06695dcaa169f33a4d0c5f879e777dab47fe5e9cf74
+    default_spawn: {id: default-p1_racetrack_office, name: Default, x: 0.0, y: -8.8, z: 0.1, yaw: 0.0}
+    spawns:
+      - {id: S1, name: S1, x: 0.0, y: -8.8, yaw: 0.0}
+      - {id: S2, name: S2, x: -13.8, y: -4.0, yaw: 1.570796}
+      - {id: S3, name: S3, x: -6.25, y: -2.55, yaw: -1.570796}
+    robots:
+      mogi: {}
+    fuel_models: []
+    resource_paths: []
+    moving_objects: null
+    descriptors:
+      file: exploration_benchmark_runner/config/coverage/p1_racetrack_office_descriptors.json
+      sha256: e0885b42b7431f9d05ee5591fce0d15d0233961e180e1d9208623a93c8d707fe
+  p2_lobby_wing:
+    label: "Lobby and wing"
+    tier: P
+    family: null
+    role: evaluation
+    world_file: world_collection/worlds/P2_lobby_wing/P2_lobby_wing.sdf
+    source:
+      world_yaml: world_collection/worlds/P2_lobby_wing/world.yaml
+      world_yaml_sha256: 1ba864922d7cb840c3f2b00c8bfb477b2b6fae6db1cb43d1066f89893f2e464f
+      sdf_sha256: 5899891bdaf1b3b05d5e230158bcb8ee9bf14818c489a0f72d7d8c090f882284
+      worldgen_version: "1.0.1"
+    scenario:
+      file: exploration_benchmark_runner/config/coverage/p2_lobby_wing_scenario.yaml
+      key: p2_lobby_wing
+    reference:
+      metric_version: 2
+      id: p2_lobby_wing_coverage_v2
+      metadata_sha256: 4703801b45d3a4fe211c4a21e12559a29fb17110b9453656666761bbaf8e7c86
+    default_spawn: {id: default-p2_lobby_wing, name: Default, x: -12.0, y: 0.0, z: 0.1, yaw: 0.0}
+    spawns:
+      - {id: S1, name: S1, x: -12.0, y: 0.0, yaw: 0.0}
+      - {id: S2, name: S2, x: 13.6, y: 5.2, yaw: -1.570796}
+      - {id: S3, name: S3, x: 11.0, y: 0.0, yaw: 3.141593}
+    robots:
+      mogi: {}
+    fuel_models: []
+    resource_paths: []
+    moving_objects: null
+    descriptors:
+      file: exploration_benchmark_runner/config/coverage/p2_lobby_wing_descriptors.json
+      sha256: d4e265b13ce13902dc62b400945b6a7ee2d1f0d93f18d15f80cbe80ee36e2caf
+  f1_maze_s08_perfect_rb:
+    label: "Maze 8×8 · perfect · backtracker"
+    tier: F
+    family: F1
+    role: evaluation
+    world_file: world_collection/worlds/F1_maze_s08_perfect_rb/F1_maze_s08_perfect_rb.sdf
+    source:
+      world_yaml: world_collection/worlds/F1_maze_s08_perfect_rb/world.yaml
+      world_yaml_sha256: 9db0c58b309904dc8fbe92090906b410f356b468a99c6919d23fb0f410410a9c
+      sdf_sha256: 3936fed4b30da7cc0f6acffa7fa311cb8078fb98f7f90854414fe739b64b472e
+      worldgen_version: "1.0.1"
+    scenario:
+      file: exploration_benchmark_runner/config/coverage/f1_maze_s08_perfect_rb_scenario.yaml
+      key: f1_maze_s08_perfect_rb
+    reference:
+      metric_version: 2
+      id: f1_maze_s08_perfect_rb_coverage_v2
+      metadata_sha256: 9bd94883aaf8caf51218f8bd27f0d21557ec3dc7e1f569f28ec107800db567d4
+    default_spawn: {id: default-f1_maze_s08_perfect_rb, name: Default, x: 8.75, y: -3.75, z: 0.1, yaw: 4.712389}
+    spawns:
+      - {id: S1, name: S1, x: 8.75, y: -3.75, yaw: 4.712389}
+    robots:
+      mogi: {}
+    fuel_models: []
+    resource_paths: []
+    moving_objects: null
+    descriptors:
+      file: exploration_benchmark_runner/config/coverage/f1_maze_s08_perfect_rb_descriptors.json
+      sha256: 5ebab70b179d85924cf1655a5607df8fac37f367df937ebe0d6f878c38818d33
+  f1_maze_s08_perfect_kr:
+    label: "Maze 8×8 · perfect · Kruskal"
+    tier: F
+    family: F1
+    role: evaluation
+    world_file: world_collection/worlds/F1_maze_s08_perfect_kr/F1_maze_s08_perfect_kr.sdf
+    source:
+      world_yaml: world_collection/worlds/F1_maze_s08_perfect_kr/world.yaml
+      world_yaml_sha256: 2f9ce8c7289691b8f33de6029788a384328f5d7f182055ff93c82c918e7f13a8
+      sdf_sha256: 95f0e1a7bae77bab9980c35c6c7fc7d21bbbc81d8ad7ec15c5378f8ba8cbaf11
+      worldgen_version: "1.0.1"
+    scenario:
+      file: exploration_benchmark_runner/config/coverage/f1_maze_s08_perfect_kr_scenario.yaml
+      key: f1_maze_s08_perfect_kr
+    reference:
+      metric_version: 2
+      id: f1_maze_s08_perfect_kr_coverage_v2
+      metadata_sha256: 70a045e72366af9bc58dff9d2d5bac3f62f027be0030e6721f8bc1c630977735
+    default_spawn: {id: default-f1_maze_s08_perfect_kr, name: Default, x: -1.25, y: -1.25, z: 0.1, yaw: 3.141593}
+    spawns:
+      - {id: S1, name: S1, x: -1.25, y: -1.25, yaw: 3.141593}
+    robots:
+      mogi: {}
+    fuel_models: []
+    resource_paths: []
+    moving_objects: null
+    descriptors:
+      file: exploration_benchmark_runner/config/coverage/f1_maze_s08_perfect_kr_descriptors.json
+      sha256: a1044cfcade5ce300e81cfe82cccd9fdf74a2ddfb63f2a1ad663d3f053ceddf1
+  f1_maze_s08_braid50_rb:
+    label: "Maze 8×8 · braid 0.5 · backtracker"
+    tier: F
+    family: F1
+    role: evaluation
+    world_file: world_collection/worlds/F1_maze_s08_braid50_rb/F1_maze_s08_braid50_rb.sdf
+    source:
+      world_yaml: world_collection/worlds/F1_maze_s08_braid50_rb/world.yaml
+      world_yaml_sha256: 25378b691dc530eacb753d6eb2bd21d336c92a0d30451e9471eb8e1aab036bd2
+      sdf_sha256: 0e19ca9cb94de96270982bcae5fde38809c06497c17ef63053e7a8bf9afa10e3
+      worldgen_version: "1.0.1"
+    scenario:
+      file: exploration_benchmark_runner/config/coverage/f1_maze_s08_braid50_rb_scenario.yaml
+      key: f1_maze_s08_braid50_rb
+    reference:
+      metric_version: 2
+      id: f1_maze_s08_braid50_rb_coverage_v2
+      metadata_sha256: af6101857756ff8245b1649aaa6d16ec8f3a59039d79bcebb479f8b3c511ce1f
+    default_spawn: {id: default-f1_maze_s08_braid50_rb, name: Default, x: -1.25, y: 3.75, z: 0.1, yaw: 1.570796}
+    spawns:
+      - {id: S1, name: S1, x: -1.25, y: 3.75, yaw: 1.570796}
+    robots:
+      mogi: {}
+    fuel_models: []
+    resource_paths: []
+    moving_objects: null
+    descriptors:
+      file: exploration_benchmark_runner/config/coverage/f1_maze_s08_braid50_rb_descriptors.json
+      sha256: f6bdaae337280db413504d6961d275c397af29f142b5ce57e82b07029a1ca1e5
+  f1_maze_s08_braid50_kr:
+    label: "Maze 8×8 · braid 0.5 · Kruskal"
+    tier: F
+    family: F1
+    role: evaluation
+    world_file: world_collection/worlds/F1_maze_s08_braid50_kr/F1_maze_s08_braid50_kr.sdf
+    source:
+      world_yaml: world_collection/worlds/F1_maze_s08_braid50_kr/world.yaml
+      world_yaml_sha256: e017badf599389bcf415829ce4864826cf8b1b79e79ae47e3c5e9e8a4c5002c8
+      sdf_sha256: f4635d9599cd4cd3ce31086b8b5e5a7f43084e5bddc08eb5242e17197cfb27f3
+      worldgen_version: "1.0.1"
+    scenario:
+      file: exploration_benchmark_runner/config/coverage/f1_maze_s08_braid50_kr_scenario.yaml
+      key: f1_maze_s08_braid50_kr
+    reference:
+      metric_version: 2
+      id: f1_maze_s08_braid50_kr_coverage_v2
+      metadata_sha256: 4cbce051b95766b785417a5bf3af378d4bd9715144aca07dabc35f2019b45044
+    default_spawn: {id: default-f1_maze_s08_braid50_kr, name: Default, x: -6.25, y: -8.75, z: 0.1, yaw: 0.0}
+    spawns:
+      - {id: S1, name: S1, x: -6.25, y: -8.75, yaw: 0.0}
+    robots:
+      mogi: {}
+    fuel_models: []
+    resource_paths: []
+    moving_objects: null
+    descriptors:
+      file: exploration_benchmark_runner/config/coverage/f1_maze_s08_braid50_kr_descriptors.json
+      sha256: 6c13e4f1552b36490fbff3369981897c29300a3cb36a66f3a69a8372f8b74532
+  f1_maze_s14_perfect_rb:
+    label: "Maze 14×14 · perfect · backtracker"
+    tier: F
+    family: F1
+    role: evaluation
+    world_file: world_collection/worlds/F1_maze_s14_perfect_rb/F1_maze_s14_perfect_rb.sdf
+    source:
+      world_yaml: world_collection/worlds/F1_maze_s14_perfect_rb/world.yaml
+      world_yaml_sha256: 7cadd8afe8bc00b3babcd7c7032c0330af09ab090bb0ff09f05b7cb8290e287a
+      sdf_sha256: 5dc7d587180507715fe228fdde1e8116f3dacfcd4e7bfeca0c095b426e9f8f40
+      worldgen_version: "1.0.1"
+    scenario:
+      file: exploration_benchmark_runner/config/coverage/f1_maze_s14_perfect_rb_scenario.yaml
+      key: f1_maze_s14_perfect_rb
+    reference:
+      metric_version: 2
+      id: f1_maze_s14_perfect_rb_coverage_v2
+      metadata_sha256: 380628b6180369bd330fe0e3ab482134ef51cee5db0951b6f6660d6220f71047
+    default_spawn: {id: default-f1_maze_s14_perfect_rb, name: Default, x: 11.25, y: -3.75, z: 0.1, yaw: 0.0}
+    spawns:
+      - {id: S1, name: S1, x: 11.25, y: -3.75, yaw: 0.0}
+    robots:
+      mogi: {}
+    fuel_models: []
+    resource_paths: []
+    moving_objects: null
+    descriptors:
+      file: exploration_benchmark_runner/config/coverage/f1_maze_s14_perfect_rb_descriptors.json
+      sha256: fbc6ee8c42c0f677d75a3f44183c213877eea4baccbeef959b73c9e467cc6043
+  f1_maze_s14_perfect_kr:
+    label: "Maze 14×14 · perfect · Kruskal"
+    tier: F
+    family: F1
+    role: evaluation
+    world_file: world_collection/worlds/F1_maze_s14_perfect_kr/F1_maze_s14_perfect_kr.sdf
+    source:
+      world_yaml: world_collection/worlds/F1_maze_s14_perfect_kr/world.yaml
+      world_yaml_sha256: 265ea314de3d605f4af0b07ccb5098888d25fa67bc75581460c1b9d64c198746
+      sdf_sha256: cbac176917f06b844ed15e9de10aabb39e659672f22f8d42b8fb93d2abab3247
+      worldgen_version: "1.0.1"
+    scenario:
+      file: exploration_benchmark_runner/config/coverage/f1_maze_s14_perfect_kr_scenario.yaml
+      key: f1_maze_s14_perfect_kr
+    reference:
+      metric_version: 2
+      id: f1_maze_s14_perfect_kr_coverage_v2
+      metadata_sha256: d05cd6ece915b31665719ce94e6a4d4b7961940a16562104b64b7a8171673651
+    default_spawn: {id: default-f1_maze_s14_perfect_kr, name: Default, x: 16.25, y: -11.25, z: 0.1, yaw: 1.570796}
+    spawns:
+      - {id: S1, name: S1, x: 16.25, y: -11.25, yaw: 1.570796}
+    robots:
+      mogi: {}
+    fuel_models: []
+    resource_paths: []
+    moving_objects: null
+    descriptors:
+      file: exploration_benchmark_runner/config/coverage/f1_maze_s14_perfect_kr_descriptors.json
+      sha256: 8e0137a9edfccb39437121c891f4bcb6b917eaf6fe45e49f417f93b6869edb99
+  f1_maze_s14_braid50_rb:
+    label: "Maze 14×14 · braid 0.5 · backtracker"
+    tier: F
+    family: F1
+    role: evaluation
+    world_file: world_collection/worlds/F1_maze_s14_braid50_rb/F1_maze_s14_braid50_rb.sdf
+    source:
+      world_yaml: world_collection/worlds/F1_maze_s14_braid50_rb/world.yaml
+      world_yaml_sha256: f41755d3f4e2b315c20b56ed3772fbd3968c6e1ab2fddf7ba4badee89f7b6af3
+      sdf_sha256: 92f28e144b4ea4168a93ce4e0f2f01730d217aa96ec840ed59155d41eeae14ee
+      worldgen_version: "1.0.1"
+    scenario:
+      file: exploration_benchmark_runner/config/coverage/f1_maze_s14_braid50_rb_scenario.yaml
+      key: f1_maze_s14_braid50_rb
+    reference:
+      metric_version: 2
+      id: f1_maze_s14_braid50_rb_coverage_v2
+      metadata_sha256: 9688a5a02939957dc3b3e9c14f72e6af01d47f17d3ae016a91f00de8ac18fd46
+    default_spawn: {id: default-f1_maze_s14_braid50_rb, name: Default, x: -16.25, y: 8.75, z: 0.1, yaw: 1.570796}
+    spawns:
+      - {id: S1, name: S1, x: -16.25, y: 8.75, yaw: 1.570796}
+    robots:
+      mogi: {}
+    fuel_models: []
+    resource_paths: []
+    moving_objects: null
+    descriptors:
+      file: exploration_benchmark_runner/config/coverage/f1_maze_s14_braid50_rb_descriptors.json
+      sha256: 9c7f45f28b246ee27e6daae11226156b6d031e3b88da3310105443aab689e30a
+  f1_maze_s14_braid50_kr:
+    label: "Maze 14×14 · braid 0.5 · Kruskal"
+    tier: F
+    family: F1
+    role: evaluation
+    world_file: world_collection/worlds/F1_maze_s14_braid50_kr/F1_maze_s14_braid50_kr.sdf
+    source:
+      world_yaml: world_collection/worlds/F1_maze_s14_braid50_kr/world.yaml
+      world_yaml_sha256: e744d3eebfd4b6c2532c25fbbd507983cc957e93d8aa4d452142e2667bf19dcf
+      sdf_sha256: e0d92a0a3e8be01e9e52420cc5371494aa8c4069e7a17598f97ee61b703279f7
+      worldgen_version: "1.0.1"
+    scenario:
+      file: exploration_benchmark_runner/config/coverage/f1_maze_s14_braid50_kr_scenario.yaml
+      key: f1_maze_s14_braid50_kr
+    reference:
+      metric_version: 2
+      id: f1_maze_s14_braid50_kr_coverage_v2
+      metadata_sha256: bb42ff9f8ec15f528f69338f7dfe4af8f031d8374a248580f48df292a8967535
+    default_spawn: {id: default-f1_maze_s14_braid50_kr, name: Default, x: -3.75, y: 13.75, z: 0.1, yaw: 3.141593}
+    spawns:
+      - {id: S1, name: S1, x: -3.75, y: 13.75, yaw: 3.141593}
+    robots:
+      mogi: {}
+    fuel_models: []
+    resource_paths: []
+    moving_objects: null
+    descriptors:
+      file: exploration_benchmark_runner/config/coverage/f1_maze_s14_braid50_kr_descriptors.json
+      sha256: 562d2fc08844fb889a8127fb5d8cb84b654d49c645affd180483a1afdd1e12a7
+  f2_office_f30x20_r08_d1:
+    label: "Office 30×20 m · 8 rooms · 1 door"
+    tier: F
+    family: F2
+    role: evaluation
+    world_file: world_collection/worlds/F2_office_f30x20_r08_d1/F2_office_f30x20_r08_d1.sdf
+    source:
+      world_yaml: world_collection/worlds/F2_office_f30x20_r08_d1/world.yaml
+      world_yaml_sha256: 98c05936f9d5ac76d2d50e392186b038076eb3b2aca6b9f548a8e98a02945ddf
+      sdf_sha256: 96df57896cad9edc52bb0804ca02544a07d3677b1536436384339389fa24149d
+      worldgen_version: "1.0.1"
+    scenario:
+      file: exploration_benchmark_runner/config/coverage/f2_office_f30x20_r08_d1_scenario.yaml
+      key: f2_office_f30x20_r08_d1
+    reference:
+      metric_version: 2
+      id: f2_office_f30x20_r08_d1_coverage_v2
+      metadata_sha256: b1f3037eff0fabf2d6232bf3e328cc18f95b151ddb97993e73a6fccf51a90164
+    default_spawn: {id: default-f2_office_f30x20_r08_d1, name: Default, x: 9.925, y: 2.175, z: 0.1, yaw: 1.570796}
+    spawns:
+      - {id: S1, name: S1, x: 9.925, y: 2.175, yaw: 1.570796}
+    robots:
+      mogi: {}
+    fuel_models: []
+    resource_paths: []
+    moving_objects: null
+    descriptors:
+      file: exploration_benchmark_runner/config/coverage/f2_office_f30x20_r08_d1_descriptors.json
+      sha256: f05fa0c2fb04ae523b5bed761ca5c19f8bbb6555bc7ada75137a11506fdd2ed1
+  f2_office_f30x20_r08_d2:
+    label: "Office 30×20 m · 8 rooms · 2 doors"
+    tier: F
+    family: F2
+    role: evaluation
+    world_file: world_collection/worlds/F2_office_f30x20_r08_d2/F2_office_f30x20_r08_d2.sdf
+    source:
+      world_yaml: world_collection/worlds/F2_office_f30x20_r08_d2/world.yaml
+      world_yaml_sha256: 2bedc0dc57a666ee6044c6da5d87a7b25729fe9c96a5c0ee295c7696d9fc148b
+      sdf_sha256: 501160c5e0a208fec35c96e52c3f0a7d216e7eb2576e52229c08c0650cb75e3a
+      worldgen_version: "1.0.1"
+    scenario:
+      file: exploration_benchmark_runner/config/coverage/f2_office_f30x20_r08_d2_scenario.yaml
+      key: f2_office_f30x20_r08_d2
+    reference:
+      metric_version: 2
+      id: f2_office_f30x20_r08_d2_coverage_v2
+      metadata_sha256: 1b0f8759a2757d61a7f651ca0987f57d5beaa4a10f6348c53495c4dfb248e196
+    default_spawn: {id: default-f2_office_f30x20_r08_d2, name: Default, x: -0.825, y: -8.475, z: 0.1, yaw: 1.570796}
+    spawns:
+      - {id: S1, name: S1, x: -0.825, y: -8.475, yaw: 1.570796}
+    robots:
+      mogi: {}
+    fuel_models: []
+    resource_paths: []
+    moving_objects: null
+    descriptors:
+      file: exploration_benchmark_runner/config/coverage/f2_office_f30x20_r08_d2_descriptors.json
+      sha256: a1c262c84811b25f72e0115d7a8e29d559d16f76db7ff7df7e0046b78c7ebe56
+  f2_office_f30x20_r20_d1:
+    label: "Office 30×20 m · 20 rooms · 1 door"
+    tier: F
+    family: F2
+    role: evaluation
+    world_file: world_collection/worlds/F2_office_f30x20_r20_d1/F2_office_f30x20_r20_d1.sdf
+    source:
+      world_yaml: world_collection/worlds/F2_office_f30x20_r20_d1/world.yaml
+      world_yaml_sha256: a298358363fb4743f78f59fcd693dd42f8a31dff59518a4b11f01cff53d8e143
+      sdf_sha256: 105472a53321c84d561996b4782854588c563eb2768ae9a53eb7e48162c7bca5
+      worldgen_version: "1.0.1"
+    scenario:
+      file: exploration_benchmark_runner/config/coverage/f2_office_f30x20_r20_d1_scenario.yaml
+      key: f2_office_f30x20_r20_d1
+    reference:
+      metric_version: 2
+      id: f2_office_f30x20_r20_d1_coverage_v2
+      metadata_sha256: 86cf1a955fe0421a21e254be3ca6189c53eda282360b89cd74eb4c8fe01fb313
+    default_spawn: {id: default-f2_office_f30x20_r20_d1, name: Default, x: -11.325, y: 3.175, z: 0.1, yaw: 1.570796}
+    spawns:
+      - {id: S1, name: S1, x: -11.325, y: 3.175, yaw: 1.570796}
+    robots:
+      mogi: {}
+    fuel_models: []
+    resource_paths: []
+    moving_objects: null
+    descriptors:
+      file: exploration_benchmark_runner/config/coverage/f2_office_f30x20_r20_d1_descriptors.json
+      sha256: 96d89e1ae20151422070713d741d0b6b7aa5253877c2aa78a5c43a913b0b6fb2
+  f2_office_f30x20_r20_d2:
+    label: "Office 30×20 m · 20 rooms · 2 doors"
+    tier: F
+    family: F2
+    role: evaluation
+    world_file: world_collection/worlds/F2_office_f30x20_r20_d2/F2_office_f30x20_r20_d2.sdf
+    source:
+      world_yaml: world_collection/worlds/F2_office_f30x20_r20_d2/world.yaml
+      world_yaml_sha256: 529e92de379a1e533df446714125aca1b0364e6caab3931bec8ddbbf55b8cf22
+      sdf_sha256: 8c0f59756a464419f5a46ab526a3dc00dc0fb59c95008fff2f0d846ad5c26ded
+      worldgen_version: "1.0.1"
+    scenario:
+      file: exploration_benchmark_runner/config/coverage/f2_office_f30x20_r20_d2_scenario.yaml
+      key: f2_office_f30x20_r20_d2
+    reference:
+      metric_version: 2
+      id: f2_office_f30x20_r20_d2_coverage_v2
+      metadata_sha256: 22f72d0832ab5627eba0d69b0a7aee745a8975197b12a6957a292897416af816
+    default_spawn: {id: default-f2_office_f30x20_r20_d2, name: Default, x: -11.175, y: -2.475, z: 0.1, yaw: 1.570796}
+    spawns:
+      - {id: S1, name: S1, x: -11.175, y: -2.475, yaw: 1.570796}
+    robots:
+      mogi: {}
+    fuel_models: []
+    resource_paths: []
+    moving_objects: null
+    descriptors:
+      file: exploration_benchmark_runner/config/coverage/f2_office_f30x20_r20_d2_descriptors.json
+      sha256: ce52834dff3bf4b1a2758414a2f61eb96d25a4607f83d5a7c3d942b95015f7b8
+  f2_office_f50x30_r08_d1:
+    label: "Office 50×30 m · 8 rooms · 1 door"
+    tier: F
+    family: F2
+    role: evaluation
+    world_file: world_collection/worlds/F2_office_f50x30_r08_d1/F2_office_f50x30_r08_d1.sdf
+    source:
+      world_yaml: world_collection/worlds/F2_office_f50x30_r08_d1/world.yaml
+      world_yaml_sha256: 6a8f8f9b1df70dee69e547484737d15286fce530d714b2254bc26509c631a91f
+      sdf_sha256: a9fcfc0b78b2ae60feb3f5f57afc168bf234098cdb0e832e7bbe786f461230da
+      worldgen_version: "1.0.1"
+    scenario:
+      file: exploration_benchmark_runner/config/coverage/f2_office_f50x30_r08_d1_scenario.yaml
+      key: f2_office_f50x30_r08_d1
+    reference:
+      metric_version: 2
+      id: f2_office_f50x30_r08_d1_coverage_v2
+      metadata_sha256: fe8c15338139ef1398712ad73d73fb42dfbb4a64a87f0d4ab19e3f5dc10cc592
+    default_spawn: {id: default-f2_office_f50x30_r08_d1, name: Default, x: -16.375, y: -7.225, z: 0.1, yaw: 3.141593}
+    spawns:
+      - {id: S1, name: S1, x: -16.375, y: -7.225, yaw: 3.141593}
+    robots:
+      mogi: {}
+    fuel_models: []
+    resource_paths: []
+    moving_objects: null
+    descriptors:
+      file: exploration_benchmark_runner/config/coverage/f2_office_f50x30_r08_d1_descriptors.json
+      sha256: 07ee72ea53101f19df46e786936a93e38e93ef7f2a17b6d88083abde5402cba7
+  f2_office_f50x30_r08_d2:
+    label: "Office 50×30 m · 8 rooms · 2 doors"
+    tier: F
+    family: F2
+    role: evaluation
+    world_file: world_collection/worlds/F2_office_f50x30_r08_d2/F2_office_f50x30_r08_d2.sdf
+    source:
+      world_yaml: world_collection/worlds/F2_office_f50x30_r08_d2/world.yaml
+      world_yaml_sha256: fa534b5f2c215eb28d88d01e72508a37234b6312579f997f3ac79387c55315ac
+      sdf_sha256: fa70e945cc947854e90c45bc9fc764b28bda3ad621e7affe3ac0c12d2ecb951b
+      worldgen_version: "1.0.1"
+    scenario:
+      file: exploration_benchmark_runner/config/coverage/f2_office_f50x30_r08_d2_scenario.yaml
+      key: f2_office_f50x30_r08_d2
+    reference:
+      metric_version: 2
+      id: f2_office_f50x30_r08_d2_coverage_v2
+      metadata_sha256: 54ea4506ed55bf2b546e7ed8c0137367ffe5f57581b7dae019dc3e1ba830f1b5
+    default_spawn: {id: default-f2_office_f50x30_r08_d2, name: Default, x: 11.025, y: -3.825, z: 0.1, yaw: 0.0}
+    spawns:
+      - {id: S1, name: S1, x: 11.025, y: -3.825, yaw: 0.0}
+    robots:
+      mogi: {}
+    fuel_models: []
+    resource_paths: []
+    moving_objects: null
+    descriptors:
+      file: exploration_benchmark_runner/config/coverage/f2_office_f50x30_r08_d2_descriptors.json
+      sha256: 76d4a479155180f37333e7c8601c5bd326fc98d64b003bd7cd44d4aec64937cc
+  f2_office_f50x30_r20_d1:
+    label: "Office 50×30 m · 20 rooms · 1 door"
+    tier: F
+    family: F2
+    role: evaluation
+    world_file: world_collection/worlds/F2_office_f50x30_r20_d1/F2_office_f50x30_r20_d1.sdf
+    source:
+      world_yaml: world_collection/worlds/F2_office_f50x30_r20_d1/world.yaml
+      world_yaml_sha256: a79c50aecf7b5b3e82202837c271c1309eff39f556b6488dc2a30c49c47dbd7d
+      sdf_sha256: 13de31e5401deb111594f1f16265f160543bfabcb716ccfce0b0a5c361a1eb88
+      worldgen_version: "1.0.1"
+    scenario:
+      file: exploration_benchmark_runner/config/coverage/f2_office_f50x30_r20_d1_scenario.yaml
+      key: f2_office_f50x30_r20_d1
+    reference:
+      metric_version: 2
+      id: f2_office_f50x30_r20_d1_coverage_v2
+      metadata_sha256: 5869e3d2863430676a8ab6ef019219b0eed921a4eff93832c7c4da03ee07fbe5
+    default_spawn: {id: default-f2_office_f50x30_r20_d1, name: Default, x: -11.725, y: 12.575, z: 0.1, yaw: 3.141593}
+    spawns:
+      - {id: S1, name: S1, x: -11.725, y: 12.575, yaw: 3.141593}
+    robots:
+      mogi: {}
+    fuel_models: []
+    resource_paths: []
+    moving_objects: null
+    descriptors:
+      file: exploration_benchmark_runner/config/coverage/f2_office_f50x30_r20_d1_descriptors.json
+      sha256: 9e1efa9d64241ad8b7772a89322b1f1deb972685fac1fb54d2a72f7a1786e19a
+  f2_office_f50x30_r20_d2:
+    label: "Office 50×30 m · 20 rooms · 2 doors"
+    tier: F
+    family: F2
+    role: evaluation
+    world_file: world_collection/worlds/F2_office_f50x30_r20_d2/F2_office_f50x30_r20_d2.sdf
+    source:
+      world_yaml: world_collection/worlds/F2_office_f50x30_r20_d2/world.yaml
+      world_yaml_sha256: 1e70ee8f5940c66cfa956a5110b011738b95eb903837cabfa982f96e9d23c846
+      sdf_sha256: 3cfe01f8bae8252ee7f6781c9d4c12415efbe27301ebf40afcf9ba0c39d0c3be
+      worldgen_version: "1.0.1"
+    scenario:
+      file: exploration_benchmark_runner/config/coverage/f2_office_f50x30_r20_d2_scenario.yaml
+      key: f2_office_f50x30_r20_d2
+    reference:
+      metric_version: 2
+      id: f2_office_f50x30_r20_d2_coverage_v2
+      metadata_sha256: 07ddfd085003aca251f5eb834494ba54265e60b8ddf7bec6722551bd2f5cf306
+    default_spawn: {id: default-f2_office_f50x30_r20_d2, name: Default, x: 11.175, y: 5.475, z: 0.1, yaw: 4.712389}
+    spawns:
+      - {id: S1, name: S1, x: 11.175, y: 5.475, yaw: 4.712389}
+    robots:
+      mogi: {}
+    fuel_models: []
+    resource_paths: []
+    moving_objects: null
+    descriptors:
+      file: exploration_benchmark_runner/config/coverage/f2_office_f50x30_r20_d2_descriptors.json
+      sha256: 10828f6c44ddec67a094c3e8874d806e0e627911ad0b7c79d73cc573d6861f1a
+  f3_aisles_h30x20_a150_x1:
+    label: "Aisles 30×20 m · 1.5 m aisles · 1 cross-aisle"
+    tier: F
+    family: F3
+    role: evaluation
+    world_file: world_collection/worlds/F3_aisles_h30x20_a150_x1/F3_aisles_h30x20_a150_x1.sdf
+    source:
+      world_yaml: world_collection/worlds/F3_aisles_h30x20_a150_x1/world.yaml
+      world_yaml_sha256: 33aefe5ef01ba69b77109551379726fcc3151eb8acdcfbf3979fe18af0707969
+      sdf_sha256: 7a8bec3c52b0bb228548503d6668ed74297fb591d67ad445e80a0e3b95f055f0
+      worldgen_version: "1.0.1"
+    scenario:
+      file: exploration_benchmark_runner/config/coverage/f3_aisles_h30x20_a150_x1_scenario.yaml
+      key: f3_aisles_h30x20_a150_x1
+    reference:
+      metric_version: 2
+      id: f3_aisles_h30x20_a150_x1_coverage_v2
+      metadata_sha256: 0a1c0047435fc3f3509e785ac57e31633770aed21f97d465f191e4a8f1ad6057
+    default_spawn: {id: default-f3_aisles_h30x20_a150_x1, name: Default, x: 7.725, y: 5.475, z: 0.1, yaw: 3.141593}
+    spawns:
+      - {id: S1, name: S1, x: 7.725, y: 5.475, yaw: 3.141593}
+    robots:
+      mogi: {}
+    fuel_models: []
+    resource_paths: []
+    moving_objects: null
+    descriptors:
+      file: exploration_benchmark_runner/config/coverage/f3_aisles_h30x20_a150_x1_descriptors.json
+      sha256: 358e301010edaf748ce7933e6b50207c46cd729a18cfe8fbe7a1be457daa3ec7
+  f3_aisles_h30x20_a150_x3:
+    label: "Aisles 30×20 m · 1.5 m aisles · 3 cross-aisles"
+    tier: F
+    family: F3
+    role: evaluation
+    world_file: world_collection/worlds/F3_aisles_h30x20_a150_x3/F3_aisles_h30x20_a150_x3.sdf
+    source:
+      world_yaml: world_collection/worlds/F3_aisles_h30x20_a150_x3/world.yaml
+      world_yaml_sha256: b3eb5b7b708285913e868fa7fcfacb464b75fe39bda94be3142eb10fe72d17fb
+      sdf_sha256: 8ba50a03e0bad977db145606f140c67dca0494bce6480f0c7030e79eede347db
+      worldgen_version: "1.0.1"
+    scenario:
+      file: exploration_benchmark_runner/config/coverage/f3_aisles_h30x20_a150_x3_scenario.yaml
+      key: f3_aisles_h30x20_a150_x3
+    reference:
+      metric_version: 2
+      id: f3_aisles_h30x20_a150_x3_coverage_v2
+      metadata_sha256: 7fdf795a55b33613f2ea8ee8a77cf8a3783a4057f26615eb7995b9918007da28
+    default_spawn: {id: default-f3_aisles_h30x20_a150_x3, name: Default, x: -7.525, y: 2.175, z: 0.1, yaw: 0.0}
+    spawns:
+      - {id: S1, name: S1, x: -7.525, y: 2.175, yaw: 0.0}
+    robots:
+      mogi: {}
+    fuel_models: []
+    resource_paths: []
+    moving_objects: null
+    descriptors:
+      file: exploration_benchmark_runner/config/coverage/f3_aisles_h30x20_a150_x3_descriptors.json
+      sha256: b8d341adfe84afe3c15fc781a60a2adccce745ccffbc5167e10a3effb2f9d6ed
+  f3_aisles_h30x20_a300_x1:
+    label: "Aisles 30×20 m · 3.0 m aisles · 1 cross-aisle"
+    tier: F
+    family: F3
+    role: evaluation
+    world_file: world_collection/worlds/F3_aisles_h30x20_a300_x1/F3_aisles_h30x20_a300_x1.sdf
+    source:
+      world_yaml: world_collection/worlds/F3_aisles_h30x20_a300_x1/world.yaml
+      world_yaml_sha256: 74e675755bef418fed7b2e825110fa8d867cc5485c348db545e0d9ebb82b7161
+      sdf_sha256: 9ae1e45174695d438694176c2a66b006b3d5ff9f854bc3ea92e3205750dd5286
+      worldgen_version: "1.0.1"
+    scenario:
+      file: exploration_benchmark_runner/config/coverage/f3_aisles_h30x20_a300_x1_scenario.yaml
+      key: f3_aisles_h30x20_a300_x1
+    reference:
+      metric_version: 2
+      id: f3_aisles_h30x20_a300_x1_coverage_v2
+      metadata_sha256: ef7d0898c68affb131334a7cd6e900836c4eb4708b73dfd3ebfac1a86a77f716
+    default_spawn: {id: default-f3_aisles_h30x20_a300_x1, name: Default, x: 7.425, y: -6.525, z: 0.1, yaw: 3.141593}
+    spawns:
+      - {id: S1, name: S1, x: 7.425, y: -6.525, yaw: 3.141593}
+    robots:
+      mogi: {}
+    fuel_models: []
+    resource_paths: []
+    moving_objects: null
+    descriptors:
+      file: exploration_benchmark_runner/config/coverage/f3_aisles_h30x20_a300_x1_descriptors.json
+      sha256: 4962630f88739190b69efaee22d980e2cdc569485a124a1cbfd5e0b43f1e2acb
+  f3_aisles_h30x20_a300_x3:
+    label: "Aisles 30×20 m · 3.0 m aisles · 3 cross-aisles"
+    tier: F
+    family: F3
+    role: evaluation
+    world_file: world_collection/worlds/F3_aisles_h30x20_a300_x3/F3_aisles_h30x20_a300_x3.sdf
+    source:
+      world_yaml: world_collection/worlds/F3_aisles_h30x20_a300_x3/world.yaml
+      world_yaml_sha256: e1d0415e011d93fb7bd843914ac9d698d1e6b9af3127988abef4ac34baf763c2
+      sdf_sha256: 42259d59a78aa2304dea29e3afa9b89722ba5ebf4c817d5cb3d9d0e7b65d14c4
+      worldgen_version: "1.0.1"
+    scenario:
+      file: exploration_benchmark_runner/config/coverage/f3_aisles_h30x20_a300_x3_scenario.yaml
+      key: f3_aisles_h30x20_a300_x3
+    reference:
+      metric_version: 2
+      id: f3_aisles_h30x20_a300_x3_coverage_v2
+      metadata_sha256: e939a4e58b97cfe8aa53ceba187a37a19daf0505087c402e89e9d6b35498dc43
+    default_spawn: {id: default-f3_aisles_h30x20_a300_x3, name: Default, x: 12.625, y: 8.625, z: 0.1, yaw: 3.141593}
+    spawns:
+      - {id: S1, name: S1, x: 12.625, y: 8.625, yaw: 3.141593}
+    robots:
+      mogi: {}
+    fuel_models: []
+    resource_paths: []
+    moving_objects: null
+    descriptors:
+      file: exploration_benchmark_runner/config/coverage/f3_aisles_h30x20_a300_x3_descriptors.json
+      sha256: 4afa66296a1443cfb6a69f18c01b56d387cfc61e9e788d4ef51707d542d92db6
+  f3_aisles_h60x40_a300_x1:
+    label: "Aisles 60×40 m · 3.0 m aisles · 1 cross-aisle"
+    tier: F
+    family: F3
+    role: evaluation
+    world_file: world_collection/worlds/F3_aisles_h60x40_a300_x1/F3_aisles_h60x40_a300_x1.sdf
+    source:
+      world_yaml: world_collection/worlds/F3_aisles_h60x40_a300_x1/world.yaml
+      world_yaml_sha256: d18277eebfb00fb949253f23a78fe5d5cf1c7d1e74d7d5d5da41903c64918e0b
+      sdf_sha256: 6ddfc4ab1b2d0adbc66538542b320afc3f9df5c91fc049e8a7fc499f01513cbe
+      worldgen_version: "1.0.1"
+    scenario:
+      file: exploration_benchmark_runner/config/coverage/f3_aisles_h60x40_a300_x1_scenario.yaml
+      key: f3_aisles_h60x40_a300_x1
+    reference:
+      metric_version: 2
+      id: f3_aisles_h60x40_a300_x1_coverage_v2
+      metadata_sha256: 50cae1112589126924a1057dc1faa80afad04a921dad72ee1d2bc9f972904258
+    default_spawn: {id: default-f3_aisles_h60x40_a300_x1, name: Default, x: 23.675, y: -7.175, z: 0.1, yaw: 3.141593}
+    spawns:
+      - {id: S1, name: S1, x: 23.675, y: -7.175, yaw: 3.141593}
+    robots:
+      mogi: {}
+    fuel_models: []
+    resource_paths: []
+    moving_objects: null
+    descriptors:
+      file: exploration_benchmark_runner/config/coverage/f3_aisles_h60x40_a300_x1_descriptors.json
+      sha256: aa80eedf7cdd28100341f770ec9d84d6f6a4708d5e15931bd86c5006a60528c0
+  f4_forest_s40_d003:
+    label: "Forest 40×40 m · 0.03 trunks/m²"
+    tier: F
+    family: F4
+    role: evaluation
+    world_file: world_collection/worlds/F4_forest_s40_d003/F4_forest_s40_d003.sdf
+    source:
+      world_yaml: world_collection/worlds/F4_forest_s40_d003/world.yaml
+      world_yaml_sha256: ea7928e9f020182cc1d3752ab4b08be11f5ec67054925e5bf9b5d3c402a5a073
+      sdf_sha256: ffc54c09848551c0f9b8cedf69d37a72914b8bd6d5d88b7f2d254623cedff8eb
+      worldgen_version: "1.0.1"
+    scenario:
+      file: exploration_benchmark_runner/config/coverage/f4_forest_s40_d003_scenario.yaml
+      key: f4_forest_s40_d003
+    reference:
+      metric_version: 2
+      id: f4_forest_s40_d003_coverage_v2
+      metadata_sha256: 63a00b55c8a7d7d72bfd85d9e739c0f837b6cfd9bc5c85f1e07c434dc806bf8c
+    default_spawn: {id: default-f4_forest_s40_d003, name: Default, x: 18.575, y: -8.175, z: 0.1, yaw: 1.570796}
+    spawns:
+      - {id: S1, name: S1, x: 18.575, y: -8.175, yaw: 1.570796}
+    robots:
+      mogi: {}
+    fuel_models: []
+    resource_paths: []
+    moving_objects: null
+    descriptors:
+      file: exploration_benchmark_runner/config/coverage/f4_forest_s40_d003_descriptors.json
+      sha256: cc46af69de297fef2cb7b9829348e079e3aff27c0b1b0b287448627ce1acb92e
+  f4_forest_s80_d001:
+    label: "Forest 80×80 m · 0.01 trunks/m²"
+    tier: F
+    family: F4
+    role: evaluation
+    world_file: world_collection/worlds/F4_forest_s80_d001/F4_forest_s80_d001.sdf
+    source:
+      world_yaml: world_collection/worlds/F4_forest_s80_d001/world.yaml
+      world_yaml_sha256: f43dd60b4581ea70163e4e06cd2afb373d576c7885266fd7b9e9da0d60b7df30
+      sdf_sha256: 7e87e2e638a9ad2e252e2451712bebe7d3eca0df40d2b4499a30fe1486297d6b
+      worldgen_version: "1.0.1"
+    scenario:
+      file: exploration_benchmark_runner/config/coverage/f4_forest_s80_d001_scenario.yaml
+      key: f4_forest_s80_d001
+    reference:
+      metric_version: 2
+      id: f4_forest_s80_d001_coverage_v2
+      metadata_sha256: 8bc75317a9326031be1a1af8a552fab1b9023040b7a5b3db3ae2ae96943d2d5c
+    default_spawn: {id: default-f4_forest_s80_d001, name: Default, x: 11.175, y: -12.775, z: 0.1, yaw: 0.0}
+    spawns:
+      - {id: S1, name: S1, x: 11.175, y: -12.775, yaw: 0.0}
+    robots:
+      mogi: {}
+    fuel_models: []
+    resource_paths: []
+    moving_objects: null
+    descriptors:
+      file: exploration_benchmark_runner/config/coverage/f4_forest_s80_d001_descriptors.json
+      sha256: a5cf5bf2c5e2d345b9a231c1dab281cc0d59ae64096d57a52293f9591300d05a
+  f4_forest_s80_d003:
+    label: "Forest 80×80 m · 0.03 trunks/m²"
+    tier: F
+    family: F4
+    role: evaluation
+    world_file: world_collection/worlds/F4_forest_s80_d003/F4_forest_s80_d003.sdf
+    source:
+      world_yaml: world_collection/worlds/F4_forest_s80_d003/world.yaml
+      world_yaml_sha256: d2abad1639e049e51e2b6d9edf73d31aadfebcd34998be6909b3eb45f733e681
+      sdf_sha256: 836d985b38f039b4d21767f6477028a65ba823979b99f6cc070fa03b5a92201d
+      worldgen_version: "1.0.1"
+    scenario:
+      file: exploration_benchmark_runner/config/coverage/f4_forest_s80_d003_scenario.yaml
+      key: f4_forest_s80_d003
+    reference:
+      metric_version: 2
+      id: f4_forest_s80_d003_coverage_v2
+      metadata_sha256: 568270dfe78db243442f1012b64e340dc5d81f23ba7462a307faf1cfbfd2308a
+    default_spawn: {id: default-f4_forest_s80_d003, name: Default, x: -25.975, y: -25.125, z: 0.1, yaw: 0.0}
+    spawns:
+      - {id: S1, name: S1, x: -25.975, y: -25.125, yaw: 0.0}
+    robots:
+      mogi: {}
+    fuel_models: []
+    resource_paths: []
+    moving_objects: null
+    descriptors:
+      file: exploration_benchmark_runner/config/coverage/f4_forest_s80_d003_descriptors.json
+      sha256: a97f946e628534f326de9c9148e817742f49f576663582acc4af307ec5179e9d
+  f5_urban_w06_b15:
+    label: "Urban blocks · 6 m streets · 15 m blocks"
+    tier: F
+    family: F5
+    role: evaluation
+    world_file: world_collection/worlds/F5_urban_w06_b15/F5_urban_w06_b15.sdf
+    source:
+      world_yaml: world_collection/worlds/F5_urban_w06_b15/world.yaml
+      world_yaml_sha256: b18d29a09a7c768c8ff22e6edeca560407e0d727e6a8e487f0febb754be00fa4
+      sdf_sha256: df94f76911772785e084e340a4239631febcbb23ef38e4475a1d7611b689537b
+      worldgen_version: "1.0.1"
+    scenario:
+      file: exploration_benchmark_runner/config/coverage/f5_urban_w06_b15_scenario.yaml
+      key: f5_urban_w06_b15
+    reference:
+      metric_version: 2
+      id: f5_urban_w06_b15_coverage_v2
+      metadata_sha256: 4743cb469156423c15a7b7aa561aac924127d4dfb8385432f88089a461b5808d
+    default_spawn: {id: default-f5_urban_w06_b15, name: Default, x: 9.625, y: 14.475, z: 0.1, yaw: 0.0}
+    spawns:
+      - {id: S1, name: S1, x: 9.625, y: 14.475, yaw: 0.0}
+    robots:
+      mogi: {}
+    fuel_models: []
+    resource_paths: []
+    moving_objects: null
+    descriptors:
+      file: exploration_benchmark_runner/config/coverage/f5_urban_w06_b15_descriptors.json
+      sha256: abbdbae039548c368543fa694d8ce8f65cd4f23a84d2bcc0398947df1393408c
+  rp1_aces3_austin:
+    label: "ACES3 Austin"
+    tier: RP
+    family: null
+    role: evaluation
+    world_file: world_collection/worlds/RP1_aces3_austin/RP1_aces3_austin.sdf
+    source:
+      world_yaml: world_collection/worlds/RP1_aces3_austin/world.yaml
+      world_yaml_sha256: 785f516b586549cb52165cc8dfd48936413c1a179b77c3d7d27dba320619c1e6
+      sdf_sha256: 75b0d01bc0aaf6abecddc75fcfe0a6b255567c3a2848df49a22fe855072ddc3c
+      worldgen_version: "1.0.1"
+    scenario:
+      file: exploration_benchmark_runner/config/coverage/rp1_aces3_austin_scenario.yaml
+      key: rp1_aces3_austin
+    reference:
+      metric_version: 2
+      id: rp1_aces3_austin_coverage_v2
+      metadata_sha256: beae292ff3019f3589b9955faf39e82d3c7efe534d254f78d7c7ddf87744fb7b
+    default_spawn: {id: default-rp1_aces3_austin, name: Default, x: 0.0, y: 0.0, z: 0.1, yaw: 1.570796}
+    spawns:
+      - {id: S1, name: S1, x: 0.0, y: 0.0, yaw: 1.570796}
+      - {id: S2, name: S2, x: 24.23, y: -20.82, yaw: 1.570796}
+      - {id: S3, name: S3, x: 24.0, y: -0.2, yaw: 3.141593}
+    robots:
+      mogi: {}
+    fuel_models: []
+    resource_paths: []
+    moving_objects: null
+    descriptors:
+      file: exploration_benchmark_runner/config/coverage/rp1_aces3_austin_descriptors.json
+      sha256: 23b36b85692e9e2adac52308e6d05c80e198dd6add30500adcea37a689442de6
+  rp2_industrial_warehouse:
+    label: "Industrial warehouse"
+    tier: RP
+    family: null
+    role: evaluation
+    world_file: world_collection/worlds/RP2_industrial_warehouse/RP2_industrial_warehouse.sdf
+    source:
+      world_yaml: world_collection/worlds/RP2_industrial_warehouse/world.yaml
+      world_yaml_sha256: c63bc96740f8b6d7adf36317dec0e72efaaac20d0f9ba774854676b8d7fcb69f
+      sdf_sha256: 3e6c14a22ee895f0cc0af08979a1e2a91e3738d2ef8f15bfc77448193f92c3d7
+      worldgen_version: "1.0.1"
+    scenario:
+      file: exploration_benchmark_runner/config/coverage/rp2_industrial_warehouse_scenario.yaml
+      key: rp2_industrial_warehouse
+    reference:
+      metric_version: 2
+      id: rp2_industrial_warehouse_coverage_v2
+      metadata_sha256: c2b042afe5b5def3fbd7fd8531e905968876dbbd90ca7022774131bce4ab3975
+    default_spawn: {id: default-rp2_industrial_warehouse, name: Default, x: -26.5, y: -13.0, z: 0.1, yaw: 0.0}
+    spawns:
+      - {id: S1, name: S1, x: -26.5, y: -13.0, yaw: 0.0}
+      - {id: S2, name: S2, x: 15.5, y: 11.0, yaw: 3.141593}
+      - {id: S3, name: S3, x: 25.5, y: -11.0, yaw: 1.570796}
+    robots:
+      mogi: {}
+    fuel_models: []
+    resource_paths: []
+    moving_objects: null
+    descriptors:
+      file: exploration_benchmark_runner/config/coverage/rp2_industrial_warehouse_descriptors.json
+      sha256: 89cf0f56650dba588b6f5aaa33b3ea5460740058a6c83c1e77d3a4e4825a9dbf
+  rp3_santa_maria_del_mar:
+    label: "Santa Maria del Mar"
+    tier: RP
+    family: null
+    role: evaluation
+    world_file: world_collection/worlds/RP3_santa_maria_del_mar/RP3_santa_maria_del_mar.sdf
+    source:
+      world_yaml: world_collection/worlds/RP3_santa_maria_del_mar/world.yaml
+      world_yaml_sha256: f64c7f81ae0012f819b86143ce1d7504661c5d4211de177bcba6be2962ecae17
+      sdf_sha256: 071540239d28ecd48f5108e6a816b8bf481778f4df12a126cace85c67e0da7e1
+      worldgen_version: "1.0.1"
+    scenario:
+      file: exploration_benchmark_runner/config/coverage/rp3_santa_maria_del_mar_scenario.yaml
+      key: rp3_santa_maria_del_mar
+    reference:
+      metric_version: 2
+      id: rp3_santa_maria_del_mar_coverage_v2
+      metadata_sha256: 9ba2cfab899c653cbc8fecb6bb09fe55d4aa23d97eb841f4692e2d9cdd97813e
+    default_spawn: {id: default-rp3_santa_maria_del_mar, name: Default, x: 46.25, y: 67.25, z: 0.1, yaw: 0.0}
+    spawns:
+      - {id: S1, name: S1, x: 46.25, y: 67.25, yaw: 0.0}
+      - {id: S2, name: S2, x: -121.35, y: -48.55, yaw: 0.0}
+      - {id: S3, name: S3, x: 78.35, y: -87.05, yaw: 0.0}
+    robots:
+      mogi: {}
+    fuel_models: []
+    resource_paths: []
+    moving_objects: null
+    descriptors:
+      file: exploration_benchmark_runner/config/coverage/rp3_santa_maria_del_mar_descriptors.json
+      sha256: 884e31f491f295778f34ed42d30e22365e240362c874f3528db809345d2c86a9
+  mo1_office_strip_moving:
+    label: "Office strip · moving objects"
+    tier: MO
+    family: null
+    role: evaluation
+    world_file: world_collection/worlds/MO1_office_strip_moving/MO1_office_strip_moving.sdf
+    source:
+      world_yaml: world_collection/worlds/MO1_office_strip_moving/world.yaml
+      world_yaml_sha256: 86129ae8d9515106dfa142f29a3051c554dbbf9d3216a1dcdb8ff4c7fc9ebe3c
+      sdf_sha256: ea7d4755f10a2173d51b418603b0f0a71c1a227082e295bf5cb207b60fdc120e
+      worldgen_version: "1.0.1"
+    scenario:
+      file: exploration_benchmark_runner/config/coverage/mo1_office_strip_moving_scenario.yaml
+      key: mo1_office_strip_moving
+    reference:
+      metric_version: 2
+      id: mo1_office_strip_moving_coverage_v2
+      metadata_sha256: 926fe21ad6a14e41c5d587b98efffd5a5e535a66ce79ef8d6c041232f4f7e65d
+    default_spawn: {id: default-mo1_office_strip_moving, name: Default, x: -11.0, y: 0.0, z: 0.1, yaw: 0.0}
+    spawns:
+      - {id: S1, name: S1, x: -11.0, y: 0.0, yaw: 0.0}
+      - {id: S2, name: S2, x: -1.0, y: 0.0, yaw: 0.0}
+      - {id: S3, name: S3, x: 5.2, y: 4.2, yaw: -1.570796}
+    robots:
+      mogi: {}
+    fuel_models: []
+    resource_paths: []
+    moving_objects: {system: benchmark::MovingObjects, format_version: 1, velocity_mode: pose_and_velocity, topic: /benchmark/moving_objects/pose, count: 5}
+    descriptors:
+      file: exploration_benchmark_runner/config/coverage/mo1_office_strip_moving_descriptors.json
+      sha256: 29f30fbc88aee7da319ef11fd617d0b78ad860a5a81e92545970acac7d8fda78
+  mo2_warehouse_moving:
+    label: "Industrial warehouse · moving objects"
+    tier: MO
+    family: null
+    role: evaluation
+    world_file: world_collection/worlds/MO2_warehouse_moving/MO2_warehouse_moving.sdf
+    source:
+      world_yaml: world_collection/worlds/MO2_warehouse_moving/world.yaml
+      world_yaml_sha256: 3cbe733f163c00e22039fc627a3f58d34b98a086e2d8ddcdb6b06ae61f581cb1
+      sdf_sha256: f1a2bf982a9dd502b28043aeba51d4e04ad70925fa26031c4d01fa0c3a6ef650
+      worldgen_version: "1.0.1"
+    scenario:
+      file: exploration_benchmark_runner/config/coverage/mo2_warehouse_moving_scenario.yaml
+      key: mo2_warehouse_moving
+    reference:
+      metric_version: 2
+      id: mo2_warehouse_moving_coverage_v2
+      metadata_sha256: c88be4e3aff485a5a82d3242127a06de0ff3778a96eef21459df8be5996aeef9
+    default_spawn: {id: default-mo2_warehouse_moving, name: Default, x: -26.5, y: -13.0, z: 0.1, yaw: 0.0}
+    spawns:
+      - {id: S1, name: S1, x: -26.5, y: -13.0, yaw: 0.0}
+      - {id: S2, name: S2, x: 15.5, y: 11.0, yaw: 3.141593}
+      - {id: S3, name: S3, x: 25.5, y: -11.0, yaw: 1.570796}
+    robots:
+      mogi: {}
+    fuel_models: []
+    resource_paths: []
+    moving_objects: {system: benchmark::MovingObjects, format_version: 1, velocity_mode: pose_and_velocity, topic: /benchmark/moving_objects/pose, count: 28}
+    descriptors:
+      file: exploration_benchmark_runner/config/coverage/mo2_warehouse_moving_descriptors.json
+      sha256: c41c7e404ec78a16f9810e38b90e80e2052bdf22c4a16e21f1848264e900e88a

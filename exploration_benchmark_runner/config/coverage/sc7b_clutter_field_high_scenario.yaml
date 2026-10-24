@@ -1,0 +1,15 @@
+# Coverage settings of sc7b_clutter_field_high (docs/plans/worlds/I2-references-and-scenarios.md §3.3),
+# written by benchmark_reference import; hashed into sc7b_clutter_field_high_v2.json.
+resolution: 0.05
+body_height_slab: [0.03, 0.35]
+scenarios:
+  sc7b_clutter_field_high:
+    bounds: [-16.2, -16.2, 16.2, 16.2]
+    inclusion_polygons:
+    - - [-15.0, -15.0]
+      - [15.0, -15.0]
+      - [15.0, 15.0]
+      - [-15.0, 15.0]
+    exclusion_polygons: []
+    review: 'SC7b Clutter field, 90 blocks: inclusion polygon of world.yaml; bounds = T0 grid extent'
+    source: {world_yaml: world_collection/worlds/SC7b_clutter_field_high/world.yaml, worldgen_version: 1.0.1}

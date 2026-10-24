@@ -12,8 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+from collections import OrderedDict
 from copy import deepcopy
+from dataclasses import dataclass
+import hashlib
 import json
+import logging
 from pathlib import Path
 import time
 from typing import Any
@@ -23,16 +27,28 @@ import yaml
 
 from exploration_benchmark_runner.parameters import ParameterSchema, UniqueKeyLoader
 from exploration_benchmark_runner.configuration import robot_parameter_schema, scenario
-from exploration_benchmark_runner.coverage import Reference, reference_file
-from exploration_benchmark_robots.catalog import RobotCatalog, resolve_physical_settings
+from exploration_benchmark_runner.coverage import Reference
+from exploration_benchmark_runner.time_limits import (
+    RULE_METRIC_VERSION,
+    TIME_LIMIT_RULE,
+    kinematic_time_limit,
+    target_area_m2,
+)
+from exploration_benchmark_runner.worlds import WorldRegistry
+from exploration_benchmark_robots.catalog import (
+    RobotCatalog,
+    fill_robot_profiles,
+    resolve_physical_settings,
+)
 from exploration_benchmark_robots.preflight import validate_spawn
 
-from .analysis_block import plan_parts, validate
+from .analysis_block import WorldFacts, plan_parts, validate
 from .contracts import (
     CampaignSpec,
     ContractError,
     DEFAULT_LIMIT,
     PROFILE_DELETION_LIMIT,
+    RuleValue,
     Study,
     canonical,
     content_hash,
@@ -45,6 +61,9 @@ from .contracts import (
 from .monitoring import png, reference_pixels
 from .storage import file_hash
 from .store import TUNING_CAMPAIGN, Store
+from .world_facts import world_facts
+
+LOG = logging.getLogger(__name__)
 
 PROFILE_FIELDS = {
     "id",
@@ -66,6 +85,59 @@ PROFILE_FIELDS = {
 # Retired keys accepted from recorded snapshots and earlier YAML, then ignored (tags, 16 October 2026;
 # library revision numbers, 18 October 2026).
 LEGACY_PROFILE_FIELDS = frozenset({"tags", "revision"})
+# Full coverage references (grids and target cells) kept in memory; the catalog needs only their
+# metadata, and a large world's reference holds millions of cells (I1 §3.6).
+REFERENCE_CACHE = 4
+# Spawn names that stand for a world's Default spawn (tier A) or its whole predefined set (collection
+# worlds, I9 §3.4), besides "default-<world>" and the default spawn's own ID.
+DEFAULT_SPAWN_NAMES = ("Default", "default")
+
+
+def world_code(registry: Any, world: Any) -> str | None:
+    """A collection world's display code ("SC2a", "F1-01", "P1", "MO2"): the ``id`` of its world.yaml,
+    whose bytes must still match the registry's pin. None for tier A (no world.yaml; the label names it)."""
+    if world.source is None:
+        return None
+    path = registry.path(world.source.world_yaml)
+    data = path.read_bytes()
+    if hashlib.sha256(data).hexdigest() != world.source.world_yaml_sha256:
+        raise ValueError(f"{world.source.world_yaml}: changed since the registry was loaded")
+    document = yaml.load(data, Loader=UniqueKeyLoader)
+    code = document.get("id") if isinstance(document, dict) else None
+    if not isinstance(code, str) or not code:
+        raise ValueError(f"{world.source.world_yaml}: expected a text id")
+    return code
+
+
+def registry_spawn(spawn: Any) -> dict[str, Any]:
+    """A registry spawn as campaigns and the catalog hold it."""
+    return {"id": spawn.id, "name": spawn.name, "x": spawn.x, "y": spawn.y, "yaw": spawn.yaw}
+
+
+def check_registry_spawn(
+    field: str, world_id: str, item: dict[str, Any], expected: dict[str, Any], rule: str
+) -> None:
+    """Refuse a campaign spawn that names a registry spawn's ID but not its pose (``x``, ``y``, ``yaw``
+    numerically equal: an int 0 equals 0.0) or, when it gives one, its name. ``rule`` ends the message."""
+    edited = [
+        key
+        for key in ("x", "y", "yaw")
+        if type(item.get(key)) not in (int, float) or item[key] != expected[key]
+    ]
+    if item.get("name", expected["name"]) != expected["name"]:
+        edited.append("name")
+    if edited:
+        raise ContractError(
+            field,
+            f"{world_id}: spawn {expected['id']} differs from its registry {', '.join(edited)}; {rule}",
+        )
+
+
+def incompatible(robot_id: str, world_id: str) -> ContractError:
+    return ContractError(
+        "compatibility",
+        f"{robot_id} cannot use {world_id}; explicitly exclude this combination",
+    )
 
 
 def load_yaml(source: str) -> dict[str, Any]:
@@ -73,6 +145,45 @@ def load_yaml(source: str) -> dict[str, Any]:
         return mapping(yaml.load(source, Loader=UniqueKeyLoader), "yaml")
     except yaml.YAMLError as exc:
         raise ContractError("yaml", str(exc)) from exc
+
+
+@dataclass(frozen=True, slots=True)
+class ReferenceHeader:
+    """A coverage reference's metadata without its grid: what the catalog shows. ``descriptor`` equals
+    ``Reference.descriptor`` (``Reference`` checks that its target count equals ``target_cells``)."""
+
+    file: Path
+    metadata: dict[str, Any]
+    metadata_hash: str
+
+    @classmethod
+    def load(cls, file: Path) -> "ReferenceHeader":
+        try:
+            data = file.read_bytes()
+            metadata = json.loads(data)
+        except (OSError, ValueError) as exc:
+            raise ValueError(f"Invalid coverage reference {file}: {exc}") from exc
+        if not isinstance(metadata, dict):
+            raise ValueError(f"Invalid coverage reference {file}: expected a mapping")
+        return cls(file, metadata, hashlib.sha256(data).hexdigest())
+
+    @property
+    def origin(self) -> tuple[float, ...]:
+        return tuple(float(v) for v in self.metadata["origin"])
+
+    @property
+    def resolution(self) -> float:
+        return float(self.metadata["resolution"])
+
+    def descriptor(self) -> dict[str, Any]:
+        return dict(
+            id=self.metadata["id"],
+            metric_version=self.metadata["metric_version"],
+            metadata_file=str(self.file.resolve()),
+            metadata_sha256=self.metadata_hash,
+            grid_sha256=self.metadata["grid_sha256"],
+            target_area_m2=self.metadata["target_cells"] * self.resolution**2,
+        )
 
 
 class Library:
@@ -86,19 +197,112 @@ class Library:
             file_hash(self.baseline_file),
             file_hash(self.metadata_file),
         )
+        # The world registry (worlds.yaml) of this checkout, read once at engine start.
+        self.registry = WorldRegistry.load(self.root)
         resource = self.root / "exploration_benchmark_robots"
-        self.robots = yaml.safe_load((resource / "config/robots.yaml").read_text())["robots"]
-        self.robot_catalog = RobotCatalog(resource) if native else None
-        self.accepted_robots: dict[str, dict[str, Any]] = {}
-        self.references = {
-            world: Reference(
-                reference_file(self.root / "exploration_benchmark_runner/config/coverage", world)
+        self.robot_catalog = RobotCatalog(resource, worlds=self.registry) if native else None
+        # Robot profiles with world fit from the registry, as RobotCatalog fills them.
+        self.robots: dict[str, dict[str, Any]] = (
+            self.robot_catalog.profiles
+            if self.robot_catalog
+            else fill_robot_profiles(
+                yaml.safe_load((resource / "config/robots.yaml").read_text()), self.registry
             )
-            for world in ("bookstore", "corridor", "warehouse")
+        )
+        self.accepted_robots: dict[str, dict[str, Any]] = {}
+        self.worlds = {world.id: world for world in self.registry.runnable()}
+        self.headers = {
+            identity: ReferenceHeader.load(world.reference.metadata_file)
+            for identity, world in self.worlds.items()
         }
-        self.scenarios = {world: scenario(self.root, world) for world in self.references}
-        # spawns.map replies per world; the references above never change after loading.
+        # The registry checked each pin a moment ago; this guards the read above against an edit between.
+        for identity, header in self.headers.items():
+            if header.metadata_hash != self.worlds[identity].reference.metadata_sha256:
+                raise ValueError(f"Coverage reference of {identity} changed while loading")
+        self.loaded: OrderedDict[str, Reference] = OrderedDict()
+        self.scenarios = {
+            identity: scenario(self.root, identity, registry=self.registry)
+            for identity in self.worlds
+        }
+        # spawns.map replies per world; the references never change after loading.
         self.maps: dict[str, dict[str, Any]] = {}
+        # Registry facts for analysis-block validation, read once on first use (world.yaml parameters).
+        self.facts: dict[str, WorldFacts] | None = None
+        self.codes = {
+            identity: world_code(self.registry, world) for identity, world in self.worlds.items()
+        }
+
+    def reference(self, world: str) -> Reference:
+        """The world's full coverage reference, loaded on demand (bounded LRU, REFERENCE_CACHE)."""
+        loaded = self.loaded.pop(world, None)
+        if loaded is None:
+            header = self.headers[world]
+            try:
+                loaded = Reference(header.file)
+            except ValueError as exc:
+                raise ContractError("reference", str(exc), "reference_mismatch") from exc
+            if loaded.metadata_hash != header.metadata_hash:
+                raise ContractError(
+                    "reference",
+                    f"Coverage reference of {world} changed since engine start; restart the engine",
+                    "reference_mismatch",
+                )
+        self.loaded[world] = loaded
+        while len(self.loaded) > REFERENCE_CACHE:
+            self.loaded.popitem(last=False)
+        return loaded
+
+    def rule_value(self, world_id: str, robot_id: str) -> RuleValue | None:
+        """``kinematic-time-limit-v1`` for one world and robot: A from the world's pinned reference
+        (the rule module's ``target_area_m2``, as the tool computes it), R and v from the robot's Default
+        physical settings (``resolve_physical_settings`` without overrides: ``lidar.range_max``,
+        ``max_linear_speed``). None without a reference of the rule's metric version
+        (``RULE_METRIC_VERSION``)."""
+        header = self.headers[world_id]
+        if self.worlds[world_id].reference.metric_version != RULE_METRIC_VERSION:
+            return None
+        settings = resolve_physical_settings(self.robots[robot_id])
+        cells, resolution = header.metadata["target_cells"], header.metadata["resolution"]
+        range_m, speed = settings["lidar"]["range_max"], settings["max_linear_speed"]
+        try:
+            limit = kinematic_time_limit(cells, resolution, range_m, speed)
+            area = float(target_area_m2(cells, resolution))
+        except ValueError as exc:
+            raise ContractError(
+                f"time_limit_rule.{world_id}.{robot_id}", str(exc), "dependency_or_configuration"
+            ) from exc
+        return RuleValue(
+            seconds=int(limit.seconds),
+            uncapped_seconds=int(limit.uncapped_seconds),
+            capped=bool(limit.capped),
+            area_m2=area,
+            range_m=float(range_m),
+            speed_mps=float(speed),
+        )
+
+    def rule_time_limits(self, world_id: str) -> dict[str, RuleValue]:
+        """The catalog's ``rule_time_limits`` of a world: each robot the registry fits to it, in registry
+        order. A robot whose value cannot be computed is left out and logged, not the whole catalog."""
+        result: dict[str, RuleValue] = {}
+        for robot_id in self.worlds[world_id].robot_ids:
+            try:
+                value = self.rule_value(world_id, robot_id)
+            except (ContractError, KeyError, TypeError) as exc:
+                LOG.warning("No rule time limit for %s in %s: %s", robot_id, world_id, exc)
+                continue
+            if value is not None:
+                result[robot_id] = value
+        return result
+
+    def world_facts(self) -> dict[str, WorldFacts]:
+        """Registry facts for analysis-block validation (``world_facts.world_facts``), built once."""
+        if self.facts is None:
+            self.facts = world_facts(self.registry)
+        return self.facts
+
+    def world_families(self) -> dict[str, str | None]:
+        """Each registry world's run-record ``world_family`` (the family of tier F, else null)."""
+        return {world.id: world.family for world in self.registry.worlds}
 
     def bind(self, store: Store) -> None:
         self.store = store
@@ -108,8 +312,11 @@ class Library:
             raise ContractError("robot_id", "Unknown robot: " + identity)
         try:
             if identity not in self.accepted_robots:
+                fit = self.robots[identity]["worlds"]
+                if not fit:
+                    raise ValueError(f"{identity} fits no world of the registry")
                 self.accepted_robots[identity] = (
-                    self.robot_catalog.require(identity, self.robots[identity]["worlds"][0])
+                    self.robot_catalog.require(identity, fit[0])
                     if self.robot_catalog
                     else deepcopy(self.robots[identity])
                 )
@@ -203,25 +410,40 @@ class Library:
                 }
             )
         worlds = []
-        for identity, reference in self.references.items():
+        for identity, world in self.worlds.items():
+            header = self.headers[identity]
             x, y, _, yaw = self.scenarios[identity]["spawn"]
             worlds.append(
                 {
                     "id": identity,
-                    "label": identity.capitalize(),
+                    "label": world.label,
+                    # display code of a collection world ("F1-01"); null for tier A
+                    "code": self.codes[identity],
+                    # Registry facts the world selection groups by (I9): tier A keeps custom spawns,
+                    # collection worlds run all their predefined spawns.
+                    "tier": world.tier,
+                    "family": world.family,
+                    "role": world.role,
+                    "spawn_policy": world.spawn_policy,
                     "default_time_limit": DEFAULT_LIMIT,
-                    "reference": reference.descriptor(),
+                    # time_limit_rule's value per robot that fits the world (I4 §3.3); {} without a
+                    # metric-version-2 reference.
+                    "rule_time_limits": self.rule_time_limits(identity),
+                    # Registry spawns in registry order: all of them run on a collection world (I9
+                    # §3.1); fixed choices beside Default and custom spawns on tier A (decision 60).
+                    "spawns": [registry_spawn(s) for s in world.spawns],
+                    "reference": header.descriptor(),
                     "default_spawn": {
-                        "id": "default-" + identity,
-                        "name": "Default",
+                        "id": world.default_spawn.id,
+                        "name": world.default_spawn.name,
                         "x": x,
                         "y": y,
                         "yaw": yaw,
                     },
-                    "origin": reference.origin,
-                    "resolution": reference.resolution,
-                    "width": reference.metadata["width"],
-                    "height": reference.metadata["height"],
+                    "origin": header.origin,
+                    "resolution": header.resolution,
+                    "width": header.metadata["width"],
+                    "height": header.metadata["height"],
                 }
             )
         return {
@@ -250,7 +472,9 @@ class Library:
         snapshot.pop("revision", None)
         return snapshot
 
-    def resolve_campaign(self, raw: dict[str, Any]) -> CampaignSpec:
+    def resolve_campaign(self, raw: dict[str, Any], *, tuning: bool = False) -> CampaignSpec:
+        """A submitted campaign as its accepted specification. ``tuning``: a tuning run, which picks one
+        predefined spawn of a collection world instead of running all of them (I9 §8.1)."""
         allowed = {
             "name",
             "description",
@@ -266,6 +490,9 @@ class Library:
             "debug_streams",
             # an accepted campaign (Validate, then Add to queue; exported YAML) carries it: recomputed below
             "default_parameter_hashes",
+            "time_limit_rule",
+            # recomputed below with the rule; without it CampaignSpec refuses the key
+            "time_limit_inputs",
         }
         known_keys(raw, allowed, "campaign")
         accepted = deepcopy(raw)
@@ -286,24 +513,61 @@ class Library:
                 selected.append(self.resolve_profile(robot_id, value))
             accepted["robots"][robot_id] = selected
         for world_id, spawns in mapping(raw.get("worlds"), "worlds").items():
-            if world_id not in self.references:
+            if world_id not in self.worlds:
                 raise ContractError("worlds", "Unknown world: " + world_id)
+            if self.worlds[world_id].spawn_policy == "predefined":
+                accepted["worlds"][world_id] = self._predefined_spawns(world_id, spawns, tuning)
+                continue
             if not isinstance(spawns, list) or not spawns:
                 raise ContractError("worlds." + world_id, "Select at least one spawn")
+            default = self.worlds[world_id].default_spawn
+            # Registry spawns (decision 60) resolve by ID before saved spawns; a saved spawn's ID is a
+            # UUID, so a registry ID wins the (unlikely) tie.
+            fixed = {spawn.id: registry_spawn(spawn) for spawn in self.worlds[world_id].spawns}
             selected = []
             for item in spawns:
-                if isinstance(item, str):
-                    if item in ("Default", "default", "default-" + world_id):
+                if isinstance(item, str) and item in fixed:
+                    item = dict(fixed[item])
+                elif (
+                    isinstance(item, dict)
+                    and isinstance(item.get("id"), str)
+                    and item["id"] in fixed
+                ):
+                    # A registry spawn given in full must be the registry's, and then gives the same
+                    # specification as its ID (as on collection worlds).
+                    known_keys(
+                        item, {"id", "name", "x", "y", "yaw"}, f"worlds.{world_id}.{item['id']}"
+                    )
+                    check_registry_spawn(
+                        "worlds." + world_id,
+                        world_id,
+                        item,
+                        fixed[item["id"]],
+                        "registry spawns run unchanged; give an edited pose its own spawn ID",
+                    )
+                    item = dict(fixed[item["id"]])
+                elif isinstance(item, str):
+                    if item in (*DEFAULT_SPAWN_NAMES, "default-" + world_id, default.id):
                         x, y, _, yaw = self.scenarios[world_id]["spawn"]
                         item = {
-                            "id": "default-" + world_id,
-                            "name": "Default",
+                            "id": default.id,
+                            "name": default.name,
                             "x": x,
                             "y": y,
                             "yaw": yaw,
                         }
                     else:
-                        item = self._saved(item, "spawn")
+                        try:
+                            item = self._saved(item, "spawn")
+                        except ContractError as exc:
+                            if exc.code != "not_found":
+                                raise
+                            raise ContractError(
+                                "worlds." + world_id,
+                                f"{world_id} has no registry spawn {item} "
+                                f"({', '.join(fixed) or 'none'}) and no saved spawn with that ID",
+                                "not_found",
+                            ) from exc
                         if item["world_id"] != world_id:
                             raise ContractError("spawns", "Spawn belongs to another world")
                         item = {
@@ -311,15 +575,6 @@ class Library:
                         }
                 selected.append(mapping(item, "spawn"))
             accepted["worlds"][world_id] = selected
-            if self.native:
-                try:
-                    self.references[world_id].validate_scenario(
-                        self.root, self.scenarios[world_id], allow_custom_spawn=True
-                    )
-                except ValueError as exc:
-                    raise ContractError(
-                        "worlds." + world_id, str(exc), "reference_mismatch"
-                    ) from exc
         # Facts fixed at submission: the plan's hash and each robot's Default parameter hash.
         if isinstance(raw.get("study"), dict):
             study = Study.accepted(raw["study"])
@@ -333,6 +588,12 @@ class Library:
                     "plan_changed",
                 )
             accepted["study"] = dict(study.dictionary(), plan_sha256=digest)
+        # The rule's values; CampaignSpec.accepted checks the rule name, the global time_limit, given
+        # limits, capped pairs and robots that disagree (contracts.resolve_time_limit_inputs).
+        if raw.get("time_limit_rule") == TIME_LIMIT_RULE:
+            limits, inputs = self._rule_time_limits(raw, accepted)
+            accepted.setdefault("world_time_limits", limits)
+            accepted["time_limit_inputs"] = inputs
         accepted["default_parameter_hashes"] = {
             robot_id: content_hash(
                 self.resolve_profile(robot_id, {"name": "Default", "id": "default-" + robot_id})[
@@ -343,25 +604,139 @@ class Library:
         }
         spec = CampaignSpec.accepted(accepted)
         exclusions = set(spec.exclusions)
-        for robot_id, profiles in spec.robots:
-            for world_id, spawns in spec.worlds:
+        # Worlds outermost: each world's full reference is loaded at most once here (the LRU holds only
+        # REFERENCE_CACHE of them, and this runs on the engine's request thread).
+        for world_id, spawns in spec.worlds:
+            loaded: Reference | None = None
+            if self.native:
+                loaded = self.reference(world_id)
+                try:
+                    loaded.validate_scenario(
+                        self.root, self.scenarios[world_id], allow_custom_spawn=True
+                    )
+                except ValueError as exc:
+                    raise ContractError(
+                        "worlds." + world_id, str(exc), "reference_mismatch"
+                    ) from exc
+            if self.worlds[world_id].spawn_policy == "predefined" and not tuning:
+                # A collection world runs all its predefined spawns: an exclusion removes a robot from
+                # the world, never single spawns (I9 §3.4).
+                for robot_id, _ in spec.robots:
+                    removed = {s.id for s in spawns if (robot_id, world_id, s.id) in exclusions}
+                    if removed and len(removed) != len(spawns):
+                        raise ContractError(
+                            "exclusions",
+                            f"{world_id} runs all its predefined spawns: exclude every one of them "
+                            f"for {robot_id} or none",
+                        )
+            for robot_id, profiles in spec.robots:
                 for spawn in spawns:
                     if (robot_id, world_id, spawn.id) in exclusions:
                         continue
                     for profile in profiles:
                         robot = profile.dictionary()["robot"]
                         if world_id not in robot["worlds"]:
-                            raise ContractError(
-                                "compatibility",
-                                f"{robot_id} cannot use {world_id}; explicitly exclude this combination",
-                            )
+                            raise incompatible(robot_id, world_id)
+                        if loaded is None:
+                            loaded = self.reference(world_id)
                         try:
-                            validate_spawn(
-                                robot, [spawn.x, spawn.y, 0.0, spawn.yaw], self.references[world_id]
-                            )
+                            validate_spawn(robot, [spawn.x, spawn.y, 0.0, spawn.yaw], loaded)
                         except ValueError as exc:
                             raise ContractError("spawns." + spawn.id, str(exc)) from exc
         return spec
+
+    def _predefined_spawns(self, world_id: str, value: Any, tuning: bool) -> list[dict[str, Any]]:
+        """A collection world's spawns (I9 §3.4): exactly its predefined registry spawns, ids and poses
+        compared exactly; none given, or the Default shorthand alone, means all of them. A tuning run
+        names one of them."""
+        world = self.worlds[world_id]
+        field = "worlds." + world_id
+        predefined = {spawn.id: registry_spawn(spawn) for spawn in world.spawns}
+        if not predefined:
+            raise ContractError(field, f"{world_id} has no predefined spawns in the registry")
+        names = ", ".join(predefined)
+        only = (
+            f"{world_id} runs its predefined spawn{'s' if len(predefined) > 1 else ''} {names} only"
+        )
+        shorthand = (*DEFAULT_SPAWN_NAMES, "default-" + world_id, world.default_spawn.id)
+        if (
+            value is None
+            or value == []
+            or (isinstance(value, list) and len(value) == 1 and value[0] in shorthand)
+        ):
+            chosen = list(predefined)
+        elif isinstance(value, list):
+            chosen = []
+            for item in value:
+                if item in shorthand:
+                    raise ContractError(
+                        field, f"Default stands for all spawns of {world_id}; give it alone"
+                    )
+                identity = item if isinstance(item, str) else mapping(item, "spawn").get("id")
+                if not isinstance(identity, str) or identity not in predefined:
+                    raise ContractError(field, f"{only}; {identity!r} is not one of them")
+                if isinstance(item, dict):
+                    known_keys(item, {"id", "name", "x", "y", "yaw"}, f"{field}.{identity}")
+                    check_registry_spawn(
+                        field,
+                        world_id,
+                        item,
+                        predefined[identity],
+                        "collection worlds run their registry spawns unchanged",
+                    )
+                if identity in chosen:
+                    raise ContractError(field, f"{world_id}: spawn {identity} is given twice")
+                chosen.append(identity)
+        else:
+            raise ContractError(field, "Expected a list of spawns")
+        if tuning:
+            if len(chosen) != 1:
+                raise ContractError(
+                    field, f"A tuning run picks one predefined spawn of {world_id}: {names}"
+                )
+        elif set(chosen) != set(predefined):
+            missing = [identity for identity in predefined if identity not in chosen]
+            raise ContractError(
+                field,
+                f"{world_id} runs all its predefined spawns {names}; missing {', '.join(missing)}",
+            )
+        return [predefined[identity] for identity in predefined if identity in chosen]
+
+    def _rule_time_limits(
+        self, raw: dict[str, Any], accepted: dict[str, Any]
+    ) -> tuple[dict[str, int], dict[str, dict[str, RuleValue]]]:
+        """``time_limit_rule`` (I4 §3.3): each selected world's limit and the rule's values of the robots
+        with a retained combination in it (fully excluded robot-world pairs are skipped). Only computes:
+        CampaignSpec.accepted refuses what the values contradict."""
+        exclusions = raw.get("exclusions")
+        # Malformed exclusions are refused by CampaignSpec.accepted; here they exclude nothing.
+        excluded = {
+            tuple(entry)
+            for entry in (exclusions if isinstance(exclusions, list) else [])
+            if isinstance(entry, list) and all(isinstance(part, str) for part in entry)
+        }
+        limits: dict[str, int] = {}
+        inputs: dict[str, dict[str, RuleValue]] = {}
+        for world_id, spawns in accepted["worlds"].items():
+            # an inline spawn without an ID gets Spawn.accepted's ID
+            identities = [spawn.get("id", content_hash(spawn)) for spawn in spawns]
+            values: dict[str, RuleValue] = {}
+            for robot_id in accepted["robots"]:
+                if all((robot_id, world_id, identity) in excluded for identity in identities):
+                    continue
+                if world_id not in self.robots[robot_id]["worlds"]:
+                    raise incompatible(robot_id, world_id)
+                value = self.rule_value(world_id, robot_id)
+                if value is None:
+                    raise ContractError(
+                        "time_limit_rule",
+                        f"{world_id} has no metric-version-{RULE_METRIC_VERSION} coverage reference",
+                    )
+                values[robot_id] = value
+            inputs[world_id] = values
+            if values:
+                limits[world_id] = next(iter(values.values()))["seconds"]
+        return limits, inputs
 
     def plan_hash(self, study: Study) -> str | None:
         """SHA-256 of a study's plan above its deviations log (RD-29), read from this checkout; its analysis
@@ -374,7 +749,7 @@ class Library:
         plan = plan_parts(path.read_text(encoding="utf-8"))
         confirmatory = study.evidence_level == "confirmatory"
         if plan.block is not None:
-            validate(plan.block, confirmatory=confirmatory)
+            validate(plan.block, confirmatory=confirmatory, worlds=self.world_facts())
         elif confirmatory:
             raise ContractError(
                 "study.plan", "A confirmatory plan holds an analysis block (docs/MEASUREMENTS.md)"
@@ -563,8 +938,13 @@ class Library:
             return self.handle("spawns.save", value, store)
         if method == "spawns.save":
             world = text(params.get("world_id"), "world_id")
-            if world not in self.references:
+            if world not in self.worlds:
                 raise ContractError("world_id", "Unknown world")
+            if self.worlds[world].spawn_policy == "predefined":
+                raise ContractError(
+                    "world_id",
+                    f"{world} runs its predefined spawns from the world collection; it takes no saved spawns",
+                )
             pose = {
                 "name": text(params.get("name"), "name"),
                 "world_id": world,
@@ -575,13 +955,14 @@ class Library:
             robot_ids = params.get("robot_ids", ["mogi"])
             if not isinstance(robot_ids, list) or not robot_ids:
                 raise ContractError("robot_ids", "Select robots to validate the placement")
+            reference = self.reference(world)
             for identity in robot_ids:
                 identity = text(identity, "robot_ids")
                 try:
                     validate_spawn(
                         self.robot(identity),
                         [pose["x"], pose["y"], 0, pose["yaw"]],
-                        self.references[world],
+                        reference,
                     )
                 except ValueError as exc:
                     raise ContractError("spawn", str(exc)) from exc
@@ -646,14 +1027,14 @@ class Library:
         }
 
     def _map(self, world: str) -> dict[str, Any]:
-        if world not in self.references:
+        if world not in self.worlds:
             raise ContractError("world_id", "Unknown world")
         if world not in self.maps:
             self.maps[world] = self._render_map(world)
         return dict(self.maps[world])
 
     def _render_map(self, world: str) -> dict[str, Any]:
-        ref = self.references[world]
+        ref = self.reference(world)
         return {
             "world_id": world,
             "image_png": png(reference_pixels(ref.collision, ref.target), optimize=True),

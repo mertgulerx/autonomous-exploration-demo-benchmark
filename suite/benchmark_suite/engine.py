@@ -168,7 +168,12 @@ class Engine:
         self.collected = (0, 0)  # objects and bytes removed by an attempt that has not finished yet
         self.run_maps = RunMaps(self.workspace)
         self.replay_windows = ReplayWindows(self.workspace)
-        self.run_records = RunRecords(self.store, self.workspace, self.provenance_id)
+        self.run_records = RunRecords(
+            self.store,
+            self.workspace,
+            self.provenance_id,
+            library.world_families() if library else None,
+        )
         self.exports = Exports(self.store, self.workspace)
         self.reads = BackgroundReads()
         if library:
@@ -1601,7 +1606,13 @@ class Engine:
                 "A study export is running; start the tuning run when it ends",
                 "conflict",
             )
-        spec = self.resolve(mapping(params.get("specification"), "specification"))
+        raw = mapping(params.get("specification"), "specification")
+        # A tuning run picks one predefined spawn of a collection world (plans/worlds/I9 §8.1).
+        spec = (
+            self.library.resolve_campaign(raw, tuning=True)
+            if self.library is not None
+            else self.resolve(raw)
+        )
         if spec.study is not None:
             raise ContractError("study", "A tuning run belongs to no study")
         single = (

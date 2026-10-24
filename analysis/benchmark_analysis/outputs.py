@@ -21,17 +21,26 @@ the seed, the evidence level, the confirmatory checks, the attempts behind the o
 as it uses them, runs and for paired outputs pairs, and what it leaves out) and, for figures, the ``check_pdf``
 result and the alt text. Nothing written holds a time, a path or a host name, so two runs on one
 export give byte-identical files.
+
+``stats.json`` holds ``estimates.estimates`` and, when the analysis block declares families or density
+contrasts, the ``family-sample-v1`` entries of ``families.family_estimates`` (plans/worlds/I6 §3.8), with Holm
+over the plan's whole hypothesis list (``families.merge_hypotheses``); the export files the family estimates read
+(the ``worlds`` table, experiments, provenance and the runs' manifests) are hashed in the sidecars of
+``stats.json``, T10, T11 and the family figures (F24, F24b, F25, F28).
 """
 
 from collections import Counter
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
+import io
 from itertools import chain
 import json
 from pathlib import Path
 from typing import Any
 
+from matplotlib.figure import Figure
+from matplotlib.layout_engine import ConstrainedLayoutEngine
 import matplotlib.pyplot as plt
 import pyarrow.parquet as pq
 
@@ -42,8 +51,11 @@ from . import (
     composites,
     conduct,
     decisions,
+    families,
+    families_figures,
     figures,
     heatmaps,
+    regionmaps,
     schematic,
     sheets,
     style,
@@ -57,13 +69,19 @@ from .export import Export
 from .settings import MILESTONES, Settings
 
 STUDY_FILES = ("study.yaml", "runs.parquet", "profiles.parquet")
+STATS_INPUTS = (*STUDY_FILES, "coverage.parquet", "trajectory_gt.parquet")
 INPUTS = {
-    "stats": (*STUDY_FILES, "coverage.parquet", "trajectory_gt.parquet"),
+    "stats": STATS_INPUTS,
     "coverage_grid": (*STUDY_FILES, "coverage.parquet"),
     "T1": (*STUDY_FILES, "experiments.parquet"),
     "T2": (*STUDY_FILES, "provenance.json"),
     "T9": STUDY_FILES,
     "figure": (*STUDY_FILES, "coverage.parquet", "trajectory_gt.parquet"),
+    # ordered and headed by world group (plans/worlds/I8 §3.1): the worlds table too, when exported
+    **{
+        name: (*STATS_INPUTS, "worlds.parquet")
+        for name in ("T3", "T4", "T5", "T6", "T7", "S", "T12")
+    },
 }
 
 
@@ -72,8 +90,10 @@ class View:
     """One row of the Study tab's list (FIGURE_EXTENSION FX-4), written into analysis.json: the files a view shows,
     or a family of files chosen by variant (a file-name prefix) with what goes under the chosen one and the
     variants' labels. ``kind`` is table, chart or data; ``runs`` is False for a view with no runs behind it (a
-    schematic), which the tab shows without an n line. The GUI's built-in list (``gui_study.KINDS``) serves only
-    analyses before 1.3.0; a view added here needs no GUI change."""
+    schematic), which the tab shows without an n line. ``grouped`` marks a figure drawn once per world group and
+    page (``figures.grouped``, plans/worlds/I8 §3.1): when its plain file is not written, its group variants are
+    listed instead. The GUI's built-in list (``gui_study.KINDS``) serves only analyses before 1.3.0; a view added
+    here needs no GUI change."""
 
     code: str
     title: str
@@ -84,6 +104,7 @@ class View:
     then: tuple[str, ...] = ()
     variant_labels: tuple[tuple[str, str], ...] = ()
     runs: bool = True
+    grouped: bool = False
 
     def document(self) -> dict[str, Any]:
         return dict(
@@ -104,10 +125,10 @@ EFFECT_LABELS = tuple(sorted((e.name, e.label.rsplit(" (", 1)[0]) for e in EFFEC
 VIEWS: tuple[View, ...] = (
     View("T1", "Accounting", "table", "table", ("tables/T1.pdf",)),
     View("F9", "Accounting flow", "chart", "chart", ("figures/F9.pdf",)),
-    View("F10", "Trial strip", "chart", "chart", ("figures/F10.pdf",)),
+    View("F10", "Trial strip", "chart", "chart", ("figures/F10.pdf",), grouped=True),
     View("T2", "Setup and provenance", "table", "table", ("tables/T2.pdf",)),
-    View("F12", "World atlas", "chart", "chart", ("figures/F12.pdf",)),
-    View("F1", "Coverage over time", "chart", "chart", ("figures/F1.pdf",)),
+    View("F12", "World atlas", "chart", "chart", ("figures/F12.pdf",), grouped=True),
+    View("F1", "Coverage over time", "chart", "chart", ("figures/F1.pdf",), grouped=True),
     View(
         "F2/T3",
         "Attainment",
@@ -119,6 +140,7 @@ VIEWS: tuple[View, ...] = (
             *((f"R_{m}", f"{m} %") for m in MILESTONES),
             ("R_completion", "Completion"),
         ),
+        grouped=True,
     ),
     View(
         "F3",
@@ -127,6 +149,7 @@ VIEWS: tuple[View, ...] = (
         "chart",
         variants="figures/F3_",
         variant_labels=EFFECT_LABELS,
+        grouped=True,
     ),
     View(
         "F13",
@@ -135,26 +158,33 @@ VIEWS: tuple[View, ...] = (
         "chart",
         variants="figures/F13_",
         variant_labels=EFFECT_LABELS,
+        grouped=True,
     ),
-    View("F14", "Paired gap at equal coverage", "chart", "chart", ("figures/F14.pdf",)),
-    View("F16", "Coverage against distance", "chart", "chart", ("figures/F16.pdf",)),
+    View(
+        "F14", "Paired gap at equal coverage", "chart", "chart", ("figures/F14.pdf",), grouped=True
+    ),
+    View("F16", "Coverage against distance", "chart", "chart", ("figures/F16.pdf",), grouped=True),
     View("T4", "Default per stratum", "table", "table", ("tables/T4.pdf",)),
     View("T5", "Paired differences", "table", "table", ("tables/T5.pdf", "tables/T5H.pdf")),
     View("S", "Sensitivity", "table", "table", ("tables/S.pdf",)),
     View("T6", "Compute cost", "table", "table", ("tables/T6.pdf",)),
-    View("F5", "Compute", "chart", "chart", ("figures/F5.pdf",)),
+    View("F5", "Compute", "chart", "chart", ("figures/F5.pdf",), grouped=True),
     View("T7", "Reliability", "table", "table", ("tables/T7.pdf",)),
-    View("F6", "Outcomes", "chart", "chart", ("figures/F6.pdf",)),
+    View("F6", "Outcomes", "chart", "chart", ("figures/F6.pdf",), grouped=True),
     # one file per stratum: the labels come from the figures' sidecars when the analysis is written
     View("F15", "Behaviour timeline", "chart", "chart", variants="figures/F15_"),
     View("F17", "Map heat maps", "chart", "chart", variants="figures/F17_"),
+    # region-measures-v1 (plans/worlds/I8 §3.6): one F27 per stratum, labelled from its sidecar, then T12
+    View(
+        "F27/T12", "Region map", "chart", "chart", variants="figures/F27_", then=("tables/T12.pdf",)
+    ),
     View("T8", "Timing validity", "table", "table", ("tables/T8.pdf",)),
     View("F11", "RTF distribution", "chart", "chart", ("figures/F11.pdf",)),
-    View("F18", "Decision timing", "chart", "chart", ("figures/F18.pdf",)),
+    View("F18", "Decision timing", "chart", "chart", ("figures/F18.pdf",), grouped=True),
     View("F19", "Decision anatomy", "chart", "chart", ("figures/F19.pdf",)),
     View("F20", "Algorithm steps (schematic)", "chart", "chart", ("figures/F20.pdf",), runs=False),
-    View("F8", "Representative runs", "chart", "chart", ("figures/F8.pdf",)),
-    View("F21", "Main results", "chart", "chart", ("figures/F21.pdf",)),
+    View("F8", "Representative runs", "chart", "chart", ("figures/F8.pdf",), grouped=True),
+    View("F21", "Main results", "chart", "chart", ("figures/F21.pdf",), grouped=True),
     View(
         "F22",
         "Teasers",
@@ -162,8 +192,31 @@ VIEWS: tuple[View, ...] = (
         "chart",
         variants="figures/F22_",
         variant_labels=(("a", "Per world"), ("b", "One run")),
+        grouped=True,
     ),
     View("F23/T9", "Behaviour taxonomy", "chart", "chart", ("figures/F23.pdf", "tables/T9.pdf")),
+    # family-sample-v1 (plans/worlds/I8 §3.3, §3.7): one F24 and F25 per family, labelled with its group's title
+    View(
+        "F24/T10",
+        "Family world means",
+        "chart",
+        "chart",
+        variants="figures/F24_",
+        then=("tables/T10.pdf",),
+        grouped=True,
+    ),
+    View("F24b", "Family profile contrasts", "chart", "chart", ("figures/F24b.pdf",)),
+    View(
+        "F25/T11",
+        "Factorial effects",
+        "chart",
+        "chart",
+        variants="figures/F25_",
+        then=("tables/T11.pdf",),
+        grouped=True,
+    ),
+    # one per density contrast: the labels come from the figures' sidecars (``label``)
+    View("F28", "Density contrast", "chart", "chart", variants="figures/F28_"),
     # the coding sheet's pages (FIGURE_EXTENSION FX-19); their number depends on the study
     View("F23 sheet", "Coding sheet", "chart", "chart", variants="figures/F23_sheet_"),
     View("stats", "Statistics", "data", "braces", ("stats.json",)),
@@ -172,35 +225,102 @@ VIEWS: tuple[View, ...] = (
 NO_RUNS = frozenset(file for view in VIEWS if not view.runs for file in view.files)
 
 
+def _sidecar_field(directory: Path, pdf: str, key: str) -> Any:
+    """One key of an output's sidecar (``figures/F15_x.pdf`` -> ``figures/F15_x.sidecar.json``), or None."""
+    sidecar = directory / f"{pdf.removesuffix('.pdf')}.sidecar.json"
+    return json.loads(sidecar.read_text(encoding="utf-8")).get(key) if sidecar.is_file() else None
+
+
+def _group_label(group: dict[str, Any]) -> str:
+    """A group variant's label: its group's title (the strata's when the export lists no worlds), with the page
+    when the group has several."""
+    title = group.get("title") or "All strata"
+    pages = group.get("pages") or 1
+    return str(title) if pages == 1 else f"{title}, page {group.get('page')} of {pages}"
+
+
 def views_document(directory: Path) -> list[dict[str, Any]]:
     """``analysis.json``'s ``views``: VIEWS with only the files written in ``directory`` (a fixed label of a
     variant not written dropped, a view with no file left out), where a view of per-stratum variants without
     fixed labels takes each variant's label from its figure's sidecar (``stratum``), so the Study tab names the
-    stratum."""
+    stratum.
+
+    A grouped view (``View.grouped``, ``figures.grouped``) whose file was written per world group or page
+    (``F1_SC.pdf``, ``F22_a_SC_p2.pdf``) lists those files as variants (``F1_SC``; a view of fixed files gets the
+    prefix ``figures/F1_``), each labelled with its sidecar's group (after the fixed label of the variant it
+    belongs to, the sidecar's ``group.variant``: "Per world · Single challenge"), ``variant_order``, the
+    variants in fixed-label, group (``group.index``) and page order (the Study tab sorts by name;
+    plans/worlds/I8 §3.1), and ``variant_groups``, per group variant its base variant (``base``, "" for a view
+    of fixed files), the base's fixed label (``base_label``) and its group's ``key``, ``index``, ``page``,
+    ``pages`` and ``title`` (the Study tab's variant and group head). Views without group variants carry
+    neither ``variant_order`` nor ``variant_groups``."""
     found = []
     for view in VIEWS:
         document = view.document()
         document["files"] = [f for f in view.files if (directory / f).is_file()]
         document["then"] = [f for f in view.then if (directory / f).is_file()]
+        variants = view.variants
+        if view.grouped and view.files and not document["files"]:
+            variants = view.files[0].removesuffix(".pdf") + "_"
+            document["variants"] = variants
         written = (
             sorted(
-                p.relative_to(directory).as_posix().removeprefix(view.variants).removesuffix(".pdf")
-                for p in directory.glob(f"{view.variants}*.pdf")
+                p.relative_to(directory).as_posix().removeprefix(variants).removesuffix(".pdf")
+                for p in directory.glob(f"{variants}*.pdf")
             )
-            if view.variants
+            if variants
             else []
         )
-        if view.variants and view.variant_labels:
-            labels = dict(view.variant_labels)
-            document["variant_labels"] = {k: labels[k] for k in labels if k in written}
-        elif view.variants:
+        fixed = dict(view.variant_labels)
+        groups = {
+            variant: group
+            for variant in (written if view.grouped else [])
+            if isinstance(
+                group := _sidecar_field(directory, f"{variants}{variant}.pdf", "group"), dict
+            )
+        }
+        if groups:
+            labels: dict[str, str] = {}
+            places: dict[str, tuple[int, int, int]] = {}
+            heads: dict[str, dict[str, Any]] = {}
+            stem = variants.rsplit("/", 1)[-1]
+            for variant in written:
+                group = groups.get(variant)
+                # the fixed variant a group variant belongs to, from its ungrouped name: "a" of F22_a_SC; ""
+                # for a view of fixed files (F1 of F1_SC)
+                base = variant
+                if group is not None:
+                    ungrouped = str(group["variant"])
+                    base = ungrouped.removeprefix(stem) if ungrouped.startswith(stem) else ""
+                if group is not None:
+                    heads[variant] = dict(
+                        base=base,
+                        base_label=fixed.get(base, ""),
+                        key=str(group.get("key") or ""),
+                        index=int(group["index"]),
+                        page=int(group["page"]),
+                        pages=int(group["pages"]),
+                        title=str(group.get("title") or "All strata"),
+                    )
+                parts = [fixed[base]] if base in fixed else []
+                parts += [_group_label(group)] if group is not None else []
+                labels[variant] = " · ".join(parts) or variant
+                rank = list(fixed).index(base) if base in fixed else 0
+                order = (int(group["index"]), int(group["page"])) if group else (-1, 0)
+                places[variant] = (rank, *order)
+            document["variant_labels"] = labels
+            document["variant_order"] = sorted(written, key=lambda v: places[v])
+            # the Study tab's variant and group head (I9): each group variant's base and group
+            document["variant_groups"] = heads
+        elif variants and fixed:
+            document["variant_labels"] = {k: fixed[k] for k in fixed if k in written}
+        elif variants:
             labels = {}
             for variant in written:
-                sidecar = directory / f"{view.variants}{variant}.sidecar.json"
+                path = f"{variants}{variant}.pdf"
+                stratum = _sidecar_field(directory, path, "stratum")
                 stratum = (
-                    json.loads(sidecar.read_text(encoding="utf-8")).get("stratum")
-                    if sidecar.is_file()
-                    else None
+                    stratum if stratum is not None else _sidecar_field(directory, path, "label")
                 )
                 if isinstance(stratum, str):
                     labels[variant] = stratum
@@ -270,7 +390,7 @@ def confirmatory_checks(study: Study, settings: Settings) -> list[dict[str, Any]
 
 
 # Outputs whose n is pairs of runs (block × profile against Default), besides their runs.
-PAIRED = ("T5", "S", "F3_", "F13_", "F14")
+PAIRED = ("T5", "S", "F3_", "F13_", "F14", "F24b")
 
 
 def _pairs(study: Study, used: set[str]) -> int:
@@ -349,6 +469,32 @@ def _sidecar(
     )
 
 
+# axes positions after one constrained-layout pass, rounded to this figure fraction (about 0.05 pt at double width)
+LAYOUT_ROUNDING = 1e-4
+
+
+def freeze_layout(figure: Figure) -> None:
+    """Fix a constrained-layout figure's layout before it is saved: one layout pass (a PDF save to memory), every
+    axes position rounded
+    to ``LAYOUT_ROUNDING`` of the figure, and the layout engine removed, so the saved PDF and the contact sheet's
+    redraw use the same positions. The layout solver's result carries float noise of up to about 0.01 pt that
+    follows the process's memory layout (two runs of one export differed; FIGURE_STYLE §1 asks for
+    byte-identical reruns); rounding removes it unless a value lies on a rounding boundary. Figures laid out by
+    hand (no constrained layout) are left as they are."""
+    if not isinstance(figure.get_layout_engine(), ConstrainedLayoutEngine):
+        return
+    # the layout as the PDF backend computes it on saving (its renderer and dpi), not a screen renderer's
+    figure.savefig(io.BytesIO(), format="pdf", metadata={"CreationDate": None})
+    for axes in figure.axes:
+        box = axes.get_position()
+        x0, y0, width, height = (
+            round(v / LAYOUT_ROUNDING) * LAYOUT_ROUNDING
+            for v in (box.x0, box.y0, box.width, box.height)
+        )
+        axes.set_position((x0, y0, width, height))
+    figure.set_layout_engine("none")
+
+
 def write_all(
     export: Export,
     settings: Settings,
@@ -359,12 +505,16 @@ def write_all(
     log: Callable[[str], None],
     coding: taxonomy.Coding | None = None,
     study: Study | None = None,
+    family: families.FamilyResult | None = None,
 ) -> list[str]:
     """Every output into ``directory``; returns the warnings to print. ``coding`` is the researcher's coding file
     (``--coding``: ``taxonomy.read_coding``, already checked against the runs by ``taxonomy.check_runs``);
-    ``study`` the export's loaded study when the caller has it (``data.load`` otherwise)."""
+    ``study`` the export's loaded study and ``family`` its family estimates when the caller has them
+    (``data.load`` and ``families.family_estimates`` otherwise; a refusal of either is the caller's)."""
     study = study or load(export)
-    entries = estimates(study, settings)
+    family = family if family is not None else families.family_estimates(study, settings)
+    entries = families.merge_hypotheses(estimates(study, settings) + family.entries, settings)
+    family_inputs = sorted(family.inputs)
     checks_found = confirmatory_checks(study, settings)
     warnings = [
         f"confirmatory check {c['check']} failed: {c['detail']}"
@@ -389,7 +539,14 @@ def write_all(
     # the runs any entry uses (the sensitivity populations add excluded ones)
     used = sorted({a for entry in entries for a in entry.get("attempt_ids", [])})
     (directory / "stats.sidecar.json").write_text(
-        _sidecar(base, study, INPUTS["stats"], used, output="stats.json", entries=len(entries)),
+        _sidecar(
+            base,
+            study,
+            [*INPUTS["stats"], *family_inputs],
+            used,
+            output="stats.json",
+            entries=len(entries),
+        ),
         encoding="utf-8",
     )
     log(f"stats.json: {len(entries)} entries")
@@ -414,9 +571,10 @@ def write_all(
         entries,
         None if coding is None else coding.categories(),
         None if coding is None else coding.document(),
+        family_inputs,
     )
     table_directory = directory / "tables"
-    for table in tables.tables(source):
+    for table in chain(tables.tables(source), regionmaps.tables(source)):
         tables.write(table, table_directory)
         sheet_path = table_directory / f"{table.name}.pdf"
         with style.context(preset, sans):
@@ -428,7 +586,7 @@ def write_all(
             _sidecar(
                 base,
                 study,
-                INPUTS.get(table.name, INPUTS["stats"]),
+                [*INPUTS.get(table.name, INPUTS["stats"]), *sorted(table.inputs)],
                 table.attempt_ids,
                 output=table.name,
                 files=[f"{table.name}.csv", f"{table.name}.tex", f"{table.name}.pdf"],
@@ -455,24 +613,29 @@ def write_all(
         context = figures.context(
             study, settings, Entries(entries), grid_rows, preset, source.order
         )
-        # one module per group of figures (FIGURE_EXTENSION), in figure-number order; the taxonomy last, as it
-        # also takes the coding file
+        # one module per group of figures (FIGURE_EXTENSION), in figure-number order; the family figures (F24,
+        # F25, F28) after them, as they also take the family estimates' inputs; the taxonomy last, as it also
+        # takes the coding file
         modules = (
             figures,
             conduct,
             comparisons,
             behaviour,
             heatmaps,
+            regionmaps,
             decisions,
             schematic,
             composites,
         )
         # every module yields its figures one at a time: each is saved and closed before the next is drawn
         built_all = chain(
-            *(module.figures(context) for module in modules), taxonomy.figures(context, coding)
+            *(module.figures(context) for module in modules),
+            families_figures.figures(context, family_inputs),
+            taxonomy.figures(context, coding),
         )
         for built in built_all:
             path = figure_directory / f"{built.name}.pdf"
+            freeze_layout(built.figure)
             built.figure.savefig(path, metadata={"CreationDate": None})
             result = checks.check_pdf(path, style.width_pt(preset, built.width))
             views = checks.contact_sheet(built.figure, sheet_directory / f"{built.name}.png")

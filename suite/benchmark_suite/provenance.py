@@ -30,7 +30,8 @@ import subprocess
 import sys
 from typing import Any
 
-PROVENANCE_VERSION = 1
+# 2: the world registry and robot catalog hashes (I1, 24 October 2026)
+PROVENANCE_VERSION = 2
 CHECKOUT_ROLE = "checkout"
 EXPLORER_ROLE = "exploration_packages/frontier_exploration_ros2"
 WORLDS_ROLE = "world_collection"
@@ -63,6 +64,12 @@ MIDDLEWARE_VARIABLES = (
     "ROS_DISTRO",
 )
 GIT_TIMEOUT_SECONDS = 30
+# Checkout files the engine reads at start that decide which worlds and robots exist (I1): the world
+# registry and the robot catalog. Hashed outside the comparison key; the study's homogeneity check compares.
+REGISTRY_FILES = {
+    "world_registry_sha256": "exploration_benchmark_runner/config/worlds.yaml",
+    "robot_catalog_sha256": "exploration_benchmark_robots/config/robots.yaml",
+}
 
 
 def _git(path: Path, *arguments: str) -> bytes | None:
@@ -203,6 +210,19 @@ def _environment_json(name: str) -> Any:
         return {"unparsed": value}
 
 
+def registry_hashes(root: Path | None) -> dict[str, str | None]:
+    """SHA-256 of the world registry and the robot catalog the engine reads; None when unreadable."""
+    result: dict[str, str | None] = {}
+    for name, relative in REGISTRY_FILES.items():
+        try:
+            result[name] = (
+                hashlib.sha256((root / relative).read_bytes()).hexdigest() if root else None
+            )
+        except OSError:
+            result[name] = None
+    return result
+
+
 def document(root: Path | None) -> dict[str, Any]:
     """The engine's provenance document; the launcher passes the image and host facts in.
 
@@ -210,6 +230,7 @@ def document(root: Path | None) -> dict[str, Any]:
     """
     return dict(
         provenance_version=PROVENANCE_VERSION,
+        **registry_hashes(root),
         suite_image=dict(
             id=os.environ.get("BENCHMARK_IMAGE_ID"),
             labels=_environment_json("BENCHMARK_IMAGE_LABELS"),

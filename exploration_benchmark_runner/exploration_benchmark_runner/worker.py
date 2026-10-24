@@ -74,7 +74,10 @@ from .measurements import Measurements
 from .coverage import Reference, Calculator, Coverage
 from .relay import prefix_frames
 from . import adapters
-from exploration_benchmark_robots.adapters import prepare as prepare_robot
+from exploration_benchmark_robots.adapters import (
+    MOVING_OBJECTS_TOPIC,
+    prepare as prepare_robot,
+)
 
 # RunMetrics fields that are None when unmeasured (measurements.py, coverage.py).
 NULLABLE_METRICS = frozenset(
@@ -229,6 +232,20 @@ class Worker:
                     FrontierInsight, INSIGHT_TOPIC, self.runtime.receive_insight, 10
                 )
                 self.insight_subscribed = True
+        # Moving-object worlds (registry moving_objects, I5 open point 1 (a)): startup waits for one
+        # pose message of every mover; launch_simulation sets the expected objects from world.yaml.
+        self.moving_objects = None
+        self.moving_objects_started = None
+        self.moving_objects_recorded = False
+        if config["scenario"].get("moving_objects"):
+            self.subscriptions.append(
+                self.worker.create_subscription(
+                    TFMessage,
+                    MOVING_OBJECTS_TOPIC,
+                    self.receive_moving_objects,
+                    qos_profile_sensor_data,
+                )
+            )
         self.worker_executor = SingleThreadedExecutor(context=self.worker_context)
         self.worker_executor.add_node(self.worker)
         self.buffer = Buffer(node=self.worker)
@@ -458,6 +475,9 @@ class Worker:
             from benchmark_suite.instrumentation import prepare as instrument
 
             instrument(generated)
+        if "moving_objects" in generated:
+            with self.lock:
+                self.moving_objects = list(generated["moving_objects"]["objects"])
         self.native_controller_names = generated.get("controllers", [])
         self.navigation_parameters = generated["navigation"]
         self.slam_parameters = generated["slam"]
@@ -593,6 +613,46 @@ class Worker:
             entry["max_abs"] = [
                 max(old, abs(value)) for old, value in zip(entry["max_abs"], values)
             ]
+
+    def receive_moving_objects(self, message):
+        """Keep the first pose message that holds every mover (executor thread, no blocking).
+
+        The E0 system publishes only once every object resolved, one pose per object in its SDF
+        order. The bridge forwards a pose's name only when Gazebo sets it as child_frame_id (E0
+        sets Pose.name only), so the name set is compared when every pose is named and the object
+        count always.
+        """
+        with self.lock:
+            expected = self.moving_objects
+            if expected is None or self.moving_objects_started is not None:
+                return
+            names = [t.child_frame_id.split("::")[-1] for t in message.transforms]
+            named = bool(names) and all(names)
+            if len(names) != len(expected) or (
+                named and sorted(names) != sorted(expected)
+            ):
+                return
+            stamp = message.transforms[0].header.stamp
+            self.moving_objects_started = dict(
+                clock_ns=stamp.sec * 10**9 + stamp.nanosec,
+                objects=len(names),
+                names_carried=named,
+            )
+
+    def check_moving_objects(self):
+        """The movers' startup check: a readiness item until they publish, then recorded once."""
+        with self.lock:
+            if self.moving_objects is None or self.moving_objects_recorded:
+                return None
+            started = self.moving_objects_started
+            if started is None:
+                return "moving objects"
+            self.moving_objects_recorded = True
+            record = self.recorder.manifest["robot_configuration"]["moving_objects"]
+            record["started"] = dict(started)
+            self.recorder.event("moving_objects_started", **started)
+            self.recorder.flush()
+        return None
 
     def receive_robot_ready_boolean(self, message):
         self.robot_ready_boolean = message.data
@@ -804,6 +864,9 @@ class Worker:
             missing.append("map")
         if not self.tf_ready():
             missing.append("TF chain")
+        movers = self.check_moving_objects()
+        if movers:
+            missing.append(movers)
         missing.extend(
             name
             for name in self.native_controller_names

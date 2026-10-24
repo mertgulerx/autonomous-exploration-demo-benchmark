@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tables T1–T9, T5H and S as CSV and booktabs LaTeX (RESULTS_OVERHAUL §7; FIGURE_STYLE §9; RD-2, RD-24).
+"""Tables T1–T11, T5H and S as CSV and booktabs LaTeX (RESULTS_OVERHAUL §7; FIGURE_STYLE §9; RD-2, RD-24).
 
 Rows in a fixed order: strata as the study lists them, Default first, then the other profiles in the order of
 their parameter hashes; n in every row; no bold. Values without an interval keep the measurement's resolution
@@ -21,6 +21,16 @@ the interval width has at most two significant digits, never finer than the reso
 uses the Hyndman–Fan type 2 quantiles; mean (SD) only for never-censored metrics. p-values appear only in the
 hypothesis table of a confirmatory study, Holm-adjusted, rounded up to one significant digit, floored at
 "< 0.001". Limits that fall on a run censored at L read "> L"; an interval the data cannot give reads "—".
+
+World groups (plans/worlds/I8 §3.1): when the export holds the ``worlds`` table, T3–T7 and S order their rows
+by ``worlds.world_groups`` (group order, then the registry order within a group, then as the study lists them),
+also with one group; with more than one group they gain a first column ``Group`` (the group's key, its title in
+a note and in the sidecar's ``groups``), which the LaTeX and the sheet turn into a heading row per group. T1, T2,
+T8 and T9 keep the study order.
+
+Families (``family-sample-v1``, plans/worlds/I6, I8 §3.3): T10 the family estimates (world means, family
+average, profile contrasts, accounting) and T11 the factorial effects and descriptive pairs, both headed by
+family and written only when ``stats.json`` holds family entries; they read those entries and compute nothing.
 """
 
 from collections import defaultdict
@@ -30,11 +40,14 @@ from dataclasses import dataclass, field
 import io
 import math
 from pathlib import Path
+import re
 from typing import Any
 
 from .data import EXCLUDED, MISSING, REPORTED, Stratum, Study
 from .estimates import EFFECTS, PRIMARY_TIME, UNITS, Entries, EstimateContext, time_endpoints
-from .settings import Settings
+from .families import CONTRACT as FAMILY_CONTRACT
+from .settings import Family, Settings
+from .worlds import GROUP_ORDER, GROUP_TITLES, WorldGroup, world_groups
 
 DASH = "—"
 RESOLUTION = {"s": 1, "pp": 1, "%": 1, "m": 2, "MiB": 1, "ratio": 3, "count": 0}
@@ -69,6 +82,10 @@ class Table:
     wrap_column: int | None = None
     # further fields of the table's sidecar (T9: the coding file's record)
     extra: dict[str, Any] = field(default_factory=dict)
+    # a grouped table (``with_groups``, T10, T11): column 0 holds the group's key, these its titles (headings)
+    group_titles: dict[str, str] = field(default_factory=dict)
+    # export files the table read beyond its INPUTS (T10, T11: the family estimates' inputs), hashed in its sidecar
+    inputs: set[str] = field(default_factory=set)
 
     def csv(self) -> str:
         buffer = io.StringIO()
@@ -78,25 +95,35 @@ class Table:
         return buffer.getvalue()
 
     def tex(self) -> str:
-        align = "l" * 2 + "r" * (len(self.columns) - 2)
+        # a grouped table's group column becomes a heading row per group
+        skip = 1 if self.group_titles else 0
+        columns = self.columns[skip:]
+        align = "l" * 2 + "r" * (len(columns) - 2)
         if self.wrap_column is not None:
             align = "".join(
-                f"p{{{WRAP_TEX}}}" if index == self.wrap_column else letter
+                f"p{{{WRAP_TEX}}}" if index == self.wrap_column - skip else letter
                 for index, letter in enumerate(align)
             )
         lines = [
             f"% {self.name}: {self.title}",
             f"\\begin{{tabular}}{{{align}}}",
             "\\toprule",
-            " & ".join(_tex(c) for c in self.columns) + " \\\\",
+            " & ".join(_tex(c) for c in columns) + " \\\\",
             "\\midrule",
         ]
-        previous = None
+        previous, group = None, None
         for row in self.rows:
-            if previous is not None and row[0] != previous:
+            if skip and row[0] != group:
+                if group is not None:
+                    lines.append("\\midrule")
+                group = row[0]
+                title = _tex(self.group_titles.get(group, group))
+                lines.append(f"\\multicolumn{{{len(columns)}}}{{l}}{{\\emph{{{title}}}}} \\\\")
+                previous = None
+            if previous is not None and row[skip] != previous:
                 lines.append("\\addlinespace")
-            previous = row[0]
-            lines.append(" & ".join(_tex(cell) for cell in row) + " \\\\")
+            previous = row[skip]
+            lines.append(" & ".join(_tex(cell) for cell in row[skip:]) + " \\\\")
         lines += ["\\bottomrule", "\\end{tabular}"]
         lines += [f"% {note}" for note in self.notes]
         return "\n".join(lines) + "\n"
@@ -229,6 +256,9 @@ class Sources:
     # the coding file's attempt ID -> category and its record for the sidecar (T9), when one was given
     codes: Mapping[str, str] | None = None
     coding_record: Mapping[str, Any] | None = None
+    groups: tuple[WorldGroup, ...] = ()  # ``worlds.world_groups``
+    # the export files the family estimates read (``families.FamilyResult.inputs``): T10's and T11's inputs
+    family_inputs: frozenset[str] = frozenset()
 
     @property
     def level(self) -> float:
@@ -246,6 +276,35 @@ class Sources:
 
     def label(self, stratum: Stratum) -> str:
         return self.study.stratum_label(stratum, limit=True)
+
+    def with_groups(self, table: Table) -> Table:
+        """T3–T7 and S when the export lists worlds: the rows sorted stably by group and by the stratum's place
+        in it (a stratum's rows keep their order; every row starts with its stratum's label, ``Sources.label``,
+        and a row whose label is not a stratum's goes last); with more than one group also a first column
+        ``Group`` (the key), its titles in a note and the sidecar's ``groups``. Unchanged without the table."""
+        if not self.groups or self.groups[0].key is None:
+            return table
+        last = (len(self.groups), 0, "")
+        place = {
+            self.label(stratum): (index, position, group.key or "")
+            for index, group in enumerate(self.groups)
+            for position, stratum in enumerate(group.strata)
+        }
+        rows = sorted(table.rows, key=lambda row: place.get(row[0], last)[:2])
+        if len(self.groups) < 2:
+            table.rows = rows
+            return table
+        titles = {group.key or "": group.title for group in self.groups}
+        table.columns = ["Group", *table.columns]
+        table.rows = [[place.get(row[0], last)[2], *row] for row in rows]
+        if table.wrap_column is not None:
+            table.wrap_column += 1
+        table.group_titles = titles
+        table.notes.append(
+            "Groups (never pooled): " + "; ".join(f"{k}, {t}" for k, t in titles.items()) + "."
+        )
+        table.extra["groups"] = titles
+        return table
 
 
 def profile_order(study: Study) -> list[str]:
@@ -266,8 +325,18 @@ def sources(
     entries: Iterable[dict[str, Any]],
     codes: Mapping[str, str] | None = None,
     coding_record: Mapping[str, Any] | None = None,
+    family_inputs: Iterable[str] = (),
 ) -> Sources:
-    return Sources(study, settings, Entries(entries), profile_order(study), codes, coding_record)
+    return Sources(
+        study,
+        settings,
+        Entries(entries),
+        profile_order(study),
+        codes,
+        coding_record,
+        world_groups(study),
+        frozenset(family_inputs),
+    )
 
 
 # T1 accounting -----------------------------------------------------------------------------------------------
@@ -675,6 +744,8 @@ def t5_hypotheses(src: Sources) -> Table | None:
         endpoint = str(e.get("hypothesis_endpoint"))
         if not e.get("testable"):
             value = f"not testable: {e.get('note')} (p = 1 in the family)"
+        elif e.get("contract") == FAMILY_CONTRACT:
+            value = _family_hypothesis_value(e, src.level)
         elif endpoint == "success":
             value = f"{e.get('n10', 0)} : {e.get('n01', 0)} (n10 : n01)"
         elif e.get("scale") == "ΔR/L":
@@ -707,7 +778,39 @@ def t5_hypotheses(src: Sources) -> Table | None:
         "hypothesis; one that cannot be tested counts with p = 1. Floor: the fewest nonzero differences with which "
         "an exact test can reject within this family, 1 + log2(m/alpha) (RESULTS_RESEARCH §5.3).",
     ]
+    if any(
+        e.get("contract") == FAMILY_CONTRACT
+        for e in src.entries.where(estimand="hypothesis", testable=True)
+    ):
+        table.notes.append(
+            "Hypotheses on a family or density contrast (family-sample-v1, the unit in the Stratum column) are "
+            "on rho = R/L, C(L) or A_L at L: a factor's effect by Lenth's ratio against a Monte Carlo null, a "
+            "profile contrast by a one-sample t test on world mean differences, a density contrast by the "
+            "stratified Welch test (stats.json p_method)."
+        )
+    if any(
+        welch_note(e)
+        for e in src.entries.where(estimand="hypothesis", testable=True, contract=FAMILY_CONTRACT)
+    ):
+        table.notes.append(
+            "A density contrast's stratified Welch interval is approximate; the count of cells "
+            "without variation is given beside it, as such a cell adds nothing to the variance. "
+            + WELCH_CEILING
+        )
     return table
+
+
+def _family_hypothesis_value(e: Mapping[str, Any], level: float) -> str:
+    """A testable family or contrast hypothesis's estimate (T5H): the outcome at L it is on, with its interval
+    where it has one (a factor effect has none)."""
+    outcome = {"R_completion": "rho", "C_h": "C_L", "A_h": "A_L"}.get(
+        str(e.get("hypothesis_endpoint"))
+    )
+    name, unit, scale = FAMILY_OUTCOMES.get(outcome or "", ("", "ratio", 1.0))
+    if e.get("factor"):
+        name = f"effect of {e['factor']} on {name}"
+    welch = welch_note(e)
+    return f"{family_value(e, unit, level, scale)} ({name}{'; ' + welch if welch else ''})"
 
 
 # T6 compute ----------------------------------------------------------------------------------------------------
@@ -989,14 +1092,415 @@ def blinding_text(coding_record: Mapping[str, Any] | None) -> str:
     return CODED_BLIND if (coding_record or {}).get("blinded") is True else CODED_UNBLINDED
 
 
+# Families (family-sample-v1; plans/worlds/I6, I8 §3.3) ----------------------------------------------------------
+
+# outcome -> its display name, the unit it is rounded in and the factor to that unit (success is a share)
+FAMILY_OUTCOMES: dict[str, tuple[str, str, float]] = {
+    "rho": ("ρ", "ratio", 1.0),
+    "success": ("Success (%)", "pp", 100.0),
+    "C_L": ("C(L) (%)", "pp", 1.0),
+    "A_L": ("A_L (%)", "pp", 1.0),
+}
+NOT_ESTIMABLE = "not estimable"
+DESCRIPTIVE_MARK = "†"  # T10: a family average or contrast without an interval (descriptive)
+FAMILY_INTERVAL_NOTE = (
+    "Family average: the equal-weight mean of the world means (spawns weighted equally within a world), with a t "
+    "interval on the world means (n − 1 df) where the family has one; approximate; design points treated as "
+    "exchangeable (plans/worlds/I6 §3.4). Success and families without an interval are descriptive; an interval "
+    "the world means cannot give reads not estimable."
+)
+
+
+def family_ids(entries: Entries, kind: str = "world_family") -> list[str]:
+    """The families (``kind`` "world_family") or density contrasts ("density_contrast") with ``family-sample-v1``
+    entries, families in the world-group order (F1 … F5, others by name), contrasts by name."""
+    found = {str(e[kind]) for e in entries.where(contract=FAMILY_CONTRACT) if e.get(kind)}
+    if kind != "world_family":
+        return sorted(found)
+    return sorted(found, key=family_rank)
+
+
+def family_rank(identity: str) -> tuple[int, str]:
+    """A family's place in ``worlds.GROUP_ORDER`` (others after it, by name)."""
+    return (GROUP_ORDER.index(identity) if identity in GROUP_ORDER else len(GROUP_ORDER), identity)
+
+
+def family_title(identity: str) -> str:
+    return GROUP_TITLES.get(identity, identity)
+
+
+def declared_family(settings: Settings, identity: str) -> Family | None:
+    return next((f for f in settings.families if f.id == identity), None)
+
+
+def level_text_of(value: Any) -> str:
+    """One design-point level as text: numbers without a trailing .0, lists joined by ×."""
+    if isinstance(value, list | tuple):
+        return "×".join(level_text_of(v) for v in value)
+    if isinstance(value, bool):
+        return str(value).lower()
+    if isinstance(value, int | float):
+        return f"{value:g}"
+    return str(value)
+
+
+def design_keys(family: Family | None, design_points: Iterable[Mapping[str, Any]]) -> list[str]:
+    """The design-point keys that label a family's worlds: the declared factors and fixed parameters, or every
+    key of the worlds' design points for a family declared without factors."""
+    if family is not None and family.factors:
+        return [f.key for f in family.factors] + sorted(family.fixed)
+    return sorted({key for point in design_points for key in point})
+
+
+def design_label(point: Mapping[str, Any], keys: Iterable[str], separator: str = ", ") -> str:
+    """A world's levels of ``keys`` (a key it lacks reads "—"), without the world's ID (I8 §3.3)."""
+    return separator.join(level_text_of(point[k]) if k in point else DASH for k in keys)
+
+
+def family_value(
+    entry: Mapping[str, Any], unit: str, level: float, scale: float = 1.0, *, n: str | None = None
+) -> str:
+    """An entry's estimate with its interval: "not estimable" when the interval says so (never a zero width),
+    the estimate alone without an interval; ``n`` appended as "(n = …)"."""
+    estimate = entry.get("estimate")
+    interval = entry.get("interval")
+    value = None if estimate is None else scale * float(estimate)
+    note = str((interval or {}).get("note") or "")
+    if value is None:
+        text = DASH
+    elif interval and note.startswith(NOT_ESTIMABLE):
+        text = f"{number(value, RESOLUTION[unit])} [{NOT_ESTIMABLE}]"
+    else:
+        text = with_interval(value, _scaled(interval, scale), unit, level)
+    return text if n is None else f"{text} ({n})"
+
+
+WELCH_CEILING = (
+    "Near a ceiling mass of 0.8 (most runs at rho = 1) the stratified Welch interval does not keep nominal "
+    "coverage (METHODOLOGY §4.9)."
+)
+
+
+def welch_note(entry: Mapping[str, Any]) -> str | None:
+    """For an entry with a stratified Welch interval (a density contrast or its hypothesis): "approximate" and
+    the count of cells without variation, read from the interval's note (``families.welch``); None for any other
+    interval or without one."""
+    interval = entry.get("interval") or {}
+    if "Welch" not in str(interval.get("method") or ""):
+        return None
+    note = str(interval.get("note") or "")
+    if note.startswith(f"{NOT_ESTIMABLE}: no cell varies"):
+        return "approximate; no cell varies"
+    if note.startswith(NOT_ESTIMABLE):
+        return "approximate"
+    found = re.search(r"(\d+) cells without variation", note)
+    return f"approximate; {found.group(1) if found else 0} cells without variation"
+
+
+def _family_entries(
+    src: Sources, estimand: str, family: str, **fields: Any
+) -> list[dict[str, Any]]:
+    """The family's primary-population entries at L of ``estimand``."""
+    return list(
+        src.entries.where(
+            contract=FAMILY_CONTRACT,
+            estimand=estimand,
+            world_family=family,
+            population="primary",
+            horizon_fraction=None,
+            **fields,
+        )
+    )
+
+
+def world_order(groups: Iterable[WorldGroup], family: str, members: Iterable[str]) -> list[str]:
+    """A family's worlds in its world group's order (the ``worlds`` table's), then by ID."""
+    group = next((g for g in groups if g.key == family), None)
+    rank = {w: i for i, w in enumerate(group.worlds)} if group else {}
+    return sorted(set(members), key=lambda w: (rank.get(w, len(rank)), w))
+
+
+def _counts_text(counts: Mapping[str, int]) -> str:
+    return "; ".join(f"{k.replace('_', ' ')} {v}" for k, v in sorted(counts.items()) if v) or DASH
+
+
+def t10(src: Sources) -> Table | None:
+    """Family estimates (I8 §3.3): per family and profile, each world's mean of rho, success, C(L) and A_L with its
+    n and final-run accounting, the family average with its interval and n worlds, and for each profile other
+    than Default the family profile contrast; worlds without a value named in the notes. None without family
+    entries."""
+    families = family_ids(src.entries)
+    if not families:
+        return None
+    outcomes = list(FAMILY_OUTCOMES)
+    table = Table(
+        "T10",
+        "Family estimates (primary population, at L)",
+        [
+            "Family",
+            "Profile",
+            "World",
+            "Design point",
+            *(FAMILY_OUTCOMES[o][0].replace("ρ", "ρ = R/L") for o in outcomes),
+            "Final runs",
+        ],
+        inputs=set(src.family_inputs),
+    )
+    missing_notes: list[str] = []
+    for family in families:
+        declared = declared_family(src.settings, family)
+        means = _family_entries(src, "family_world_mean", family)
+        profiles = [p for p in src.order if any(e["profile_id"] == p for e in means)]
+        keys = design_keys(declared, (e.get("design_point") or {} for e in means))
+        for profile in profiles:
+            mine = [e for e in means if e["profile_id"] == profile]
+            by_world: dict[str, dict[str, dict[str, Any]]] = defaultdict(dict)
+            for e in mine:
+                by_world[str(e["world_id"])][str(e["endpoint"])] = e
+            accounting: dict[str, int] = defaultdict(int)
+            for world in world_order(src.groups, family, by_world):
+                cells = by_world[world]
+                first = cells.get("rho") or next(iter(cells.values()))
+                for report_class, count in (first.get("final_runs") or {}).items():
+                    accounting[report_class] += int(count)
+                row = [
+                    family,
+                    src.name(profile),
+                    world,
+                    design_label(first.get("design_point") or {}, keys),
+                ]
+                for outcome in outcomes:
+                    e = cells.get(outcome, {})
+                    name, unit, scale = FAMILY_OUTCOMES[outcome]
+                    if e.get("estimate") is None:
+                        reasons = _counts_text(e.get("no_value") or {})
+                        row.append(DASH if reasons == DASH else f"{DASH} ({reasons})")
+                    else:
+                        row.append(family_value(e, unit, src.level, scale, n=str(e.get("n", 0))))
+                    table.attempt_ids |= set(e.get("attempt_ids", []))
+                row.append(_counts_text(first.get("final_runs") or {}))
+                table.rows.append(row)
+            averages = {
+                str(e["endpoint"]): e
+                for e in _family_entries(src, "family_average", family, profile_id=profile)
+            }
+            row = [family, src.name(profile), "Family average", DASH]
+            for outcome in outcomes:
+                e = averages.get(outcome, {})
+                _, unit, scale = FAMILY_OUTCOMES[outcome]
+                text = family_value(e, unit, src.level, scale, n=str(e.get("n_worlds", 0)))
+                if e and e.get("label"):
+                    text += DESCRIPTIVE_MARK
+                row.append(text)
+                if e.get("worlds_missing"):
+                    missing_notes.append(
+                        f"{family}, {src.name(profile)}, {FAMILY_OUTCOMES[outcome][0]}: {e.get('note')}."
+                    )
+                for world, horizons in sorted((e.get("horizons_dropped") or {}).items()):
+                    if horizons and outcome == "rho":
+                        missing_notes.append(
+                            f"{family}: horizons of {world} not shared by every world, left out of the "
+                            f"shorter-horizon entries: {', '.join(f'{h:g} s' for h in horizons)}."
+                        )
+            row.append(_counts_text(accounting))
+            table.rows.append(row)
+            contrasts = {
+                str(e["endpoint"]): e
+                for e in _family_entries(src, "family_profile_contrast", family, profile_id=profile)
+            }
+            if contrasts:
+                row = [family, src.name(profile), "Profile − Default", DASH]
+                for outcome in outcomes:
+                    e = contrasts.get(outcome, {})
+                    _, unit, scale = FAMILY_OUTCOMES[outcome]
+                    text = family_value(e, unit, src.level, scale, n=str(e.get("n_worlds", 0)))
+                    row.append(text + (DESCRIPTIVE_MARK if e and e.get("label") else ""))
+                    table.attempt_ids |= set(e.get("attempt_ids", []))
+                row.append(DASH)
+                table.rows.append(row)
+    table.group_titles = {family: family_title(family) for family in families}
+    table.extra["groups"] = dict(table.group_titles)
+    table.notes = [
+        "World rows: the world mean over its spawns (each spawn's mean weighted equally) of the reported runs, (n) = "
+        "runs with a value; a dash names why a world has none. Final runs by report class "
+        "(reported-outcomes-v2); the average row sums them over the family's worlds.",
+        FAMILY_INTERVAL_NOTE
+        + f" Level {level_text(src.level)}; (n) = worlds with a value; {DESCRIPTIVE_MARK} descriptive, no "
+        "interval.",
+        "Profile − Default: the mean over worlds of each world's mean block difference (rho, C(L), A_L in their "
+        "units, success in percentage points), with the t interval on the world differences where the family has "
+        "one. Families are never pooled; sensitivity populations and shorter horizons are in stats.json "
+        "(family-sample-v1).",
+        *missing_notes,
+    ]
+    return table
+
+
+EFFECT_LABELS = (
+    ("approximate", "approximate (Lenth)"),
+    ("descriptive only", "descriptive (cell missing)"),
+    (NOT_ESTIMABLE, "not estimable (PSE 0)"),
+    ("descriptive", "descriptive"),
+)
+
+
+def effect_label(label: str | None) -> str:
+    """A factorial effect's or pair's label in a table cell or on a figure: the start of stats.json's label."""
+    text = str(label or "")
+    return next((short for start, short in EFFECT_LABELS if text.startswith(start)), text or DASH)
+
+
+def effect_name(entry: Mapping[str, Any]) -> str:
+    return str(entry.get("variant") or "").removeprefix("factor:").replace("×", " × ")
+
+
+def effect_sort(entry: Mapping[str, Any]) -> tuple[int, list[str]]:
+    """Main effects first, then two- and three-factor interactions, each by factor key."""
+    factors = list(entry.get("factors") or [])
+    return (len(factors), factors)
+
+
+def family_hypothesis(
+    src: Sources, family: str, profile: str, factor: str
+) -> dict[str, Any] | None:
+    """The pre-registered factor hypothesis on rho of ``family`` and ``profile`` (confirmatory studies), if any."""
+    if not src.settings.confirmatory:
+        return None
+    return next(
+        src.entries.where(
+            contract=FAMILY_CONTRACT,
+            estimand="hypothesis",
+            world_family=family,
+            profile_id=profile,
+            factor=factor,
+            hypothesis_endpoint="R_completion",
+        ),
+        None,
+    )
+
+
+def t11(src: Sources) -> Table | None:
+    """Factorial effects and descriptive pairs (I8 §3.3): per family, profile and outcome (rho, C(L), A_L) each
+    effect with Lenth's PSE, ME and SME where stats.json gives them, its label, and the Holm-adjusted p only for a
+    pre-registered factor hypothesis of a confirmatory study (RD-4); then the declared pairs. None without them."""
+    families = family_ids(src.entries)
+    table = Table(
+        "T11",
+        "Factorial effects and descriptive pairs (primary population, at L)",
+        [
+            "Family",
+            "Profile",
+            "Outcome",
+            "Effect",
+            "Estimate",
+            "|c|/PSE",
+            "PSE",
+            "ME",
+            "SME",
+            "Label",
+            "p (Holm)",
+        ],
+        inputs=set(src.family_inputs),
+    )
+    labels: dict[str, str] = {}
+    for family in families:
+        effects = _family_entries(src, "family_factorial_effect", family)
+        pairs_found = _family_entries(src, "family_pair", family)
+        profiles = [
+            p for p in src.order if any(e["profile_id"] == p for e in effects + pairs_found)
+        ]
+        for profile in profiles:
+            for outcome in ("rho", "C_L", "A_L"):
+                name, unit, _ = FAMILY_OUTCOMES[outcome]
+                chosen = sorted(
+                    (e for e in effects if e["profile_id"] == profile and e["endpoint"] == outcome),
+                    key=effect_sort,
+                )
+                for e in chosen:
+                    lenth = e.get("lenth") or {}
+                    d = RESOLUTION[unit]
+                    hypothesis = (
+                        family_hypothesis(
+                            src, family, profile, str(e["variant"]).removeprefix("factor:")
+                        )
+                        if outcome == "rho"
+                        else None
+                    )
+                    p_text = DASH
+                    if hypothesis is not None:
+                        p_text = (
+                            f"{p_value(hypothesis.get('p_holm'))} ({hypothesis['hypothesis_id']})"
+                            if hypothesis.get("testable")
+                            else f"not testable ({hypothesis['hypothesis_id']})"
+                        )
+                    ratio = e.get("ratio")
+                    table.rows.append(
+                        [
+                            family,
+                            src.name(profile),
+                            name,
+                            effect_name(e),
+                            number(e.get("estimate"), d),
+                            DASH if ratio is None else number(ratio, 2),
+                            number(lenth.get("pse"), d + 1) if lenth else DASH,
+                            number(lenth.get("me"), d + 1) if lenth else DASH,
+                            number(lenth.get("sme"), d + 1) if lenth else DASH,
+                            effect_label(e.get("label")),
+                            p_text,
+                        ]
+                    )
+                    labels[str(e.get("label"))] = effect_label(e.get("label"))
+                    table.attempt_ids |= set(e.get("attempt_ids", []))
+                for e in pairs_found:
+                    if e["profile_id"] != profile or e["endpoint"] != outcome:
+                        continue
+                    first, second = e.get("worlds") or ["", ""]
+                    table.rows.append(
+                        [
+                            family,
+                            src.name(profile),
+                            name,
+                            f"pair {second} − {first}",
+                            number(e.get("estimate"), RESOLUTION[unit]),
+                            DASH,
+                            DASH,
+                            DASH,
+                            DASH,
+                            effect_label(e.get("label")),
+                            DASH,
+                        ]
+                    )
+                    table.attempt_ids |= set(e.get("attempt_ids", []))
+    if not table.rows:
+        return None
+    table.group_titles = {
+        f: family_title(f) for f in families if any(r[0] == f for r in table.rows)
+    }
+    table.extra["groups"] = dict(table.group_titles)
+    table.notes = [
+        "Effect c = mean of the world means at the factor's high level − at its low level (an interaction: of the "
+        "product of the factors' ±1 codes), on rho = R/L and on C(L) and A_L in percentage points. Lenth's pseudo "
+        "standard error (PSE) on rho from 7 effects on: ME = t(1 − α/2, m/3)·PSE, SME = t(γ, m/3)·PSE, "
+        "γ = (1 + (1 − α)^(1/m))/2, labelled approximate (no pure error with one seed per setting; plans/worlds/I6 "
+        f"§3.4.1); α from the plan ({level_text(src.level)}). Effects without Lenth and pairs are descriptive.",
+        "Pairs: second − first world mean, descriptive. p (Holm) only for a pre-registered factor hypothesis of a "
+        "confirmatory study, adjusted over the plan's whole list (Lenth's ratio against a Monte Carlo null; "
+        "stats.json p_method); a dash elsewhere (RD-4).",
+        *(f"{family}: {full}." for full, family in sorted(labels.items()) if full != family),
+    ]
+    return table
+
+
 def tables(src: Sources) -> list[Table]:
-    built = [t1(src), t2(src), t3(src), t4(src), t5(src)]
+    grouped = src.with_groups
+    built = [t1(src), t2(src), grouped(t3(src)), grouped(t4(src)), grouped(t5(src))]
     hypotheses = t5_hypotheses(src)
     if hypotheses is not None:
         built.append(hypotheses)
-    built += [t6(src), t7(src), t8(src), sensitivity(src)]
+    built += [grouped(t6(src)), grouped(t7(src)), t8(src), grouped(sensitivity(src))]
     codebook = t9(src)
-    return built if codebook is None else [*built, codebook]
+    built += [] if codebook is None else [codebook]
+    return built + [t for t in (t10(src), t11(src)) if t is not None]
 
 
 def write(table: Table, directory: Path) -> list[Path]:

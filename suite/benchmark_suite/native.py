@@ -28,6 +28,7 @@ import psutil
 import yaml
 
 from exploration_benchmark_runner.configuration import scenario
+from exploration_benchmark_runner.worlds import WorldRegistry
 from exploration_benchmark_runner.coverage import Reference, reference_file
 from exploration_benchmark_runner.launch_spec import WorkerLaunchSpec
 from exploration_benchmark_runner.processes import DomainLease, ProcessScope
@@ -275,9 +276,16 @@ def insight_identity() -> dict[str, str | None] | None:
 class NativeBackend:
     synthetic = False
 
-    def __init__(self, root: Path, *, diagnostics: bool = True):
+    def __init__(
+        self, root: Path, *, diagnostics: bool = True, registry: WorldRegistry | None = None
+    ):
         self.root = root.resolve()
         self.diagnostics = diagnostics
+        # The world registry as at engine start: attempt starts never depend on later checkout edits.
+        # ``registry``: the one the engine's Library loaded from this checkout (one read for both).
+        if registry is not None and registry.root != self.root:
+            raise ValueError(f"The world registry belongs to {registry.root}, not {self.root}")
+        self.registry = registry if registry is not None else WorldRegistry.load(self.root)
         self.graphics_checked_at = 0.0
         self.profiles = yaml.safe_load(
             (self.root / "exploration_benchmark_runner/config/profiles.yaml").read_text()
@@ -369,7 +377,7 @@ class NativeBackend:
         if "object" in selected:
             selected = load_object(Path(attempt["directory"]).parents[1], selected["object"])
         robot = selected["robot"]
-        world = scenario(self.root, experiment["world_id"])
+        world = scenario(self.root, experiment["world_id"], registry=self.registry)
         pose = accepted["spawn"]
         default_z = world["spawn"][2]
         height = (
@@ -390,6 +398,13 @@ class NativeBackend:
                 self.root / "exploration_benchmark_runner/config/coverage", experiment["world_id"]
             )
         )
+        pinned = self.registry.world(experiment["world_id"]).reference.metadata_sha256
+        if reference.metadata_hash != pinned:
+            raise ContractError(
+                "reference",
+                f"Coverage reference of {experiment['world_id']} changed since engine start",
+                "reference_mismatch",
+            )
         world["coverage_reference"] = reference.descriptor()
         root = Path(attempt["directory"]).parents[1]
         runtime_hash = put_object(root, self.runtime)

@@ -18,7 +18,9 @@ The worker feeds every telemetry event and every feedback message at full rate, 
 rows are recorded (RESULTS_RESEARCH RD-42), so recoveries are counted either way. Telemetry events carry
 the navigator's goal sequence and feedback only the native UUID; a feedback message belongs to the goal
 whose ``initialized`` event is the latest received before it and which has not ended (docs/MEASUREMENTS.md,
-"Dataset schema 10").
+"Dataset schema 10"). Since dataset schema 11 the worker also writes one ``navigation`` row with
+``event = 'recovery'`` for each count a goal's feedback reaches first (``Goal.new_recoveries``), so a goal's
+recovery rows add up to its ``recoveries``.
 """
 
 from collections import Counter
@@ -53,6 +55,9 @@ class Goal:
     status: str = OPEN
     last_kept_clock_ns: int | None = None
     held_row: dict[str, Any] | None = None
+    # The recovery counts the latest feedback message reached first (one recovery row each, schema 11);
+    # valid only until the goal's next feedback message.
+    new_recoveries: range = range(0)
 
     def keep_feedback(self, clock_ns: int | None, row: dict[str, Any]) -> bool:
         """Whether to record this feedback row now; otherwise it is held as the goal's possible last."""
@@ -113,9 +118,11 @@ class GoalAccumulator:
             return None
         goal.native_uuid = native_uuid
         goal.feedback_messages += 1
+        previous = goal.recoveries or 0
         goal.recoveries = (
             recoveries if goal.recoveries is None else max(goal.recoveries, recoveries)
         )
+        goal.new_recoveries = range(previous + 1, goal.recoveries + 1)
         if math.isfinite(distance_remaining):
             goal.min_distance_remaining_m = (
                 distance_remaining

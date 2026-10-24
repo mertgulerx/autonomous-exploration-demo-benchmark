@@ -1,0 +1,98 @@
+{
+ "version": "world-descriptors-v1",
+ "grid": {
+  "source": "coverage_reference",
+  "reference_id": "f4_forest_s80_d003_coverage_v2",
+  "metadata_sha256": "568270dfe78db243442f1012b64e340dc5d81f23ba7462a307faf1cfbfd2308a",
+  "grid_sha256": "f845ef65ba9ecb509ea9a0504a8be32cd4dca9dade1897cf113214dcf1f1c13e",
+  "resolution_m": 0.05,
+  "seed": 2026,
+  "free_space": "inclusion & ~collision",
+  "padding_cells": 2,
+  "free_floor_touches_grid_edge": false
+ },
+ "area_m2": 6311.04,
+ "clearance_m": {
+  "median": 2.026,
+  "p10": 0.602,
+  "p90": 3.961
+ },
+ "clearance_max_m": 8.824,
+ "char_dim_m": {
+  "median": 15.888,
+  "n": 400,
+  "mc_halfwidth": 1.425
+ },
+ "dispersion": {
+  "mean": 1.18,
+  "n": 400,
+  "mc_se": 0.067
+ },
+ "nav_complexity": {
+  "median": 1.0,
+  "p90": 1.0,
+  "n": 400,
+  "grid_m": 0.1
+ },
+ "narrowest_passage_m": 0.9,
+ "min_gap_m": 0.9808,
+ "loops": 16,
+ "loops_unsized": 179,
+ "dead_ends": 0,
+ "junctions": 353,
+ "regions": 1,
+ "robots": {
+  "mogi": {
+   "radius_m": 0.29,
+   "r_eff_m": 10.0,
+   "visible_area_m2": {
+    "mean": 248.15,
+    "n": 400,
+    "mc_se": 2.37
+   },
+   "visible_fraction": 0.0393,
+   "area_over_pi_r2": 20.0886,
+   "spawn_visible_fraction": {
+    "S1": 0.0414
+   }
+  }
+ },
+ "regions_worldgen_watershed": 1,
+ "region_growth": "geodesic-nearest-core",
+ "region_core_min_m2": 1.0,
+ "spawns": [
+  {
+   "id": "S1",
+   "x": -25.975,
+   "y": -25.125
+  }
+ ],
+ "region_raster": {
+  "file": "regions.png",
+  "sha256": "4e635d204543fc25d0de1a79d3955132364cef83e12cf63f1823890f76a25376",
+  "encoding": "16-bit greyscale PNG; row 0 = largest y; 0 outside F; 1 … n grown regions",
+  "labels": [
+   {
+    "label": 1,
+    "cells": 2524414,
+    "area_m2": 6311.035,
+    "counted": true
+   }
+  ]
+ },
+ "regions_counted": [
+  1
+ ],
+ "software": {
+  "worldgen": "1.0.1",
+  "worldgen_sha256": {
+   "descriptors.py": "720ac3623029c635372f961aaf8aea6035a774e7198d056ed33139362a12e82b",
+   "raster.py": "5ead4fb5ab653b14fb46a2fbb51961fecc746507f17315cada9dd0c85d6ae59d",
+   "checks.py": "c6a98afbe31afc2d157792671da81ed6c72ab8cbe5525702be59e6b97268e329",
+   "rng.py": "b9b5716a69bcbaaf3e4ceb308341b7d40d80a1e38ddf313add3daacde65235b3"
+  },
+  "numpy": "2.2.6",
+  "scipy": "1.15.3",
+  "adapter_sha256": "358d4da244bd096d2a1d262a970276c511605fd367c003e99dc3706b6937eb50"
+ }
+}

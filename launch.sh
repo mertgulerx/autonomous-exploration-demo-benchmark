@@ -57,19 +57,18 @@ fi
 WORLD="${1:-}"
 
 collect_available_worlds() {
-  # A world is considered runnable when folder and world file name match:
-  # simulation/worlds/<name>/<name>.world or <name>.sdf
-  local -a worlds=()
-  local name dir
-
-  while IFS= read -r -d '' dir; do
-    name="$(basename "${dir}")"
-    if [[ -f "${dir}/${name}.world" || -f "${dir}/${name}.sdf" ]]; then
-      worlds+=("${name}")
-    fi
-  done < <(find "${PROJECT_ROOT}/simulation/worlds" -mindepth 1 -maxdepth 1 -type d -print0 2>/dev/null || true)
-
-  printf '%s\n' "${worlds[@]}" | sort -u
+  # The worlds the runner offers: the checkout registry's entries except development
+  # worlds, in file order. The coordinator validates its installed copy; after a
+  # registry edit, rebuild exploration_benchmark_runner so both agree.
+  python3 -c '
+import sys, yaml
+with open(sys.argv[1], encoding="utf-8") as handle:
+    worlds = (yaml.safe_load(handle) or {}).get("worlds") or {}
+for name, entry in worlds.items():
+    if (entry or {}).get("role") != "development":
+        print(name)
+' "${PROJECT_ROOT}/exploration_benchmark_runner/config/worlds.yaml" ||
+    echo "Cannot read the world registry: ${PROJECT_ROOT}/exploration_benchmark_runner/config/worlds.yaml" >&2
 }
 
 # Precompute world list once so validation and error messages stay consistent.

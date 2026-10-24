@@ -1,0 +1,39 @@
+# Coverage settings of f3_aisles_h30x20_a150_x1 (docs/plans/worlds/I2-references-and-scenarios.md §3.3),
+# written by benchmark_reference import; hashed into f3_aisles_h30x20_a150_x1_v2.json.
+resolution: 0.05
+body_height_slab: [0.03, 0.35]
+scenarios:
+  f3_aisles_h30x20_a150_x1:
+    bounds: [-16.6, -11.2, 16.6, 11.2]
+    inclusion_polygons:
+    - - [-15.4, -8.1]
+      - [-15.0, -8.1]
+      - [-15.0, -10.0]
+      - [15.0, -10.0]
+      - [15.0, -8.5]
+      - [15.4, -8.5]
+      - [15.4, -7.5]
+      - [15.0, -7.5]
+      - [15.0, -2.1]
+      - [15.4, -2.1]
+      - [15.4, -1.1]
+      - [15.0, -1.1]
+      - [15.0, 3.6]
+      - [15.4, 3.6]
+      - [15.4, 4.6]
+      - [15.0, 4.6]
+      - [15.0, 10.0]
+      - [-15.0, 10.0]
+      - [-15.0, 5.4]
+      - [-15.4, 5.4]
+      - [-15.4, 4.4]
+      - [-15.0, 4.4]
+      - [-15.0, -0.3]
+      - [-15.4, -0.3]
+      - [-15.4, -1.3]
+      - [-15.0, -1.3]
+      - [-15.0, -7.1]
+      - [-15.4, -7.1]
+    exclusion_polygons: []
+    review: 'F3-01 Warehouse aisles 30×20 m, 1.5 m aisles, 1 cross-aisle: inclusion polygon of world.yaml; bounds = T0 grid extent'
+    source: {world_yaml: world_collection/worlds/F3_aisles_h30x20_a150_x1/world.yaml, worldgen_version: 1.0.1}

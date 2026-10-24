@@ -30,7 +30,9 @@ import yaml
 
 from .errors import Refused
 
-EXPORT_VERSIONS = (1,)
+# 2 adds the worlds table and per-reference descriptors and region rasters (plans/worlds/I2 §3.10); optional
+# for readers, so a version-1 export analyses as before.
+EXPORT_VERSIONS = (1, 2)
 RUN_RECORD_VERSIONS = (1,)
 CHUNK = 1 << 20
 

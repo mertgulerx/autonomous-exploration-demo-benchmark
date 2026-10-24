@@ -1,0 +1,35 @@
+# Coverage settings of sc1_square_loop (docs/plans/worlds/I2-references-and-scenarios.md §3.3),
+# written by benchmark_reference import; hashed into sc1_square_loop_v2.json.
+resolution: 0.05
+body_height_slab: [0.03, 0.35]
+scenarios:
+  sc1_square_loop:
+    bounds: [-16.6, -16.6, 16.6, 16.6]
+    inclusion_polygons:
+    - - [-15.4, 5.0]
+      - [-15.0, 5.0]
+      - [-15.0, -15.0]
+      - [-6.5, -15.0]
+      - [-6.5, -15.4]
+      - [-5.5, -15.4]
+      - [-5.5, -15.0]
+      - [4.0, -15.0]
+      - [4.0, -15.4]
+      - [5.0, -15.4]
+      - [5.0, -15.0]
+      - [15.0, -15.0]
+      - [15.0, -2.5]
+      - [15.4, -2.5]
+      - [15.4, -1.5]
+      - [15.0, -1.5]
+      - [15.0, 15.0]
+      - [8.5, 15.0]
+      - [8.5, 15.4]
+      - [7.5, 15.4]
+      - [7.5, 15.0]
+      - [-15.0, 15.0]
+      - [-15.0, 6.0]
+      - [-15.4, 6.0]
+    exclusion_polygons: []
+    review: 'SC1 Square loop: inclusion polygon of world.yaml; bounds = T0 grid extent'
+    source: {world_yaml: world_collection/worlds/SC1_square_loop/world.yaml, worldgen_version: 1.0.1}

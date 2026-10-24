@@ -45,13 +45,23 @@ The module is also the figures' shared toolkit (FIGURE_EXTENSION), used by every
   ``coverage_panel``, ``coverage_trace``, ``coverage_band``, ``attainment_panel``, ``outcomes`` and
   ``outcome_bars``, ``map_panel``;
 - maps and paths: ``load_reference``, ``draw_reference`` (``MapCode``, ``REFERENCE_PAD_M``), ``ground_truth``,
-  ``representatives`` (SEL-1 to SEL-3), ``time_lines``, ``time_bar``, ``path_norm``, ``reference_files``.
+  ``representatives`` (SEL-1 to SEL-3), ``time_lines``, ``time_bar``, ``path_norm``, ``reference_files``;
+- world groups (plans/worlds/I8 §3.1): ``grouped`` draws an all-strata figure once per world group and page
+  (``group_pages``: at most ``PAGE_PANELS`` panels, never splitting a world, and the figure no taller than a page
+  where its layout allows, tested on the page's context), ``grid_fits`` the page test of ``stratum_grid``
+  figures, ``page_context``, ``group_inputs``; ``FigureContext.full_study`` for labels and study-wide scales.
+
+Group variants: a study with several world groups writes ``<name>_<group>.pdf`` (``F22_a_SC``); a group drawn
+on several pages adds ``_p1``, ``_p2`` …; a study with one group (or an export without the ``worlds`` table,
+export version 1) on one page keeps the ungrouped name (``F1.pdf``), so its outputs stay comparable with
+analyses of ungrouped studies. A group variant's sidecar names its group in ``extra["group"]`` (``grouped``).
 """
 
 from collections import Counter, defaultdict
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import IntEnum
+from functools import partial
 import hashlib
 import math
 import re
@@ -95,6 +105,7 @@ from .estimates import (
     time_endpoints,
     time_value,
 )
+from .export import Export
 from .settings import Settings
 from .style import (
     EDGE,
@@ -104,6 +115,7 @@ from .style import (
     MAP_UNKNOWN,
     MM_PER_INCH,
     OUTCOMES,
+    PAGE_MAX_MM,
     PRESETS,
     SEQUENTIAL_CMAP,
     ProfileStyle,
@@ -111,6 +123,7 @@ from .style import (
     profile_styles,
 )
 from .tables import level_text, with_interval
+from .worlds import WorldGroup, world_groups
 
 TIME_LABEL = "Simulated time since first movement (s)"
 GREY = "#7F7F7F"
@@ -122,6 +135,8 @@ STRIP_RATIO = 1.0  # height of a strip or at-risk table under a panel, relative 
 LABEL_STRIP_IN = 0.14  # inches kept free at the bottom for the evidence label
 SCALE_BAR_M = 5.0
 TITLE_CHAR_MM = 1.8  # about one 9 pt title character's width, to wrap a panel title to its column
+# I8 §3.1: at most this many panels per page (strata, rows of a composite, atlas worlds)
+PAGE_PANELS = 10
 
 
 @dataclass
@@ -146,13 +161,28 @@ class FigureContext:
     grid: dict[str, tuple[np.ndarray[Any, Any], np.ndarray[Any, Any], list[str | None]]]
     styles: dict[str, ProfileStyle]
     order: list[str]
+    groups: tuple[WorldGroup, ...] = ()  # ``tables.world_groups``
+    # the whole study when ``study`` holds only one group's page (``grouped``): labels stay the study's
+    whole: Study | None = None
 
     def profiles(self, stratum: Stratum) -> list[str]:
         present = set(stratum.profiles())
         return [p for p in self.order if p in present]
 
+    @property
+    def full_study(self) -> Study:
+        """The whole study, also on a group's page (``page_context``): labels and study-wide scales use it."""
+        return self.whole or self.study
+
     def label(self, stratum: Stratum) -> str:
-        return self.study.stratum_label(stratum)
+        return self.full_study.stratum_label(stratum)
+
+    def group_of(self, stratum: Stratum) -> WorldGroup | None:
+        """The stratum's world group when the export lists worlds and the study has several groups (found by
+        identity: ``Stratum`` holds dict rows and is not hashable, and pages keep the study's objects)."""
+        if len(self.groups) < 2:
+            return None
+        return next((g for g in self.groups if any(s is stratum for s in g.strata)), None)
 
     @property
     def level_label(self) -> str:
@@ -179,7 +209,14 @@ def context(
         for attempt, rows in collected.items()
     }
     return FigureContext(
-        study, settings, entries, preset, grid, profile_styles(study.profiles), order
+        study,
+        settings,
+        entries,
+        preset,
+        grid,
+        profile_styles(study.profiles),
+        order,
+        world_groups(study),
     )
 
 
@@ -191,14 +228,19 @@ def _grid_size(count: int) -> tuple[int, int]:
     return math.ceil(count / columns), columns
 
 
+def _grid_shape(count: int) -> tuple[int, int, str, float]:
+    """``stratum_grid``'s rows, columns, width and aspect for ``count`` panels."""
+    rows, columns = _grid_size(count)
+    width = "double" if count > 1 else "single"
+    return rows, columns, width, PANEL_ASPECT * rows if count > 1 else SINGLE_ASPECT
+
+
 def stratum_grid(
     ctx: FigureContext, strata: Sequence[Stratum], *, strip: bool = False
 ) -> tuple[Figure, list[tuple[Any, Any]], str]:
     """One panel per stratum of ``strata`` in rows of up to three (and a strip under each when asked), blank
     cells hidden: the figure, a (panel, strip or None) pair per stratum, and the width ("single" for one)."""
-    rows, columns = _grid_size(len(strata))
-    width = "double" if len(strata) > 1 else "single"
-    aspect = PANEL_ASPECT * rows if len(strata) > 1 else SINGLE_ASPECT
+    rows, columns, width, aspect = _grid_shape(len(strata))
     if strip:
         fig, axes = figure(
             ctx.preset,
@@ -335,8 +377,9 @@ def stratum_variants(ctx: FigureContext, prefix: str) -> list[tuple[Stratum, str
     """One output per stratum, in study order, never dropping one: (stratum, output name, label). The name is
     ``<prefix>_<slug>`` of the stratum's label; where two strata share it, of the label with L; where L does not
     separate them, with the comparison key's first 8 characters; where names still collide, a numeric suffix.
-    The label is the text the name was made from (the plain label unless it had to be told apart): views take
-    it from the sidecar's ``extra["stratum"]``."""
+    The label is the text the name was made from (the plain label unless it had to be told apart), led by the
+    stratum's world group when the study has several (``SC · SC3``, I8 §3.1; the name stays without it): views
+    take it from the sidecar's ``extra["stratum"]``."""
     strata = ctx.study.strata
     texts = [ctx.label(s) for s in strata]
     texts = [
@@ -354,7 +397,8 @@ def stratum_variants(ctx: FigureContext, prefix: str) -> list[tuple[Stratum, str
         seen[name] += 1
         if names.count(name) > 1:  # slugs that still collide: numbered in study order
             name, text = f"{name}-{seen[name]}", f"{text} ({seen[name]})"
-        found.append((stratum, name, text))
+        group = ctx.group_of(stratum)
+        found.append((stratum, name, text if group is None else f"{group.key} · {text}"))
     return found
 
 
@@ -379,10 +423,155 @@ def message_figure(
     return FigureOut(name, fig, "single", set(attempts), text, [text], inputs=set(inputs))
 
 
-def paired_strata(ctx: FigureContext) -> list[tuple[Stratum, str, str]]:
-    """Every stratum and profile with a Default run to pair with, in study order: (stratum, profile, Default)."""
+# World groups (plans/worlds/I8 §3.1) ---------------------------------------------------------------------------
+
+# a page: its strata and worlds in order
+Page = tuple[tuple[Stratum, ...], tuple[str, ...]]
+# a figure's page test on the page's context (``page_context``): no taller than a page in its own layout
+Fits = Callable[[FigureContext], bool]
+# a page's panels from its strata and worlds
+Panels = Callable[[Sequence[Stratum], Sequence[str]], int]
+
+
+def _any_height(ctx: FigureContext) -> bool:
+    return True
+
+
+def _one_per_stratum(strata: Sequence[Stratum], worlds: Sequence[str]) -> int:
+    return len(strata)
+
+
+def grid_fits(ctx: FigureContext) -> bool:
+    """A ``stratum_grid`` figure of the page's strata (F1, F2, F16, F18) is no taller than a page."""
+    _, _, width, aspect = _grid_shape(len(ctx.study.strata))
+    return PRESETS[ctx.preset].widths_mm[width] * aspect <= PAGE_MAX_MM
+
+
+def _pack(units: Sequence[Page], ok: Callable[[Page], bool], count_panels: Panels) -> list[Page]:
+    """Consecutive worlds in the fewest pages of balanced size that pass ``ok``; one page per world when no
+    count does."""
+    total = sum(count_panels(*unit) for unit in units)
+    for count in range(max(1, math.ceil(total / PAGE_PANELS)), len(units) + 1):
+        # each page takes worlds up to its share of what is left: 10 panels on 4 pages are 3, 3, 2, 2
+        pages: list[Page] = []
+        left, current = total, units[0]
+        for strata, worlds in units[1:]:
+            share = math.ceil(left / (count - len(pages)))
+            joined = (current[0] + strata, current[1] + worlds)
+            if count_panels(*joined) > share and len(pages) < count - 1:
+                pages.append(current)
+                left -= count_panels(*current)
+                current = (strata, worlds)
+            else:
+                current = joined
+        pages.append(current)
+        if all(ok(page) for page in pages):
+            return pages
+    return list(units)
+
+
+def group_pages(
+    ctx: FigureContext, group: WorldGroup, fits: Fits = _any_height, panels: Panels | None = None
+) -> list[Page]:
+    """A group's pages: its worlds (with their strata) in order, never split, in the fewest pages of balanced
+    size that each hold at most ``PAGE_PANELS`` panels and pass ``fits`` on the page's context; a world that
+    fails alone gets a page of its own and the worlds between such worlds are packed as usual. ``panels``
+    counts a page's panels from its strata and worlds (default: one per stratum)."""
+    count_panels = panels or _one_per_stratum
+    units: list[Page] = [
+        (tuple(s for s in group.strata if s.world_id == w), (w,)) for w in group.worlds
+    ]
+
+    def ok(page: Page) -> bool:
+        return count_panels(*page) <= PAGE_PANELS and fits(page_context(ctx, *page))
+
+    pages: list[Page] = []
+    run: list[Page] = []
+    for unit in units:
+        if ok(unit):
+            run.append(unit)
+            continue
+        pages += _pack(run, ok, count_panels) if run else []
+        pages.append(unit)
+        run = []
+    return pages + (_pack(run, ok, count_panels) if run else [])
+
+
+def page_context(
+    ctx: FigureContext, strata: Sequence[Stratum], worlds: Sequence[str]
+) -> FigureContext:
+    """``ctx`` with the study narrowed to ``strata`` and the runs of ``worlds``, ``whole`` the full study (labels
+    and study-wide scales, ``FigureContext.full_study``); ``ctx`` itself when the page holds every stratum in
+    study order and every world with a final run. The page keeps the study's ``Stratum`` objects, which the
+    identity lookups (``FigureContext.group_of``, F8's cached picks) rely on."""
+    study, chosen = ctx.study, set(worlds)
+    every = {s.world_id for s in study.strata} | {cell[1] for cell in study.empty_cells}
+    if tuple(strata) == study.strata and chosen >= every:
+        return ctx
+    narrowed = replace(
+        study,
+        runs=tuple(r for r in study.runs if r["world_id"] in chosen),
+        strata=tuple(strata),
+        empty_cells=tuple(c for c in study.empty_cells if c[1] in chosen),
+    )
+    return replace(ctx, study=narrowed, whole=ctx.full_study)
+
+
+def grouped(
+    ctx: FigureContext,
+    build: Callable[[FigureContext], FigureOut],
+    fits: Fits = _any_height,
+    panels: Panels | None = None,
+    *,
+    worlds_only: bool = False,
+) -> Iterator[FigureOut]:
+    """An all-strata figure once per world group and page (``group_pages``), each built when the caller asks for
+    it: ``<name>_<group>`` with several groups, ``_p<k>`` on several pages. A variant's sidecar gets
+    ``extra["group"]`` (key, title, ``index`` the group's place in the group order, page, pages, ``variant`` the
+    ungrouped name) when the export lists worlds or the group has several pages, and the ``worlds`` table among
+    its inputs when the export lists worlds. A group without a stratum (its worlds' final runs all missing or
+    excluded) is drawn only by a figure of worlds (``worlds_only``: F12). A context without groups is one group
+    of the whole study."""
+    study = ctx.study
+    groups = ctx.groups or world_groups(study)
+    named = len(groups) > 1
+    for index, group in enumerate(groups):
+        if not group.strata and not worlds_only:
+            continue
+        pages = group_pages(ctx, group, fits, panels)
+        for number, (strata, worlds) in enumerate(pages, 1):
+            built = build(page_context(ctx, strata, worlds))
+            variant = built.name
+            built.name += (f"_{group.key}" if named else "") + (
+                f"_p{number}" if len(pages) > 1 else ""
+            )
+            if group.key is not None or len(pages) > 1:
+                built.extra["group"] = dict(
+                    key=group.key,
+                    title=group.title or None,
+                    index=index,
+                    page=number,
+                    pages=len(pages),
+                    variant=variant,
+                )
+            if group.key is not None:
+                built.inputs.add("worlds.parquet")
+            yield built
+
+
+def group_inputs(ctx: FigureContext, stratum: Stratum) -> set[str]:
+    """The export files a per-stratum figure (F15, F17) reads for its label: the ``worlds`` table when the label
+    names the stratum's group (``stratum_variants``)."""
+    return set() if ctx.group_of(stratum) is None else {"worlds.parquet"}
+
+
+def paired_strata(
+    ctx: FigureContext, strata: Sequence[Stratum] | None = None
+) -> list[tuple[Stratum, str, str]]:
+    """Every stratum (of ``strata``, default the study's) and profile with a Default run to pair with, in study
+    order: (stratum, profile, Default)."""
     found = []
-    for stratum in ctx.study.strata:
+    for stratum in ctx.study.strata if strata is None else strata:
         baseline = ctx.study.baselines.get(stratum.robot_id)
         if baseline is None or baseline not in stratum.profiles():
             continue
@@ -697,7 +886,10 @@ def attainment_panel(
             ax.errorbar(
                 [min(point["horizon_s"], end) + offset],
                 [100 * share],
-                yerr=[[100 * (share - interval["lower"])], [100 * (interval["upper"] - share)]],
+                yerr=[  # a rounding error must not make a bar length negative
+                    [100 * max(0.0, share - interval["lower"])],
+                    [100 * max(0.0, interval["upper"] - share)],
+                ],
                 fmt=style.marker,
                 color=style.color,
                 ms=3,
@@ -774,7 +966,14 @@ def f2(ctx: FigureContext, endpoint: str) -> FigureOut:
 
 def _pooled_row(ctx: FigureContext, effect: Effect) -> dict[str, Any] | None:
     """A pre-specified pooled hypothesis drawn on this effect's axis: ΔC(h) and ΔA_h at L share the scale; ΔR
-    is pooled as ΔR/L and gets no diamond on a seconds axis (T5H shows it)."""
+    is pooled as ΔR/L and gets no diamond on a seconds axis (T5H shows it). The pooled estimate
+    (``estimates._pooled``) is the equal-weight average over the profile's robot's named worlds; a generated
+    family's worlds are left out of it (``family_worlds_left_out``; a study of family worlds only has no testable
+    pooled hypothesis). It is drawn only on a page that holds every stratum, so only for a study with one world
+    group, never on one group's page of a study with several groups and never pooled across groups
+    (plans/worlds/I8 §3.1)."""
+    if len(ctx.study.strata) != len(ctx.full_study.strata):
+        return None
     wanted = {"delta_C_h": "C_h", "delta_A_h": "A_h"}.get(effect.estimand)
     limits = {s.limit_s for s in ctx.study.strata}
     for e in ctx.entries.where(estimand="hypothesis", world_id="pooled", testable=True):
@@ -810,10 +1009,21 @@ def _forest_rows(ctx: FigureContext, effect: Effect) -> list[tuple[str, dict[str
     return rows
 
 
+F3_ROW_IN, F3_FRAME_IN = 0.22, 1.0  # one forest row; axes, titles and the evidence label
+
+
+def _f3_height_in(rows: int) -> float:
+    return F3_ROW_IN * max(1, rows) + F3_FRAME_IN
+
+
+def _f3_fits(ctx: FigureContext, effect: Effect) -> bool:
+    return _f3_height_in(len(_forest_rows(ctx, effect))) * MM_PER_INCH <= PAGE_MAX_MM
+
+
 def f3(ctx: FigureContext, effect: Effect) -> FigureOut:
     rows = _forest_rows(ctx, effect)
     width_in = PRESETS[ctx.preset].widths_mm["double"] / MM_PER_INCH
-    aspect = (0.22 * max(1, len(rows)) + 1.0) / width_in
+    aspect = _f3_height_in(len(rows)) / width_in
     fig, axes = figure(
         ctx.preset, "double", aspect=aspect, ncols=2, gridspec_kw={"width_ratios": [3, 2]}
     )
@@ -875,7 +1085,8 @@ def f3(ctx: FigureContext, effect: Effect) -> FigureOut:
             f"Squares: the {estimator} estimate; lines: its {ctx.level_label} interval (a level in parentheses when "
             f"fewer pairs allow less), by {methods} (stats.json interval.method). Rows in study order; a diamond "
             "only for a pre-specified pooled hypothesis on this scale: the equal-weight mean over worlds of each "
-            "world's mean difference, stratified bootstrap (RD-16)."
+            "world's mean difference, stratified bootstrap (RD-16), drawn only where the figure holds every stratum of "
+            "the study (never on one world group's page)."
         ],
     )
 
@@ -944,6 +1155,9 @@ def _member(
     return len(everything)
 
 
+DISTRIBUTION_FLAT = 5  # strata whose labels sit side by side under a distribution panel
+
+
 def _distribution(ax: Any, ctx: FigureContext, groups: Sequence[Group]) -> None:
     """Every run as a point; a box from ``min_n`` runs and a violin from 30, over all values (a run not
     reaching by L counts at R = L); those runs as triangles at L; n per profile under each stratum."""
@@ -955,7 +1169,9 @@ def _distribution(ax: Any, ctx: FigureContext, groups: Sequence[Group]) -> None:
             for slot, member in enumerate(members)
         ]
         labels.append(f"{name}\nn = {' / '.join(counts)}")
-    ax.set_xticks(range(len(groups)), labels, fontsize=8)
+    # more strata than horizontal labels fit side by side (a world group of up to 10): labels upright
+    upright = len(groups) > DISTRIBUTION_FLAT
+    ax.set_xticks(range(len(groups)), labels, fontsize=8, rotation=90 if upright else 0)
     ax.set_xlim(-0.6, len(groups) - 0.4)
     if not any(observed or censored for _, members in groups for _, observed, censored in members):
         ax.text(
@@ -1203,8 +1419,27 @@ def _success(
     panel_title(ax, 1, "success (rows as in a)")
 
 
+F6_ASPECT = 0.62
+# (a) and (b): height per bar, and for titles, axis and legend
+F6_BAR_MM, F6_BARS_EXTRA_MM = 4.5, 20.0
+
+
 def f6(ctx: FigureContext) -> FigureOut:
-    fig, axes = figure(ctx.preset, "double", aspect=0.62, nrows=2, ncols=2)
+    rows = sum(len(ctx.profiles(s)) for s in ctx.study.strata)  # the bars of (a) and (b)
+    width_mm = PRESETS[ctx.preset].widths_mm["double"]
+    half_mm = F6_ASPECT * width_mm / 2
+    top_mm = F6_BAR_MM * rows + F6_BARS_EXTRA_MM
+    if top_mm <= half_mm:
+        fig, axes = figure(ctx.preset, "double", aspect=F6_ASPECT, nrows=2, ncols=2)
+    else:  # many bars (a world group): the top row grows, the bottom row keeps its height
+        fig, axes = figure(
+            ctx.preset,
+            "double",
+            aspect=(top_mm + half_mm) / width_mm,
+            nrows=2,
+            ncols=2,
+            gridspec_kw={"height_ratios": [top_mm, half_mm]},
+        )
     attempts: set[str] = set()
     labels: list[str] = []
     counts: list[dict[str, int]] = []
@@ -1361,14 +1596,19 @@ class MapCode(IntEnum):
 PROVENANCE = "provenance.json"  # maps each run to its coverage reference (``reference_name``)
 
 
-def reference_name(ctx: FigureContext, attempt: str) -> str | None:
-    """The coverage reference directory the run used (``provenance.json`` maps each to its runs), if exported.
-    A figure that calls it lists ``reference_files`` in its inputs."""
-    references = ctx.study.export.provenance.get("references") or {}
+def export_reference_name(export: Export, attempt: str) -> str | None:
+    """The coverage reference directory the run used (``provenance.json`` maps each to its runs), if exported."""
+    references = export.provenance.get("references") or {}
     name = next((ref for ref, runs in references.items() if attempt in runs), None)
-    if name is None or f"references/{name}/reference.yaml" not in ctx.study.export.files:
+    if name is None or f"references/{name}/reference.yaml" not in export.files:
         return None
     return str(name)
+
+
+def reference_name(ctx: FigureContext, attempt: str) -> str | None:
+    """``export_reference_name`` of the figure's export. A figure that calls it lists ``reference_files`` in its
+    inputs."""
+    return export_reference_name(ctx.study.export, attempt)
 
 
 def reference_meta(ctx: FigureContext, name: str) -> dict[str, Any]:
@@ -1495,8 +1735,9 @@ def draw_reference(
 
 
 def path_norm(ctx: FigureContext) -> Normalize:
-    """The time scale of every path and curve coloured by time: 0 to the study's longest L (F8, F22)."""
-    return Normalize(0, max(s.limit_s for s in ctx.study.strata))
+    """The time scale of every path and curve coloured by time: 0 to the whole study's longest L, the same on
+    every group page (F8, F22)."""
+    return Normalize(0, max(s.limit_s for s in ctx.full_study.strata))
 
 
 def time_lines(segments: Sequence[Any], times: Any, norm: Normalize) -> LineCollection:
@@ -1567,10 +1808,14 @@ def map_panel(
     return lines
 
 
-def f8(ctx: FigureContext) -> FigureOut:
-    picks = [(s, representatives(ctx, s)) for s in ctx.study.strata]
-    panels = [(s, run, note) for s, chosen in picks for run, note in chosen]
-    if ctx.settings.representative_rule in ("SEL-2", "SEL-3") and len(panels) > 1:
+Picks = list[tuple[Stratum, list[tuple[Row, str]]]]
+F8_ROW_ASPECT = 0.45  # height of one row of F8's maps per unit of width
+
+
+def _f8_layout(ctx: FigureContext, picks: Picks) -> tuple[int, int, list[int], str]:
+    """F8's rows, columns, the cell of each pick in order, and the width."""
+    panels = sum(len(chosen) for _, chosen in picks)
+    if ctx.settings.representative_rule in ("SEL-2", "SEL-3") and panels > 1:
         # one row per stratum, a column per pick (SEL-2 and SEL-3 pick one or two runs), unused cells hidden
         rows, columns = len(picks), max(len(chosen) for _, chosen in picks)
         cells = [
@@ -1579,10 +1824,21 @@ def f8(ctx: FigureContext) -> FigureOut:
             for slot in range(len(chosen))
         ]
     else:
-        rows, columns = _grid_size(max(1, len(panels)))
-        cells = list(range(len(panels)))
-    width = "double" if len(panels) > 1 else "single"
-    fig, axes = figure(ctx.preset, width, aspect=0.45 * rows, nrows=rows, ncols=columns)
+        rows, columns = _grid_size(max(1, panels))
+        cells = list(range(panels))
+    return rows, columns, cells, "double" if panels > 1 else "single"
+
+
+def _f8_height_mm(ctx: FigureContext, picks: Picks) -> float:
+    rows, _, _, width = _f8_layout(ctx, picks)
+    return PRESETS[ctx.preset].widths_mm[width] * F8_ROW_ASPECT * rows
+
+
+def f8(ctx: FigureContext) -> FigureOut:
+    picks = [(s, representatives(ctx, s)) for s in ctx.study.strata]
+    panels = [(s, run, note) for s, chosen in picks for run, note in chosen]
+    rows, columns, cells, width = _f8_layout(ctx, picks)
+    fig, axes = figure(ctx.preset, width, aspect=F8_ROW_ASPECT * rows, nrows=rows, ncols=columns)
     flat = [axes[r][c] for r in range(rows) for c in range(columns)]
     norm = path_norm(ctx)
     chosen_runs: dict[str, str] = {}
@@ -1619,12 +1875,23 @@ def f8(ctx: FigureContext) -> FigureOut:
 
 
 def figures(ctx: FigureContext) -> Iterator[FigureOut]:
-    """F1–F8, each built when the caller asks for it, so the caller saves and closes one before the next."""
-    yield f1(ctx)
+    """F1–F8, each built when the caller asks for it, so the caller saves and closes one before the next; F1, F2,
+    F3, F5, F6 and F8 once per world group and page (``grouped``; F8's panels are its picks)."""
+    yield from grouped(ctx, f1, grid_fits)
     for endpoint in time_endpoints(ctx.settings):
-        yield f2(ctx, endpoint)
+        yield from grouped(ctx, partial(f2, endpoint=endpoint), grid_fits)
     for effect in EFFECTS:
-        yield f3(ctx, effect)
-    yield f5(ctx)
-    yield f6(ctx)
-    yield f8(ctx)
+        yield from grouped(ctx, partial(f3, effect=effect), partial(_f3_fits, effect=effect))
+    yield from grouped(ctx, f5)
+    yield from grouped(ctx, f6)
+    # the picks of every stratum, by identity (pages keep the study's Stratum objects, which are not hashable)
+    picks = {id(s): representatives(ctx, s) for s in ctx.study.strata}
+
+    def f8_fits(page: FigureContext) -> bool:
+        chosen = [(s, picks[id(s)]) for s in page.study.strata]
+        return _f8_height_mm(page, chosen) <= PAGE_MAX_MM
+
+    def f8_panels(strata: Sequence[Stratum], worlds: Sequence[str]) -> int:
+        return sum(len(picks[id(s)]) for s in strata)
+
+    yield from grouped(ctx, f8, f8_fits, f8_panels)

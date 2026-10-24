@@ -1,0 +1,15 @@
+# Coverage settings of sc6_open_hall (docs/plans/worlds/I2-references-and-scenarios.md §3.3),
+# written by benchmark_reference import; hashed into sc6_open_hall_v2.json.
+resolution: 0.05
+body_height_slab: [0.03, 0.35]
+scenarios:
+  sc6_open_hall:
+    bounds: [-21.2, -21.2, 21.2, 21.2]
+    inclusion_polygons:
+    - - [-20.0, -20.0]
+      - [20.0, -20.0]
+      - [20.0, 20.0]
+      - [-20.0, 20.0]
+    exclusion_polygons: []
+    review: 'SC6 Open hall: inclusion polygon of world.yaml; bounds = T0 grid extent'
+    source: {world_yaml: world_collection/worlds/SC6_open_hall/world.yaml, worldgen_version: 1.0.1}

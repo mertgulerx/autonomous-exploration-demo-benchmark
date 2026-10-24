@@ -50,7 +50,14 @@ from exploration_benchmark_interfaces.srv import (
     ResolveParameters,
     WorkerCommand,
 )
-from .configuration import GAZEBO_SEED, Catalog, Specification, scenario, scenarios
+from .configuration import (
+    GAZEBO_SEED,
+    Catalog,
+    Specification,
+    installed_worlds,
+    scenario,
+    scenarios,
+)
 from .parameters import parameter_values, ros_parameters
 from .processes import ProcessScope, DomainLease
 from .artifacts import write_json, freeze_interrupted_coverage
@@ -87,8 +94,9 @@ class Coordinator(Node):
         )
         self.root = str(Path(root).resolve())
         self.scenario = None
+        self.worlds = installed_worlds(self.root)
         self.available_scenarios = {
-            item["world"]: item for item in scenarios(self.root)
+            item["world"]: item for item in scenarios(self.root, self.worlds)
         }
         if world and world not in self.available_scenarios:
             raise ValueError(f"Unknown world: {world}")
@@ -101,7 +109,7 @@ class Coordinator(Node):
         )
         self.startup_timeout = startup_timeout
         self.catalog = Catalog(root=self.root)
-        self.robots = RobotCatalog()
+        self.robots = RobotCatalog(worlds=self.worlds)
         self.robot = None
         self.handles = []
         self.mode, self.busy, self.detail = (
@@ -212,7 +220,7 @@ class Coordinator(Node):
             reference = {}
         return Scenario(
             id=name,
-            label=name.title(),
+            label=self.worlds.world(name).label,
             spawn=item["spawn"],
             coverage_reference_id=reference.get("id", ""),
             coverage_metric_version=reference.get("metric_version", 0),
@@ -283,7 +291,7 @@ class Coordinator(Node):
                         + ", ".join(self.available_scenarios)
                     )
                 selected = attach_reference(
-                    self.root, scenario(self.root, request.world)
+                    self.root, scenario(self.root, request.world, registry=self.worlds)
                 )
                 robot = self.robots.require(
                     request.robot_id or "mogi",

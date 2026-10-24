@@ -25,11 +25,14 @@ FIGURE_STYLE §4, §5; METHODOLOGY §3).
   counts for each c the blocks where both, only Default, only the profile or neither reached it; the pointwise
   median over "both" only where at least ``min_n`` blocks contribute, labelled conditional with its share. No
   band, no estimand: the values are descriptive display quantities, written to the sidecar and never cited.
+
+Both are drawn once per world group and page (``figures.grouped``, plans/worlds/I8 §3.1).
 """
 
 from collections import Counter
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
+from functools import partial
 import math
 from typing import Any
 
@@ -46,6 +49,7 @@ from .figures import (
     FigureOut,
     estimator_text,
     finish,
+    grouped,
     interval_level,
     interval_methods,
     legend,
@@ -54,7 +58,7 @@ from .figures import (
     panel_message,
     panel_title,
 )
-from .style import EDGE, PRESETS, SUPPORT_FILLS, figure
+from .style import EDGE, PAGE_MAX_MM, PRESETS, SUPPORT_FILLS, figure
 
 TITLE_MM = 14.0  # room above the panels for titles and below for the legend
 ROW_HEIGHT_MM = 52.0  # one F13 row: scatter and differences
@@ -263,6 +267,15 @@ def paired_notes(
     return notes
 
 
+def _f13_height_mm(rows: int) -> float:
+    """F13's height: a row per stratum and profile paired with Default."""
+    return ROW_HEIGHT_MM * rows + TITLE_MM
+
+
+def _f13_fits(ctx: FigureContext) -> bool:
+    return _f13_height_mm(len(paired_strata(ctx))) <= PAGE_MAX_MM
+
+
 def f13(ctx: FigureContext, effect: Effect) -> FigureOut:
     rows = paired_strata(ctx)
     name = f"F13_{effect.name}"
@@ -272,7 +285,7 @@ def f13(ctx: FigureContext, effect: Effect) -> FigureOut:
     fig, axes = figure(
         ctx.preset,
         "double",
-        aspect=(ROW_HEIGHT_MM * len(rows) + TITLE_MM) / width_mm,
+        aspect=_f13_height_mm(len(rows)) / width_mm,
         nrows=len(rows),
         ncols=2,
         gridspec_kw={"width_ratios": [1, 1.4]},
@@ -445,21 +458,32 @@ def _gap_panel(
     return medians
 
 
+def _f14_height_mm(rows: int, *, left_out: bool) -> float:
+    """F14's height: lines of ``GAP_COLUMNS`` paired rows, each taller when some row has blocks left out."""
+    row_mm = GAP_ROW_HEIGHT_MM + (LEFT_OUT_MM if left_out else 0.0)
+    return row_mm * math.ceil(rows / min(GAP_COLUMNS, max(1, rows))) + TITLE_MM
+
+
+def _f14_fits(ctx: FigureContext) -> bool:
+    # left-out lines are known only once the gaps are computed: the page test assumes them
+    return _f14_height_mm(len(paired_strata(ctx)), left_out=True) <= PAGE_MAX_MM
+
+
 def f14(ctx: FigureContext) -> FigureOut:
     rows = paired_strata(ctx)
     if not rows:
         return message_figure(ctx, "F14", NO_PAIRS)
     grid = [GRID_PP * k for k in range(1, int(100 / GRID_PP) + 1)]
     columns = min(GAP_COLUMNS, len(rows))
-    lines = math.ceil(len(rows) / columns)
+    lines = math.ceil(len(rows) / columns)  # as ``_f14_height_mm``
     width = "double" if len(rows) > 1 else "single"
     width_mm = PRESETS[ctx.preset].widths_mm[width]
     found = [_gaps(ctx, stratum, profile, baseline, grid) for stratum, profile, baseline in rows]
-    row_mm = GAP_ROW_HEIGHT_MM + (LEFT_OUT_MM if any(g.left_out for g in found) else 0.0)
+    left_out = any(g.left_out for g in found)
     fig, axes = figure(
         ctx.preset,
         width,
-        aspect=(row_mm * lines + TITLE_MM) / width_mm,
+        aspect=_f14_height_mm(len(rows), left_out=left_out) / width_mm,
         nrows=2 * lines,
         ncols=columns,
         gridspec_kw={"height_ratios": [3, 1] * lines},
@@ -537,6 +561,13 @@ def f14(ctx: FigureContext) -> FigureOut:
 
 def figures(ctx: FigureContext) -> Iterator[FigureOut]:
     """F13 per paired effect, then F14, each built when the caller asks for it."""
+
+    # once per world group and page (plans/worlds/I8 §3.1): a panel per paired row (F14) or two (F13)
+    def paired_rows(strata: Sequence[Stratum], worlds: Sequence[str]) -> int:
+        return len(paired_strata(ctx, strata))
+
     for effect in EFFECTS:
-        yield f13(ctx, effect)
-    yield f14(ctx)
+        yield from grouped(
+            ctx, partial(f13, effect=effect), _f13_fits, lambda *page: 2 * paired_rows(*page)
+        )
+    yield from grouped(ctx, f14, _f14_fits, paired_rows)

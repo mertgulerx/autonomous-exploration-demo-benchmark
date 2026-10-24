@@ -31,6 +31,7 @@ setup(
                 "config/profiles.yaml",
                 "config/comparison.yaml",
                 "config/parameters.yaml",
+                "config/worlds.yaml",
             ],
         ),
         (

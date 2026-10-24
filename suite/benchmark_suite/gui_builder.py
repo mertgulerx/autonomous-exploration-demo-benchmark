@@ -34,7 +34,7 @@ from .gui_review import (
     change_blocks,
 )
 from .gui_robots import RobotSelector
-from .gui_worlds import WorldSelector
+from .gui_worlds import WorldSelector, world_name
 from .gui_theme import ThemeManager
 from .gui_widgets import CardSplit, place, plural
 from .analysis_block import plan_parts
@@ -51,7 +51,7 @@ from .gui_wizard import (
     WizardHead,
     seconds,
 )
-from .contracts import resolve_world_time_limits
+from .contracts import TIME_LIMIT_RULE, resolve_world_time_limits
 
 
 class StepCards(QtWidgets.QWidget):
@@ -225,7 +225,7 @@ class CampaignBuilder(QtWidgets.QWidget):
             "worlds": worlds,
             "repetitions": self.repetitions.value(),
             "concurrency": self.concurrency.value(),
-            "world_time_limits": self.world_selector.time_limits(),
+            **self.world_selector.limit_fields(),
             "exclusions": [list(v) for v in sorted(self.excluded & combinations)],
             **({"source_campaign_id": self.source_campaign_id} if self.source_campaign_id else {}),
             **({"study": study} if (study := self.study_block()) is not None else {}),
@@ -387,10 +387,20 @@ class CampaignBuilder(QtWidgets.QWidget):
         self.changes.set_blocks([], VALIDATE_CHANGES)
 
     def labels(self, kind: str) -> dict[str, str]:
-        """Catalog labels by ID of ``kind`` ("robots" or "worlds")."""
+        """Catalog labels by ID of ``kind`` ("robots" or "worlds"; a collection world by its ID, "SC2a")."""
+        if kind == "worlds":
+            return {entry["id"]: world_name(entry) for entry in self.catalog.get(kind, [])}
         return {
             entry["id"]: entry.get("label", entry["id"]) for entry in self.catalog.get(kind, [])
         }
+
+    def sync_rule_scope(self) -> None:
+        """The world step's rule limits follow the selected robots and the combinations left out."""
+        robots = self.labels("robots")
+        self.world_selector.set_rule_scope(
+            [(robot, robots.get(robot, robot)) for robot in self.robot_selector.selections()],
+            self.excluded,
+        )
 
     def sync_actions(self) -> None:
         exportable = (
@@ -436,6 +446,9 @@ class CampaignBuilder(QtWidgets.QWidget):
         )
 
     def update_summary(self) -> None:
+        # Every robot, exclusion or world edit reaches here through ``invalidate``: the world step's rule
+        # limits follow the scope set now.
+        self.sync_rule_scope()
         robots, worlds = self.robot_selector.selections(), self.world_selector.selections()
         count = 0
         for robot, profiles in robots.items():
@@ -471,16 +484,17 @@ class CampaignBuilder(QtWidgets.QWidget):
         """Step 3's summary of the form: robots and profiles, worlds and poses, combinations per robot."""
         robots, worlds = self.robot_selector.selections(), self.world_selector.selections()
         robot_labels, world_labels = self.labels("robots"), self.labels("worlds")
-        try:
-            limits: dict[str, float] = self.world_selector.time_limits()
-        except ValueError:
-            limits = {}
-        world_items = []
+        selector = self.world_selector
+        # 38: with the kinematic rule the group names it once, then each world's poses and limit.
+        world_items = (
+            [SummaryItem("Time limits", TIME_LIMIT_RULE, mono=True)] if selector.rule_on() else []
+        )
         for world, spawns in worlds.items():
-            names = ", ".join(self.world_selector.spawn_label(world, s) for s in spawns)
-            limit = limits.get(world)
-            if limit is not None:
-                names += " · " + ("unlimited" if limit == 0 else f"{seconds(limit)} s")
+            names = selector.poses_text(world, spawns)
+            limit = selector.shown_limit(world)
+            names += " · " + (
+                "—" if limit is None else "unlimited" if limit == 0 else f"{seconds(limit)} s"
+            )
             world_items.append(SummaryItem(world_labels.get(world, world), names))
         combinations, left_out = [], []
         for robot, profiles in robots.items():
@@ -636,10 +650,18 @@ class CampaignBuilder(QtWidgets.QWidget):
         return self.world_selector.spawn_label(world, reference)
 
     def toggle_exclusion(self, key: tuple[str, str, str]) -> None:
+        """Leave a combination out, or include it again. A collection world runs all its predefined spawns,
+        so its combinations of one robot are left out or included together (the engine refuses a partial
+        set)."""
+        robot, world, _ = key
+        keys = {key}
+        if self.world_selector.is_collection(world):
+            spawns = self.world_selector.selections().get(world, [])
+            keys = {(robot, world, self.spawn_identity(world, spawn)) for spawn in spawns} | {key}
         if key in self.excluded:
-            self.excluded.discard(key)
+            self.excluded -= keys
         else:
-            self.excluded.add(key)
+            self.excluded |= keys
         self.invalidate()
 
     def toggle_all_exclusions(self) -> None:
@@ -691,7 +713,13 @@ class CampaignBuilder(QtWidgets.QWidget):
         self.excluded = {tuple(v) for v in value["exclusions"]}
         self.robot_selector.set_selections(value["robots"])
         self.world_selector.set_selections(value["worlds"])
-        self.world_selector.set_time_limits(dict(resolve_world_time_limits(value, value["worlds"])))
+        # A campaign with the kinematic rule turns the switch on; the hand-set boxes keep the catalog defaults,
+        # so turning the switch off gives today's limits rather than the rule's values (I4 §3.6).
+        rule = bool(value.get("time_limit_rule"))
+        self.world_selector.set_rule(rule)
+        self.world_selector.set_time_limits(
+            {} if rule else dict(resolve_world_time_limits(value, value["worlds"]))
+        )
         self.execution.debug.setChecked(bool(value.get("debug_streams", False)))
         study = value.get("study")
         form = self.study_form

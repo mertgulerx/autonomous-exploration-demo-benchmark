@@ -1,0 +1,43 @@
+# Coverage settings of sc2b_narrow_passage_2m0 (docs/plans/worlds/I2-references-and-scenarios.md §3.3),
+# written by benchmark_reference import; hashed into sc2b_narrow_passage_2m0_v2.json.
+resolution: 0.05
+body_height_slab: [0.03, 0.35]
+scenarios:
+  sc2b_narrow_passage_2m0:
+    bounds: [-19.6, -9.1, 19.6, 9.1]
+    inclusion_polygons:
+    - - [-18.4, 3.0]
+      - [-18.0, 3.0]
+      - [-18.0, -7.5]
+      - [-13.5, -7.5]
+      - [-13.5, -7.9]
+      - [-12.5, -7.9]
+      - [-12.5, -7.5]
+      - [-3.0, -7.5]
+      - [-3.0, -1.0]
+      - [3.0, -1.0]
+      - [3.0, -7.5]
+      - [13.5, -7.5]
+      - [13.5, -7.9]
+      - [14.5, -7.9]
+      - [14.5, -7.5]
+      - [18.0, -7.5]
+      - [18.0, -5.0]
+      - [18.4, -5.0]
+      - [18.4, -4.0]
+      - [18.0, -4.0]
+      - [18.0, 7.5]
+      - [8.5, 7.5]
+      - [8.5, 7.9]
+      - [7.5, 7.9]
+      - [7.5, 7.5]
+      - [3.0, 7.5]
+      - [3.0, 1.0]
+      - [-3.0, 1.0]
+      - [-3.0, 7.5]
+      - [-18.0, 7.5]
+      - [-18.0, 4.0]
+      - [-18.4, 4.0]
+    exclusion_polygons: []
+    review: 'SC2b Narrow passage, 2.0 m corridor: inclusion polygon of world.yaml; bounds = T0 grid extent'
+    source: {world_yaml: world_collection/worlds/SC2b_narrow_passage_2m0/world.yaml, worldgen_version: 1.0.1}

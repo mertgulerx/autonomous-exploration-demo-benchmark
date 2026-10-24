@@ -1,0 +1,43 @@
+# Coverage settings of sc3_dead_end_comb (docs/plans/worlds/I2-references-and-scenarios.md §3.3),
+# written by benchmark_reference import; hashed into sc3_dead_end_comb_v2.json.
+resolution: 0.05
+body_height_slab: [0.03, 0.35]
+scenarios:
+  sc3_dead_end_comb:
+    bounds: [-21.2, -11.2, 21.2, 11.2]
+    inclusion_polygons:
+    - - [-20.0, -1.5]
+      - [-15.0, -1.5]
+      - [-15.0, -8.0]
+      - [-13.0, -8.0]
+      - [-13.0, -1.5]
+      - [-5.0, -1.5]
+      - [-5.0, -10.0]
+      - [-3.0, -10.0]
+      - [-3.0, -1.5]
+      - [5.0, -1.5]
+      - [5.0, -6.0]
+      - [7.0, -6.0]
+      - [7.0, -1.5]
+      - [18.0, -1.5]
+      - [18.0, -7.0]
+      - [20.0, -7.0]
+      - [20.0, 1.5]
+      - [12.0, 1.5]
+      - [12.0, 7.0]
+      - [10.0, 7.0]
+      - [10.0, 1.5]
+      - [2.0, 1.5]
+      - [2.0, 10.0]
+      - [0.0, 10.0]
+      - [0.0, 1.5]
+      - [-8.0, 1.5]
+      - [-8.0, 6.0]
+      - [-10.0, 6.0]
+      - [-10.0, 1.5]
+      - [-18.0, 1.5]
+      - [-18.0, 9.0]
+      - [-20.0, 9.0]
+    exclusion_polygons: []
+    review: 'SC3 Dead-end comb: inclusion polygon of world.yaml; bounds = T0 grid extent'
+    source: {world_yaml: world_collection/worlds/SC3_dead_end_comb/world.yaml, worldgen_version: 1.0.1}
