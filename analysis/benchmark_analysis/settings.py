@@ -13,7 +13,8 @@
 # limitations under the License.
 
 """The analysis parameters of a study: its plan's ``analysis`` block with documented defaults for what it leaves
-out (contract ``analysis-block-v1``, docs/MEASUREMENTS.md "Study analysis block"; RESULTS_OVERHAUL RO-15, RO-16).
+out (contract ``analysis-block-v1``, and ``-v2`` with ``event_tick`` and ``taxonomy``; docs/MEASUREMENTS.md "Study
+analysis block"; RESULTS_OVERHAUL RO-15, RO-16; FIGURE_EXTENSION FX-19, FX-20).
 
 The engine validated the block at submission and again at export (``suite/benchmark_suite/analysis_block.py``,
 whose constants these mirror); this module trusts that validation for value ranges, checks the version, the key
@@ -29,7 +30,8 @@ from typing import Any
 from .errors import Refused
 from .stats import BOOTSTRAP_MIN_CLUSTERS
 
-BLOCK_VERSION = 1
+BLOCK_VERSIONS = (1, 2)
+V2_KEYS = ("event_tick", "taxonomy")  # version 2 only
 MILESTONES = (25, 50, 75, 90, 95)
 SENSITIVITY = ("no_low_rtf", "exclusions_as_failures", "sequential_only", "shorter_horizons")
 REPRESENTATIVE_RULES = ("SEL-1", "SEL-2", "SEL-3")
@@ -45,6 +47,8 @@ DEFAULTS: dict[str, Any] = dict(
     stall=dict(delta_pp=0.1, window_s=None),
     sensitivity=list(SENSITIVITY[:3]),
     representative=dict(rule="SEL-1", endpoint="R_completion"),
+    event_tick=dict(after_s=60.0, min_candidates=3),
+    taxonomy=None,
 )
 
 
@@ -73,6 +77,9 @@ class Settings:
     sensitivity: tuple[str, ...]
     representative_rule: str
     representative_endpoint: str
+    event_after_s: float  # SEL-4 (FX-20): the earliest tick a decision figure may show
+    event_min_candidates: int  # SEL-4's fallback: the first tick with at least this many candidates
+    taxonomy: tuple[tuple[str, str], ...] | None  # the declared codebook (FX-19): (ID, definition)
     sources: Mapping[str, str]  # key -> "plan" or "default"
 
     @property
@@ -109,6 +116,10 @@ class Settings:
             representative=dict(
                 rule=self.representative_rule, endpoint=self.representative_endpoint
             ),
+            event_tick=dict(after_s=self.event_after_s, min_candidates=self.event_min_candidates),
+            taxonomy=None
+            if self.taxonomy is None
+            else [dict(id=identity, definition=text) for identity, text in self.taxonomy],
             sources=dict(sorted(self.sources.items())),
         )
 
@@ -126,10 +137,11 @@ def settings(study: dict[str, Any]) -> Settings:
     elif (
         not isinstance(block, dict)
         or type(block.get("version")) is not int
-        or block["version"] != BLOCK_VERSION
+        or block["version"] not in BLOCK_VERSIONS
     ):
-        raise Refused(f"study.yaml: analysis block version {BLOCK_VERSION} expected")
-    unknown = set(block) - set(DEFAULTS) - {"version", "plan_registered_utc"}
+        raise Refused("study.yaml: analysis block version 1 or 2 expected")
+    allowed = set(DEFAULTS) if block.get("version") == 2 else set(DEFAULTS) - set(V2_KEYS)
+    unknown = set(block) - allowed - {"version", "plan_registered_utc"}
     if unknown:
         raise Refused("study.yaml: unknown analysis keys " + ", ".join(sorted(unknown)))
     sources = {key: "plan" if key in block else "default" for key in DEFAULTS}
@@ -137,6 +149,8 @@ def settings(study: dict[str, Any]) -> Settings:
     bootstrap = {**DEFAULTS["bootstrap"], **value["bootstrap"]}
     stall = {**DEFAULTS["stall"], **value["stall"]}
     representative = {**DEFAULTS["representative"], **value["representative"]}
+    event_tick = {**DEFAULTS["event_tick"], **value["event_tick"]}
+    taxonomy = value["taxonomy"]
     # What the code below relies on; the engine checks the same (analysis_block.validate).
     if representative["rule"] not in REPRESENTATIVE_RULES:
         raise Refused(
@@ -178,5 +192,10 @@ def settings(study: dict[str, Any]) -> Settings:
         sensitivity=tuple(value["sensitivity"]),
         representative_rule=str(representative["rule"]),
         representative_endpoint=str(representative["endpoint"]),
+        event_after_s=float(event_tick["after_s"]),
+        event_min_candidates=int(event_tick["min_candidates"]),
+        taxonomy=None
+        if taxonomy is None
+        else tuple((str(c["id"]), str(c["definition"])) for c in taxonomy["categories"]),
         sources=MappingProxyType(sources),
     )

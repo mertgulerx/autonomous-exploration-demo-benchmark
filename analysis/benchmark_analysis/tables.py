@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tables T1–T8, T5H and S as CSV and booktabs LaTeX (RESULTS_OVERHAUL §7; FIGURE_STYLE §9; RD-2, RD-24).
+"""Tables T1–T9, T5H and S as CSV and booktabs LaTeX (RESULTS_OVERHAUL §7; FIGURE_STYLE §9; RD-2, RD-24).
 
 Rows in a fixed order: strata as the study lists them, Default first, then the other profiles in the order of
 their parameter hashes; n in every row; no bold. Values without an interval keep the measurement's resolution
@@ -39,6 +39,20 @@ from .settings import Settings
 DASH = "—"
 RESOLUTION = {"s": 1, "pp": 1, "%": 1, "m": 2, "MiB": 1, "ratio": 3, "count": 0}
 DISCARD_TRIGGERS = ("campaign_stop", "experiment_stop", "experiment_restart")
+# reported runs a coding file does not name (T9, F23); no category ID holds a space
+NOT_CODED = "not coded"
+REPORTED_RUNS = "reported runs"  # T9's denominator row
+# how the coding was done, in the captions of F23 and T9: the coding file's ``blinded`` (the coder's statement)
+CODED_BLIND = (
+    "Coded blind to profile and outcome from the numbered sheet (the coding file's blinded: true)."
+)
+CODED_UNBLINDED = "Coder not blinded to profile and outcome (the coding file's blinded: false)."
+CODER_NOTE = "One coder: no reliability estimate."
+CATEGORY_NOTE = (
+    "Category names are the plan's codes, not measurements: a name such as stalled is not the stall-v1 "
+    "measurement (RD-18: stalls are described, never classified)."
+)
+WRAP_TEX = "0.45\\linewidth"  # the LaTeX width of a wrapping column
 
 
 @dataclass
@@ -51,6 +65,10 @@ class Table:
     attempt_ids: set[str] = field(default_factory=set)
     # its sheet may leave out count columns that are 0 in every row (T1)
     sparse_counts: bool = False
+    # a column whose cells wrap: on the sheet at sheets.WRAP_PT, in LaTeX as a p{} column (T9's definitions)
+    wrap_column: int | None = None
+    # further fields of the table's sidecar (T9: the coding file's record)
+    extra: dict[str, Any] = field(default_factory=dict)
 
     def csv(self) -> str:
         buffer = io.StringIO()
@@ -61,6 +79,11 @@ class Table:
 
     def tex(self) -> str:
         align = "l" * 2 + "r" * (len(self.columns) - 2)
+        if self.wrap_column is not None:
+            align = "".join(
+                f"p{{{WRAP_TEX}}}" if index == self.wrap_column else letter
+                for index, letter in enumerate(align)
+            )
         lines = [
             f"% {self.name}: {self.title}",
             f"\\begin{{tabular}}{{{align}}}",
@@ -79,19 +102,31 @@ class Table:
         return "\n".join(lines) + "\n"
 
 
+# one character to its LaTeX text, in one pass so that no replacement is escaped again: the specials of free
+# text (T9's definitions) and the package's own signs
+TEX = str.maketrans(
+    {
+        "\\": "\\textbackslash{}",
+        "&": "\\&",
+        "%": "\\%",
+        "_": "\\_",
+        "#": "\\#",
+        "$": "\\$",
+        "{": "\\{",
+        "}": "\\}",
+        "~": "\\textasciitilde{}",
+        "^": "\\textasciicircum{}",
+        "−": "$-$",
+        "–": "--",
+        ">": "$>$",
+        "<": "$<$",
+        "·": "$\\cdot$",
+    }
+)
+
+
 def _tex(text: str) -> str:
-    return (
-        text.replace("\\", "\\textbackslash{}")
-        .replace("&", "\\&")
-        .replace("%", "\\%")
-        .replace("_", "\\_")
-        .replace("#", "\\#")
-        .replace("−", "$-$")
-        .replace("–", "--")
-        .replace(">", "$>$")
-        .replace("<", "$<$")
-        .replace("·", "$\\cdot$")
-    )
+    return text.translate(TEX)
 
 
 # Number formatting (FP-2) ------------------------------------------------------------------------------------
@@ -191,6 +226,9 @@ class Sources:
     settings: Settings
     entries: Entries
     order: list[str]  # profile IDs: Default first, then by parameter hash
+    # the coding file's attempt ID -> category and its record for the sidecar (T9), when one was given
+    codes: Mapping[str, str] | None = None
+    coding_record: Mapping[str, Any] | None = None
 
     @property
     def level(self) -> float:
@@ -222,8 +260,14 @@ def profile_order(study: Study) -> list[str]:
     ]
 
 
-def sources(study: Study, settings: Settings, entries: Iterable[dict[str, Any]]) -> Sources:
-    return Sources(study, settings, Entries(entries), profile_order(study))
+def sources(
+    study: Study,
+    settings: Settings,
+    entries: Iterable[dict[str, Any]],
+    codes: Mapping[str, str] | None = None,
+    coding_record: Mapping[str, Any] | None = None,
+) -> Sources:
+    return Sources(study, settings, Entries(entries), profile_order(study), codes, coding_record)
 
 
 # T1 accounting -----------------------------------------------------------------------------------------------
@@ -253,10 +297,11 @@ T1_COLUMNS = [
 ]
 
 
-def t1(src: Sources) -> Table:
-    """Accounting per robot, world, spawn and profile of every planned experiment, counted from
-    ``experiments`` and ``runs`` (not the export's own accounting table, so that the two can be compared)."""
-    study = src.study
+def accounting(study: Study) -> dict[tuple[str, str, str, str], dict[str, int]]:
+    """Counts per robot, world, spawn and profile of every planned experiment, from ``experiments`` and ``runs``
+    (not the export's own accounting table, so that the two can be compared): ``planned``, the experiment states
+    (``done``, ``unresolved``), final runs by report class and reported runs by ``outcome_<outcome>``, attempts
+    replaced (``replaced_<reason>``) and discarded (``discarded_<trigger>`` or ``discarded_other``). T1 and F9."""
     experiments = study.export.table(
         "experiments", ["robot_id", "world_id", "spawn_id", "profile_id", "state"]
     ).to_pylist()
@@ -278,6 +323,13 @@ def t1(src: Sources) -> Table:
             group[run["report_class"]] += 1
             if run["report_class"] == REPORTED:
                 group["outcome_" + run["outcome"]] += 1
+    return counts
+
+
+def t1(src: Sources) -> Table:
+    """Accounting per robot, world, spawn and profile of every planned experiment (``accounting``)."""
+    study = src.study
+    counts = accounting(study)
     table = Table(
         "T1", "Outcome accounting per stratum and profile", list(T1_COLUMNS), sparse_counts=True
     )
@@ -884,12 +936,67 @@ def sensitivity(src: Sources) -> Table:
     return table
 
 
+# T9 behaviour codebook ---------------------------------------------------------------------------------------
+
+
+def t9(src: Sources) -> Table | None:
+    """The behaviour codebook (FIGURE_EXTENSION FX-19): each category of the plan's taxonomy in declared order
+    with its definition and the reported runs coded with it per profile over all strata and in all (per stratum:
+    F23), then the reported runs the coding file does not name and the reported runs (the denominator); None
+    without a taxonomy or a coding file."""
+    taxonomy, codes = src.settings.taxonomy, src.codes
+    if taxonomy is None or codes is None:
+        return None
+    present = {p for stratum in src.study.strata for p in stratum.profiles()}
+    reported = {
+        profile: [r for s in src.study.strata for r in s.reported if r["profile_id"] == profile]
+        for profile in src.order
+        if profile in present
+    }
+    table = Table(
+        "T9",
+        "Behaviour codebook and coded runs",
+        ["Category", "Definition", *(src.name(p) for p in reported), "All"],
+        wrap_column=1,
+        extra=dict(coding=dict(src.coding_record or {})),
+    )
+    for identity, definition in [
+        *taxonomy,
+        (NOT_CODED, "Reported runs the coding file does not name."),
+    ]:
+        counts = [
+            sum(codes.get(r["attempt_id"], NOT_CODED) == identity for r in runs)
+            for runs in reported.values()
+        ]
+        table.rows.append([identity, definition, *map(str, counts), str(sum(counts))])
+    sizes = [len(runs) for runs in reported.values()]
+    table.rows.append(
+        [REPORTED_RUNS, "The denominator of each column.", *map(str, sizes), str(sum(sizes))]
+    )
+    table.attempt_ids = {r["attempt_id"] for runs in reported.values() for r in runs}
+    table.notes = [
+        "Reported runs (completed, time limit, no movement) per profile over all strata, coded by the researcher "
+        "against the categories and definitions declared in the plan's taxonomy (hashed with the plan); per "
+        "stratum in F23. The last row is each column's denominator. Coding never changes a recorded outcome; "
+        f"descriptive counts, not in stats.json. {blinding_text(src.coding_record)} {CODER_NOTE} "
+        f"{CATEGORY_NOTE}",
+    ]
+    return table
+
+
+def blinding_text(coding_record: Mapping[str, Any] | None) -> str:
+    """How the coding was done as the coding file states it (``blinded``, ``taxonomy.read_coding``)."""
+    return CODED_BLIND if (coding_record or {}).get("blinded") is True else CODED_UNBLINDED
+
+
 def tables(src: Sources) -> list[Table]:
     built = [t1(src), t2(src), t3(src), t4(src), t5(src)]
     hypotheses = t5_hypotheses(src)
     if hypotheses is not None:
         built.append(hypotheses)
-    return built + [t6(src), t7(src), t8(src), sensitivity(src)]
+    built += [t6(src), t7(src), t8(src), sensitivity(src)]
+    codebook = t9(src)
+    return built if codebook is None else [*built, codebook]
 
 
 def write(table: Table, directory: Path) -> list[Path]:

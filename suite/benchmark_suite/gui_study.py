@@ -23,14 +23,16 @@ statistic), the sidecar's n line under the head (RO-21) and "Runs behind it", ea
 GUI draws, raw lines only. A refused analysis (RO-22) shows its reason and the runs that do not fit together.
 
 The analysis outputs live beside the exports (``results/studies/<id>/analysis/<version>-<hash8>``, the hash of
-the export's ``SHA256SUMS``); the GUI reads them through the transport's local readers, off its thread. The
-analysis for the newest export is current; otherwise the newest analysis is shown as out of date.
+the export's ``SHA256SUMS``, with ``-coding-<sha8>`` when made with a coding file); the GUI reads them through the
+transport's local readers, off its thread. An analysis of the newest export, coded or not, is current and the
+newest of them is shown; otherwise the newest analysis is shown as out of date.
 """
 
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 import json
+import logging
 import math
 from pathlib import Path
 import re
@@ -76,9 +78,18 @@ CAPTION_BOLD = TextStyle(12.5, 600, 18)
 NAME = TextStyle(13, 400, 18)
 REFUSAL_TITLE = TextStyle(15, 600, 20)
 TABLE_TEXT = TextStyle(12.5, 400, 18)
-ANALYSIS_NAME = re.compile(r"^\d+\.\d+\.\d+-[0-9a-f]{8}$")
+# <version>-<hash8 of the export>, with -coding-<sha8 of the coding file> for an analysis with a coding file
+ANALYSIS_NAME = re.compile(r"^\d+\.\d+\.\d+-([0-9a-f]{8})(?:-coding-[0-9a-f]{8})?$")
 REFUSAL_NAME = re.compile(r"^refused-(\d+\.\d+\.\d+-[0-9a-f]{8})\.json$")
+LOG = logging.getLogger(__name__)
 CHIPS = 6  # "Runs behind it" names this many runs at most and counts the rest
+
+
+def export_hash(name: str) -> str | None:
+    """The export's hash8 in an analysis directory's name (``ANALYSIS_NAME``), coded or not; None for another
+    name."""
+    found = ANALYSIS_NAME.match(name)
+    return found.group(1) if found else None
 
 
 # ---------- output kinds ----------
@@ -87,7 +98,9 @@ CHIPS = 6  # "Runs behind it" names this many runs at most and counts the rest
 @dataclass(frozen=True, slots=True)
 class OutputKind:
     """One row of the output list (RO-23): fixed files, or a family of files chosen in the viewer head
-    (``variants``, a file-name prefix) with ``then`` shown under the chosen one."""
+    (``variants``, a file-name prefix) with ``then`` shown under the chosen one. ``labels`` names the variants
+    (a view's ``variant_labels``; ``VARIANT_NAMES`` otherwise); ``runs`` is False for a view with no runs behind
+    it (a schematic), shown without an n line and without "Runs behind it"."""
 
     code: str
     name: str
@@ -95,6 +108,13 @@ class OutputKind:
     files: tuple[str, ...] = ()
     variants: str = ""
     then: tuple[str, ...] = ()
+    labels: tuple[tuple[str, str], ...] = ()
+    runs: bool = True
+
+    @property
+    def is_stats(self) -> bool:
+        """The view lists ``stats.json`` entry by entry instead of showing PDF sheets."""
+        return self.files == ("stats.json",)
 
     def available(self, outputs: Mapping[str, str]) -> bool:
         if self.code == "C(t)":
@@ -108,7 +128,14 @@ class OutputKind:
             name for name in outputs if name.startswith(self.variants) and name.endswith(".pdf")
         )
 
+    def variant_label(self, key: str) -> str:
+        return dict(self.labels).get(key) or VARIANT_NAMES.get(key, key)
 
+
+# the GUI's own view, after every list
+TRACES_KIND = OutputKind("C(t)", "Coverage traces", "activity")
+# The list for an analysis without ``views`` in its analysis.json (the 1.2.x outputs; FIGURE_EXTENSION FX-4); an
+# analysis that writes ``views`` (1.3.0 on) declares its own list (``kinds_from_views``).
 KINDS = (
     OutputKind("T1", "Accounting", "table", ("tables/T1.pdf",)),
     OutputKind("T2", "Setup and provenance", "table", ("tables/T2.pdf",)),
@@ -125,7 +152,7 @@ KINDS = (
     OutputKind("T8", "Timing validity", "table", ("tables/T8.pdf",)),
     OutputKind("F8", "Representative runs", "chart", ("figures/F8.pdf",)),
     OutputKind("stats", "Statistics", "braces", ("stats.json",)),
-    OutputKind("C(t)", "Coverage traces", "activity"),
+    TRACES_KIND,
 )
 REFUSAL_KIND = OutputKind("!", "Analysis refused", "ban")
 VARIANT_NAMES = {
@@ -148,8 +175,90 @@ def variant_of(kind: OutputKind, file: str) -> str:
     return file.removeprefix(kind.variants).removesuffix(".pdf")
 
 
-def variant_label(key: str) -> str:
-    return VARIANT_NAMES.get(key, key)
+# a view's kind and its default icon
+VIEW_KINDS = {"table": "table", "chart": "chart", "data": "braces"}
+ICON_NAMES = frozenset(path.stem for path in gui_icons.ICONS.glob("*.svg"))
+RESERVED_CODES = (TRACES_KIND.code, REFUSAL_KIND.code)
+
+
+class ViewError(ValueError):
+    """An entry of ``analysis.json["views"]`` the tab cannot list (the reason)."""
+
+
+def _strings(value: Any, name: str) -> tuple[str, ...]:
+    """A list of non-empty strings."""
+    if not isinstance(value, list) or not all(isinstance(v, str) and v for v in value):
+        raise ViewError(f"{name} is not a list of file names")
+    return tuple(value)
+
+
+def view_kind(entry: Any, index: int) -> OutputKind:
+    """One entry of ``analysis.json["views"]`` (analysis/benchmark_analysis/outputs.py ``View``) as a list row;
+    ViewError when it cannot be listed. An unknown kind shows as a chart and an unknown icon as its kind's, each
+    logged."""
+    if not isinstance(entry, Mapping):
+        raise ViewError("not an object")
+    code, title = entry.get("code"), entry.get("title")
+    if not isinstance(code, str) or not code or code in RESERVED_CODES:
+        raise ViewError(f"code {code!r} is missing or reserved")
+    if not isinstance(title, str) or not title:
+        raise ViewError(f"{code}: no title")
+    files = _strings(entry.get("files", []), f"{code}: files")
+    then = _strings(entry.get("then", []), f"{code}: then")
+    variants, labels, runs = (
+        entry.get("variants", ""),
+        entry.get("variant_labels", {}),
+        entry.get("runs", True),
+    )
+    if not isinstance(variants, str):
+        raise ViewError(f"{code}: variants is not a file-name prefix")
+    if not files and not variants:
+        raise ViewError(f"{code}: neither files nor variants")
+    if "stats.json" in files and files != ("stats.json",):
+        raise ViewError(f"{code}: stats.json listed with other files")
+    if not isinstance(labels, Mapping) or not all(
+        isinstance(k, str) and isinstance(v, str) for k, v in labels.items()
+    ):
+        raise ViewError(f"{code}: variant_labels malformed")
+    if not isinstance(runs, bool):
+        raise ViewError(f"{code}: runs is not true or false")
+    kind = entry.get("kind")
+    if not isinstance(kind, str) or kind not in VIEW_KINDS:
+        LOG.warning("analysis.json views[%d]: %s: kind %r shown as chart", index, code, kind)
+        kind = "chart"
+    icon = entry.get("icon")
+    if not isinstance(icon, str) or icon not in ICON_NAMES:
+        icon, unknown = VIEW_KINDS[kind], icon
+        LOG.warning(
+            "analysis.json views[%d]: %s: icon %r replaced by %r", index, code, unknown, icon
+        )
+    return OutputKind(code, title, icon, files, variants, then, tuple(sorted(labels.items())), runs)
+
+
+def kinds_from_views(views: Any) -> tuple[OutputKind, ...] | None:
+    """The output list an analysis declares (1.3.0 on), in its order and followed by the coverage traces; None
+    for an analysis without ``views`` (before 1.3.0), which keeps ``KINDS``. Entries that cannot be listed and
+    a later entry repeating a code are skipped and logged; ``views`` that is not a list, or leaves no entry,
+    falls back to ``KINDS`` (logged)."""
+    if views is None:
+        return None
+    if not isinstance(views, list):
+        LOG.warning("analysis.json views is not a list; using the built-in output list")
+        return None
+    rows: list[OutputKind] = []
+    for index, entry in enumerate(views):
+        try:
+            row = view_kind(entry, index)
+            if any(r.code == row.code for r in rows):  # a code keys the choice and its variant
+                raise ViewError(f"code {row.code!r} repeated")
+        except ViewError as exc:
+            LOG.warning("analysis.json views[%d] skipped: %s", index, exc)
+            continue
+        rows.append(row)
+    if not rows:
+        LOG.warning("analysis.json views lists no readable view; using the built-in output list")
+        return None
+    return (*rows, TRACES_KIND)
 
 
 def sidecar_of(file: str) -> str:
@@ -225,11 +334,15 @@ def row_count(kind: OutputKind, sidecar: Mapping[str, Any] | None) -> str:
         return "interactive"
     if kind is REFUSAL_KIND:
         return "refused"
+    if not kind.runs:
+        return "no runs"
     if not sidecar:
         return ""
-    if kind.code == "stats" and isinstance(sidecar.get("entries"), int):
+    if kind.is_stats and isinstance(sidecar.get("entries"), int):
         return plural(sidecar["entries"], "value")
-    counts = sidecar.get("counts") or {}
+    counts = sidecar.get("counts")
+    if not isinstance(counts, Mapping):  # a sidecar without the counts block (or a malformed one)
+        counts = {}
     if isinstance(counts.get("pairs"), int):
         return plural(counts["pairs"], "pair")
     if isinstance(counts.get("runs"), int):
@@ -987,11 +1100,18 @@ class ViewerCard(Card):
         self.choice_holder.setVisible(bool(choices))
         self.head.row.relayout()
 
-    def set_mode(self, mode: int) -> None:
+    def set_mode(self, mode: int, *, runs: bool = True) -> None:
+        """Show ``mode``'s view; a view without runs behind it (``runs`` False) has no n line and no chips."""
         self.mode = mode
         self.stack.setCurrentIndex(mode)
-        self.caption.setVisible(mode in (PDF, STATS))
-        self.chips.setVisible(mode in (PDF, STATS, REFUSAL))
+        self.caption.setVisible(mode in (PDF, STATS) and runs)
+        self.chips.setVisible(mode in (PDF, STATS, REFUSAL) and runs)
+        self._layout()
+
+    def show_error(self, text: str) -> None:
+        """A read error on the caption line, shown also on a view without an n line."""
+        self.caption.set_parts([("", text)])
+        self.caption.show()
         self._layout()
 
     def _layout(self) -> None:
@@ -1029,6 +1149,8 @@ class AnalysisState:
     unreadable: str | None = (
         None  # the directory has no readable analysis.json (an interrupted run)
     )
+    # the list analysis.json declares (1.3.0 on); None: KINDS
+    views: tuple[OutputKind, ...] | None = None
 
 
 class StudyTab(QtWidgets.QWidget):
@@ -1238,7 +1360,7 @@ class StudyTab(QtWidgets.QWidget):
             and not analysis.current
             and export
         ):
-            used = analysis.directory.name.rsplit("-", 1)[-1]
+            used = export_hash(analysis.directory.name)
             warnings.insert(
                 0,
                 f"The analysis used export {used}; export {str(export.get('sums_sha256'))[:8]} is newer. "
@@ -1252,7 +1374,8 @@ class StudyTab(QtWidgets.QWidget):
 
     def _rows(self) -> None:
         outputs = self.analysis.outputs
-        kinds = [kind for kind in KINDS if kind.available(outputs)]
+        listed = KINDS if self.analysis.views is None else self.analysis.views
+        kinds = [kind for kind in listed if kind.available(outputs)]
         if self.analysis.refusal is not None:
             kinds.insert(0, REFUSAL_KIND)
         previous = self.kinds[self.current].code if 0 <= self.current < len(self.kinds) else None
@@ -1355,7 +1478,7 @@ class StudyTab(QtWidgets.QWidget):
             self._show_counts()
         elif kind == "stats":
             self.viewer.stats_model.replace([])
-            self.viewer.caption.set_parts([("", "stats.json could not be read: " + error)])
+            self.viewer.show_error("stats.json could not be read: " + error)
         elif kind == "refusal":
             self.analysis.refusal = dict(reason="the refusal file could not be read: " + error)
             self.refresh_card()
@@ -1383,7 +1506,8 @@ class StudyTab(QtWidgets.QWidget):
             and ANALYSIS_NAME.match(str(e.get("name")))
             and not (writing and str(e.get("name")).endswith(writing))
         ]
-        current = [e for e in analyses if str(e["name"]).endswith("-" + hash8)]
+        # current: made from the newest export, with or without a coding file; the newest of them is shown
+        current = [e for e in analyses if export_hash(str(e["name"])) == hash8]
         chosen = max(current or analyses, key=lambda e: e.get("modified_ns") or 0, default=None)
         refusals = [
             e
@@ -1425,6 +1549,7 @@ class StudyTab(QtWidgets.QWidget):
             return
         outputs: dict[str, str] = found
         self.analysis.outputs = dict(outputs)
+        self.analysis.views = kinds_from_views(document.get("views"))
         directory = self.analysis.directory
         for name in sorted(outputs):
             if name.endswith(".sidecar.json") and directory is not None:
@@ -1502,14 +1627,14 @@ class StudyTab(QtWidgets.QWidget):
             return
         files = self._files(kind)
         variants = kind.variant_files(self.analysis.outputs)
-        choices = [variant_label(variant_of(kind, f)) for f in variants]
+        choices = [kind.variant_label(variant_of(kind, f)) for f in variants]
         sidecar = self.analysis.sidecars.get(sidecar_of(files[0])) if files else None
         title = self._title(kind, files, sidecar)
         index = variants.index(files[0]) if files and files[0] in variants else 0
         viewer.set_head(title, "", Path(files[0]).name if files else "", choices, index)
         self.view_files = files
-        if kind.code == "stats":
-            viewer.set_mode(STATS)
+        if kind.is_stats:
+            viewer.set_mode(STATS, runs=kind.runs)
             viewer.stats_model.replace([])
             if self.analysis.directory is not None:
                 self.transport.submit(
@@ -1518,7 +1643,7 @@ class StudyTab(QtWidgets.QWidget):
                     {"path": str(self.analysis.directory / "stats.json")},
                 )
         else:
-            viewer.set_mode(PDF)
+            viewer.set_mode(PDF, runs=kind.runs)
             viewer.well.pages.clear("" if files else "This output was not produced")
             viewer.well.verticalScrollBar().setValue(0)
             for file in files:
@@ -1534,7 +1659,7 @@ class StudyTab(QtWidgets.QWidget):
         self, kind: OutputKind, files: Sequence[str], sidecar: Mapping[str, Any] | None
     ) -> str:
         if kind.variants and files:
-            label = variant_label(variant_of(kind, files[0]))
+            label = kind.variant_label(variant_of(kind, files[0]))
             if kind.code == "F2/T3":
                 return "F2 / T3 · Attainment of " + (
                     f"{label} coverage" if label.endswith("%") else label.lower()
@@ -1552,6 +1677,12 @@ class StudyTab(QtWidgets.QWidget):
             return
         files = self._files(kind)
         sidecar = self.analysis.sidecars.get(sidecar_of(files[0])) if files else None
+        if sidecar:
+            self.viewer.head.title.setText(self._title(kind, files, sidecar))
+            self.viewer.head.row.relayout()
+        if not kind.runs:  # no n line and no runs behind it
+            self._chips("Runs behind it", [])
+            return
         error = self.analysis.sidecar_errors.get(sidecar_of(files[0])) if files else None
         self.viewer.caption.set_parts(
             n_line((sidecar or {}).get("counts"))
@@ -1561,9 +1692,6 @@ class StudyTab(QtWidgets.QWidget):
             else [("", "Reading the sidecar…")]
         )
         if sidecar:
-            title = self._title(kind, files, sidecar)
-            self.viewer.head.title.setText(title)
-            self.viewer.head.row.relayout()
             self._chips("Runs behind it", [str(a) for a in sidecar.get("attempt_ids") or []])
 
     def _chips(self, label: str, attempt_ids: Sequence[str]) -> None:

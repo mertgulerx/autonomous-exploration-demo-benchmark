@@ -16,7 +16,8 @@
 
 The sheet is what the Study tab shows and a paper-format preview of the table: the title above ("TABLE <name>"),
 booktabs rules (top, middle, bottom; space between groups, no vertical rules), a repeated first-column value
-written once per group, numeric columns right-aligned, headers wrapped to their column, the notes below. It is set
+written once per group, numeric columns right-aligned, headers wrapped to their column, the cells of a wrapping
+column (``Table.wrap_column``, T9's definitions) wrapped at ``WRAP_PT``, the notes below. It is set
 at 8 pt in the preset's font at the journal's double-column width; a table too wide for it is set smaller, never
 below 7 pt (FIGURE_STYLE §2), and only then gets a wider page, which ``check_pdf`` reports.
 """
@@ -40,6 +41,7 @@ MARGIN_PT = 4.0
 COLUMN_GAP_PT = 6.0
 ROW_FACTOR = 1.45  # row height per font size
 HEADER_LINES = 3  # a header wraps to at most this many lines
+WRAP_PT = 200.0  # the width of a column whose cells wrap (``Table.wrap_column``, T9's definitions)
 
 
 @dataclass(frozen=True, slots=True)
@@ -92,11 +94,34 @@ def _wrap(text: str, limit: float, measure: Measure, size: float) -> list[str]:
     return lines or [""]
 
 
+def _cell_lines(text: str, limit: float, measure: Measure, size: float) -> list[str]:
+    """Greedy word wrap of a body cell to ``limit`` points (a word longer than the limit keeps its line)."""
+    lines: list[str] = []
+    for word in text.split():
+        if lines and measure.width(f"{lines[-1]} {word}", size) <= limit:
+            lines[-1] = f"{lines[-1]} {word}"
+        else:
+            lines.append(word)
+    return lines or [""]
+
+
+def _row_lines(table: Table, layout: Layout, measure: Measure) -> list[list[str] | None]:
+    """Each row's wrapping cell as lines; None for every row of a table without a wrapping column."""
+    column = table.wrap_column
+    if column is None:
+        return [None] * len(table.rows)
+    return [
+        _cell_lines(row[column], layout.widths[column], measure, layout.size) for row in table.rows
+    ]
+
+
 def _layout(table: Table, size: float, measure: Measure) -> Layout:
     columns = list(zip(*table.rows, strict=True)) if table.rows else [() for _ in table.columns]
     widths, headers = [], []
-    for header, cells in zip(table.columns, columns, strict=True):
+    for index, (header, cells) in enumerate(zip(table.columns, columns, strict=True)):
         body = max((measure.width(c, size) for c in cells), default=0.0)
+        if index == table.wrap_column:
+            body = min(body, WRAP_PT)
         longest_word = max((measure.width(w, size, True) for w in header.split()), default=0.0)
         limit = max(body, longest_word)
         lines = _wrap(header, limit, measure, size)
@@ -139,6 +164,8 @@ def _without_empty_counts(table: Table) -> Table:
         [[row[i] for i in keep] for row in table.rows],
         [*table.notes, "No run in any row (columns left out): " + ", ".join(dropped) + "."],
         table.attempt_ids,
+        wrap_column=None if table.wrap_column is None else keep.index(table.wrap_column),
+        extra=table.extra,
     )
 
 
@@ -161,17 +188,20 @@ def sheet(table: Table, preset: str) -> tuple[Figure, float]:
     notes = _note_lines(table.notes, page_width - 2 * MARGIN_PT, measure)
     header_rows = max(len(h) for h in layout.headers)
     groups = sum(1 for i, r in enumerate(table.rows) if i and r[0] != table.rows[i - 1][0])
+    wrapped = _row_lines(table, layout, measure)
+    body_lines = sum(1 if lines is None else len(lines) for lines in wrapped)
     height = (
         MARGIN_PT
         + row * 1.6  # title
         + row * header_rows
-        + row * len(table.rows)
+        + row * body_lines
         + groups * row * 0.35
         + 8.0  # rules and their padding
         + (NOTE_PT * ROW_FACTOR * len(notes) + 4.0 if notes else 0.0)
         + MARGIN_PT
     )
-    return _draw(table, layout, notes, page_width, height, header_rows, measure), target
+    figure = _draw(table, layout, notes, page_width, height, header_rows, measure, wrapped)
+    return figure, target
 
 
 def _draw(
@@ -182,6 +212,7 @@ def _draw(
     height: float,
     header_rows: int,
     measure: Measure,
+    wrapped: list[list[str] | None],
 ) -> Figure:
     """Place every text and rule; coordinates are points from the page's top-left corner."""
     size, row = layout.size, layout.size * ROW_FACTOR
@@ -201,6 +232,7 @@ def _draw(
             ha="right" if right else "left",
             fontsize=size,
             fontweight="bold" if bold else "normal",
+            parse_math=False,  # cells are text: a "$" in a definition (T9) is a dollar sign, not mathtext
         )
 
     def rule(y: float, width: float) -> None:
@@ -230,13 +262,18 @@ def _draw(
     rule(y + row * 0.05, 0.5)
     y += row * 0.25
     previous = None
-    for index, cells in enumerate(table.rows):
+    for index, (cells, cell_lines) in enumerate(zip(table.rows, wrapped, strict=True)):
         if index and cells[0] != previous:
             y += row * 0.35  # \addlinespace between groups
         for column, value in enumerate(cells):
+            if cell_lines is not None and column == table.wrap_column:
+                for number, line in enumerate(cell_lines):
+                    cell(column, y + number * row, line)
+                continue
             cell(column, y, "" if column == 0 and cells[0] == previous else value)
         previous = cells[0]
-        y += row
+        for _ in range(1 if cell_lines is None else len(cell_lines)):
+            y += row
     rule(y + row * 0.1, 0.8)
     y += row * 0.5
     for line in notes:

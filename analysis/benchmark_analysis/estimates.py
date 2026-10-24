@@ -66,7 +66,8 @@ UNITS = {"C_h": "pp", "A_h": "pp", "D_h": "m", "cpu": "%", "success": "pp"}  # t
 
 @dataclass(frozen=True, slots=True)
 class Effect:
-    """A paired effect shown in T5, S and F3, with its primary estimator (RD-13)."""
+    """A paired effect shown in T5, S, F3 and F13, with its primary estimator (RD-13) and the label of the value
+    it is a difference of (F13's axes)."""
 
     name: str
     estimand: str
@@ -74,16 +75,23 @@ class Effect:
     label: str
     unit: str
     estimator: str  # "mean" or "hodges_lehmann"
+    value_label: str
 
 
 EFFECTS = (
     Effect(
-        "dR_completion", "delta_restricted_time", "R_completion", "ΔR_completion (s)", "s", "mean"
+        "dR_completion",
+        "delta_restricted_time",
+        "R_completion",
+        "ΔR_completion (s)",
+        "s",
+        "mean",
+        "R_completion (s)",
     ),
-    Effect("dR_90", "delta_restricted_time", "R_90", "ΔR_90 (s)", "s", "mean"),
-    Effect("dC_L", "delta_C_h", None, "ΔC(L) (pp)", "pp", "hodges_lehmann"),
-    Effect("dA_L", "delta_A_h", None, "ΔA_L (pp)", "pp", "hodges_lehmann"),
-    Effect("dD_L", "delta_D_h", None, "ΔD(L) (m)", "m", "hodges_lehmann"),
+    Effect("dR_90", "delta_restricted_time", "R_90", "ΔR_90 (s)", "s", "mean", "R_90 (s)"),
+    Effect("dC_L", "delta_C_h", None, "ΔC(L) (pp)", "pp", "hodges_lehmann", "C(L) (%)"),
+    Effect("dA_L", "delta_A_h", None, "ΔA_L (pp)", "pp", "hodges_lehmann", "A_L (%)"),
+    Effect("dD_L", "delta_D_h", None, "ΔD(L) (m)", "m", "hodges_lehmann", "D(L) (m)"),
 )
 PRIMARY_TIME = tuple(e.endpoint for e in EFFECTS if e.endpoint)  # the sensitivity endpoints
 # The primary estimator of each paired estimand (RD-13), from EFFECTS; restricted times also get the other one as
@@ -644,14 +652,19 @@ def paired(
     entries = []
     endpoints = context.milestones() if population == "primary" else list(PRIMARY_TIME)
     for endpoint in endpoints:
-        found = pairs(
-            stratum, profile, baseline, population, lambda r: time_value(r, endpoint, limit)
-        )
-        censored = sum(
-            1
-            for a, b in zip(found.profile_values, found.baseline_values, strict=True)
-            if a >= limit and b >= limit
-        )
+
+        def read(run: Row, endpoint: str = endpoint) -> Value:
+            return time_value(run, endpoint, limit)
+
+        found = pairs(stratum, profile, baseline, population, read)
+        # pairs whose two restricted times are both censored at L (not reached by L), by the event flags: a
+        # time observed exactly at L is an event, not censored
+        events = {
+            block: (read(run).event, read(partner).event)
+            for block, run, partner in stratum.blocks(profile, baseline)
+            if run is not None and partner is not None
+        }
+        censored = sum(1 for block in found.blocks if events[block] == (False, False))
         primary = PRIMARY_ESTIMATOR["delta_restricted_time"]
         estimators = ((primary, "primary"), (OTHER_ESTIMATOR[primary], "secondary"))
         for method, role in estimators[: 2 if population == "primary" else 1]:

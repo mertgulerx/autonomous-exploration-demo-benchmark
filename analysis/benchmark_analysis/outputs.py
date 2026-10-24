@@ -14,8 +14,8 @@
 
 """Writes every output with its sidecar (RESULTS_OVERHAUL §7 and A15; FIGURE_STYLE §1, §11).
 
-The output directory holds ``stats.json``, ``coverage_grid.parquet``, ``tables/<T>.csv|.tex|.pdf`` (the PDF a typeset sheet, RO-19),
-``figures/<F>.pdf`` with ``contact_sheets/<F>.png``, and one ``<output>.sidecar.json`` beside each: the code and
+The output directory holds ``stats.json``, ``coverage_grid.parquet``, ``tables/<T>.csv|.tex|.pdf`` (the PDF a
+typeset sheet, RO-19), ``figures/<F>.pdf`` with ``contact_sheets/<F>.png``, and one ``<output>.sidecar.json`` beside each: the code and
 environment, the export's ``SHA256SUMS`` hash and the hashes of the files read, the settings and their sources,
 the seed, the evidence level, the confirmatory checks, the attempts behind the output, its ``counts`` (RO-21: n
 as it uses them, runs and for paired outputs pairs, and what it leaves out) and, for figures, the ``check_pdf``
@@ -25,7 +25,9 @@ export give byte-identical files.
 
 from collections import Counter
 from collections.abc import Callable, Iterable
+from dataclasses import dataclass
 from datetime import UTC, datetime
+from itertools import chain
 import json
 from pathlib import Path
 from typing import Any
@@ -33,12 +35,26 @@ from typing import Any
 import matplotlib.pyplot as plt
 import pyarrow.parquet as pq
 
-from . import checks, figures, sheets, style, tables
+from . import (
+    behaviour,
+    checks,
+    comparisons,
+    composites,
+    conduct,
+    decisions,
+    figures,
+    heatmaps,
+    schematic,
+    sheets,
+    style,
+    tables,
+    taxonomy,
+)
 from .data import Study, coverage_grid, load
 from .environment import environment
-from .estimates import STATS_FORMAT, Entries, estimates
+from .estimates import EFFECTS, STATS_FORMAT, Entries, estimates
 from .export import Export
-from .settings import Settings
+from .settings import MILESTONES, Settings
 
 STUDY_FILES = ("study.yaml", "runs.parquet", "profiles.parquet")
 INPUTS = {
@@ -46,8 +62,152 @@ INPUTS = {
     "coverage_grid": (*STUDY_FILES, "coverage.parquet"),
     "T1": (*STUDY_FILES, "experiments.parquet"),
     "T2": (*STUDY_FILES, "provenance.json"),
+    "T9": STUDY_FILES,
     "figure": (*STUDY_FILES, "coverage.parquet", "trajectory_gt.parquet"),
 }
+
+
+@dataclass(frozen=True, slots=True)
+class View:
+    """One row of the Study tab's list (FIGURE_EXTENSION FX-4), written into analysis.json: the files a view shows,
+    or a family of files chosen by variant (a file-name prefix) with what goes under the chosen one and the
+    variants' labels. ``kind`` is table, chart or data; ``runs`` is False for a view with no runs behind it (a
+    schematic), which the tab shows without an n line. The GUI's built-in list (``gui_study.KINDS``) serves only
+    analyses before 1.3.0; a view added here needs no GUI change."""
+
+    code: str
+    title: str
+    kind: str
+    icon: str
+    files: tuple[str, ...] = ()
+    variants: str = ""
+    then: tuple[str, ...] = ()
+    variant_labels: tuple[tuple[str, str], ...] = ()
+    runs: bool = True
+
+    def document(self) -> dict[str, Any]:
+        return dict(
+            code=self.code,
+            title=self.title,
+            kind=self.kind,
+            icon=self.icon,
+            files=list(self.files),
+            variants=self.variants,
+            then=list(self.then),
+            variant_labels=dict(self.variant_labels),
+            runs=self.runs,
+        )
+
+
+# the variants of F3 and F13, one per paired effect, in file-name order, labelled without the unit
+EFFECT_LABELS = tuple(sorted((e.name, e.label.rsplit(" (", 1)[0]) for e in EFFECTS))
+VIEWS: tuple[View, ...] = (
+    View("T1", "Accounting", "table", "table", ("tables/T1.pdf",)),
+    View("F9", "Accounting flow", "chart", "chart", ("figures/F9.pdf",)),
+    View("F10", "Trial strip", "chart", "chart", ("figures/F10.pdf",)),
+    View("T2", "Setup and provenance", "table", "table", ("tables/T2.pdf",)),
+    View("F12", "World atlas", "chart", "chart", ("figures/F12.pdf",)),
+    View("F1", "Coverage over time", "chart", "chart", ("figures/F1.pdf",)),
+    View(
+        "F2/T3",
+        "Attainment",
+        "chart",
+        "chart",
+        variants="figures/F2_",
+        then=("tables/T3.pdf",),
+        variant_labels=(
+            *((f"R_{m}", f"{m} %") for m in MILESTONES),
+            ("R_completion", "Completion"),
+        ),
+    ),
+    View(
+        "F3",
+        "Paired effects",
+        "chart",
+        "chart",
+        variants="figures/F3_",
+        variant_labels=EFFECT_LABELS,
+    ),
+    View(
+        "F13",
+        "Paired estimation",
+        "chart",
+        "chart",
+        variants="figures/F13_",
+        variant_labels=EFFECT_LABELS,
+    ),
+    View("F14", "Paired gap at equal coverage", "chart", "chart", ("figures/F14.pdf",)),
+    View("F16", "Coverage against distance", "chart", "chart", ("figures/F16.pdf",)),
+    View("T4", "Default per stratum", "table", "table", ("tables/T4.pdf",)),
+    View("T5", "Paired differences", "table", "table", ("tables/T5.pdf", "tables/T5H.pdf")),
+    View("S", "Sensitivity", "table", "table", ("tables/S.pdf",)),
+    View("T6", "Compute cost", "table", "table", ("tables/T6.pdf",)),
+    View("F5", "Compute", "chart", "chart", ("figures/F5.pdf",)),
+    View("T7", "Reliability", "table", "table", ("tables/T7.pdf",)),
+    View("F6", "Outcomes", "chart", "chart", ("figures/F6.pdf",)),
+    # one file per stratum: the labels come from the figures' sidecars when the analysis is written
+    View("F15", "Behaviour timeline", "chart", "chart", variants="figures/F15_"),
+    View("F17", "Map heat maps", "chart", "chart", variants="figures/F17_"),
+    View("T8", "Timing validity", "table", "table", ("tables/T8.pdf",)),
+    View("F11", "RTF distribution", "chart", "chart", ("figures/F11.pdf",)),
+    View("F18", "Decision timing", "chart", "chart", ("figures/F18.pdf",)),
+    View("F19", "Decision anatomy", "chart", "chart", ("figures/F19.pdf",)),
+    View("F20", "Algorithm steps (schematic)", "chart", "chart", ("figures/F20.pdf",), runs=False),
+    View("F8", "Representative runs", "chart", "chart", ("figures/F8.pdf",)),
+    View("F21", "Main results", "chart", "chart", ("figures/F21.pdf",)),
+    View(
+        "F22",
+        "Teasers",
+        "chart",
+        "chart",
+        variants="figures/F22_",
+        variant_labels=(("a", "Per world"), ("b", "One run")),
+    ),
+    View("F23/T9", "Behaviour taxonomy", "chart", "chart", ("figures/F23.pdf", "tables/T9.pdf")),
+    # the coding sheet's pages (FIGURE_EXTENSION FX-19); their number depends on the study
+    View("F23 sheet", "Coding sheet", "chart", "chart", variants="figures/F23_sheet_"),
+    View("stats", "Statistics", "data", "braces", ("stats.json",)),
+)
+# figures with no runs behind them (a schematic): their sidecars hash no study inputs
+NO_RUNS = frozenset(file for view in VIEWS if not view.runs for file in view.files)
+
+
+def views_document(directory: Path) -> list[dict[str, Any]]:
+    """``analysis.json``'s ``views``: VIEWS with only the files written in ``directory`` (a fixed label of a
+    variant not written dropped, a view with no file left out), where a view of per-stratum variants without
+    fixed labels takes each variant's label from its figure's sidecar (``stratum``), so the Study tab names the
+    stratum."""
+    found = []
+    for view in VIEWS:
+        document = view.document()
+        document["files"] = [f for f in view.files if (directory / f).is_file()]
+        document["then"] = [f for f in view.then if (directory / f).is_file()]
+        written = (
+            sorted(
+                p.relative_to(directory).as_posix().removeprefix(view.variants).removesuffix(".pdf")
+                for p in directory.glob(f"{view.variants}*.pdf")
+            )
+            if view.variants
+            else []
+        )
+        if view.variants and view.variant_labels:
+            labels = dict(view.variant_labels)
+            document["variant_labels"] = {k: labels[k] for k in labels if k in written}
+        elif view.variants:
+            labels = {}
+            for variant in written:
+                sidecar = directory / f"{view.variants}{variant}.sidecar.json"
+                stratum = (
+                    json.loads(sidecar.read_text(encoding="utf-8")).get("stratum")
+                    if sidecar.is_file()
+                    else None
+                )
+                if isinstance(stratum, str):
+                    labels[variant] = stratum
+            document["variant_labels"] = labels
+        if document["files"] or written:
+            found.append(document)
+    return found
 
 
 def json_text(value: Any) -> str:
@@ -110,7 +270,7 @@ def confirmatory_checks(study: Study, settings: Settings) -> list[dict[str, Any]
 
 
 # Outputs whose n is pairs of runs (block × profile against Default), besides their runs.
-PAIRED = ("T5", "S", "F3_")
+PAIRED = ("T5", "S", "F3_", "F13_", "F14")
 
 
 def _pairs(study: Study, used: set[str]) -> int:
@@ -163,20 +323,29 @@ def _sidecar(
     study: Study,
     inputs: Iterable[str],
     attempt_ids: Iterable[str],
+    *,
+    with_counts: bool = True,
     **extra: Any,
 ) -> str:
+    """One sidecar; ``with_counts`` False for an output with no runs behind it (``NO_RUNS``): no ``counts``. An
+    ``extra`` key (an output's own fields, a figure's ``extra``) that would overwrite a base or sidecar key is
+    refused, so no output's values can replace the sidecar's own."""
+    reserved = {*base, "inputs", "attempt_ids", "counts"}
+    if clash := sorted(reserved & set(extra)):
+        raise ValueError(
+            f"sidecar of {extra.get('output')}: extra keys {clash} would overwrite its own"
+        )
     export = study.export
     names = sorted({name for name in inputs if name in export.files})
     used = sorted(set(attempt_ids))
     output = str(extra.get("output", ""))
+    counts = (
+        {"counts": scope_counts(study, used, pairs=output.startswith(PAIRED))}
+        if with_counts
+        else {}
+    )
     return json_text(
-        {
-            **base,
-            "inputs": export.input_hashes(*names),
-            "attempt_ids": used,
-            "counts": scope_counts(study, used, pairs=output.startswith(PAIRED)),
-            **extra,
-        }
+        {**base, "inputs": export.input_hashes(*names), "attempt_ids": used, **counts, **extra}
     )
 
 
@@ -188,9 +357,13 @@ def write_all(
     preset: str,
     sans: bool,
     log: Callable[[str], None],
+    coding: taxonomy.Coding | None = None,
+    study: Study | None = None,
 ) -> list[str]:
-    """Every output into ``directory``; returns the warnings to print."""
-    study = load(export)
+    """Every output into ``directory``; returns the warnings to print. ``coding`` is the researcher's coding file
+    (``--coding``: ``taxonomy.read_coding``, already checked against the runs by ``taxonomy.check_runs``);
+    ``study`` the export's loaded study when the caller has it (``data.load`` otherwise)."""
+    study = study or load(export)
     entries = estimates(study, settings)
     checks_found = confirmatory_checks(study, settings)
     warnings = [
@@ -235,7 +408,13 @@ def write_all(
         ),
         encoding="utf-8",
     )
-    source = tables.sources(study, settings, entries)
+    source = tables.sources(
+        study,
+        settings,
+        entries,
+        None if coding is None else coding.categories(),
+        None if coding is None else coding.document(),
+    )
     table_directory = directory / "tables"
     for table in tables.tables(source):
         tables.write(table, table_directory)
@@ -256,6 +435,7 @@ def write_all(
                 title=table.title,
                 notes=table.notes,
                 check_pdf=result,
+                **table.extra,
             ),
             encoding="utf-8",
         )
@@ -275,7 +455,23 @@ def write_all(
         context = figures.context(
             study, settings, Entries(entries), grid_rows, preset, source.order
         )
-        for built in figures.figures(context):
+        # one module per group of figures (FIGURE_EXTENSION), in figure-number order; the taxonomy last, as it
+        # also takes the coding file
+        modules = (
+            figures,
+            conduct,
+            comparisons,
+            behaviour,
+            heatmaps,
+            decisions,
+            schematic,
+            composites,
+        )
+        # every module yields its figures one at a time: each is saved and closed before the next is drawn
+        built_all = chain(
+            *(module.figures(context) for module in modules), taxonomy.figures(context, coding)
+        )
+        for built in built_all:
             path = figure_directory / f"{built.name}.pdf"
             built.figure.savefig(path, metadata={"CreationDate": None})
             result = checks.check_pdf(path, style.width_pt(preset, built.width))
@@ -285,15 +481,17 @@ def write_all(
                 missing_poppler = True
             elif result.get("problems"):
                 warnings.append(f"{built.name}: " + "; ".join(result["problems"]))
-            inputs = list(INPUTS["figure"])
-            if built.name == "F8":
-                inputs += [name for name in export.files if name.startswith("references/")]
+            # a figure with no runs behind it reads no study files and has no counts
+            with_runs = f"figures/{built.name}.pdf" not in NO_RUNS
+            study_inputs = INPUTS["figure"] if with_runs else ()
+            inputs = [*study_inputs, *sorted(built.inputs)]
             (figure_directory / f"{built.name}.sidecar.json").write_text(
                 _sidecar(
                     base,
                     study,
                     inputs,
                     built.attempt_ids,
+                    with_counts=with_runs,
                     output=f"{built.name}.pdf",
                     alt_text=built.alt_text,
                     caption_notes=built.notes,

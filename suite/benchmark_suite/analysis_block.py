@@ -17,7 +17,8 @@ docs/MEASUREMENTS.md, "Study analysis block").
 
 A plan is Markdown. Everything above its first "Deviations" heading (levels 1–3, outside code fences) is the
 registered plan, hashed into ``study.plan_sha256``. One fenced YAML block in that part whose only top-level key
-is ``analysis`` holds the parameters the analysis module reads (``analysis-block-v1``). The engine validates the
+is ``analysis`` holds the parameters the analysis module reads (``analysis-block-v1``, or ``-v2`` with the optional
+``event_tick`` and ``taxonomy`` keys of the figure extension, FX-19 and FX-20). The engine validates the
 block at submission and copies the plan and the parsed block into a study export; the analysis module fills
 documented defaults for what a block leaves out (RO-16) and never reads the checkout.
 """
@@ -34,7 +35,9 @@ import yaml
 from .contracts import ContractError
 from .yaml_io import load_mapping
 
-ANALYSIS_BLOCK_VERSION = 1
+# The versions, keys, names and defaults below are mirrored in analysis/benchmark_analysis/settings.py (a separate
+# environment that cannot import the suite): change both.
+ANALYSIS_BLOCK_VERSIONS = (1, 2)
 DEVIATIONS_HEADING = re.compile(r"^#{1,3}\s+Deviations\b", re.IGNORECASE)
 MILESTONES = (25, 50, 75, 90, 95)
 # One estimator and test per endpoint (RESULTS_RESEARCH RD-3, RD-13, RD-52): restricted times use the mean
@@ -59,6 +62,8 @@ KEYS = {
     "sensitivity",
     "representative",
 }
+V2_KEYS = {"event_tick", "taxonomy"}  # version 2 only
+CATEGORY_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
 FENCE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")  # a fenced code block's opening line (CommonMark)
 YAML_INFO = ("yaml", "yml")
 TOP_LEVEL_ANALYSIS = re.compile(r"^analysis\s*:", re.MULTILINE)
@@ -145,12 +150,12 @@ def _names(value: Any, field: str, allowed: tuple[Any, ...]) -> list[Any]:
 def validate(block: dict[str, Any], *, confirmatory: bool) -> dict[str, Any]:
     """The block with every given field checked (defaults are the analysis module's, RO-16); an unquoted
     ``plan_registered_utc``, which YAML reads as a UTC time, comes back as its text."""
-    unknown = set(block) - KEYS
+    version = block.get("version")
+    if type(version) is not int or version not in ANALYSIS_BLOCK_VERSIONS:
+        raise ContractError("analysis.version", "Use version 1 or 2")
+    unknown = set(block) - KEYS - (V2_KEYS if version == 2 else set())
     if unknown:
         raise ContractError("analysis", "Unknown keys: " + ", ".join(sorted(unknown)))
-    version = block.get("version")
-    if type(version) is not int or version != ANALYSIS_BLOCK_VERSION:
-        raise ContractError("analysis.version", f"Use version {ANALYSIS_BLOCK_VERSION}")
     registered = block.get("plan_registered_utc")
     if isinstance(registered, datetime) and registered.utcoffset() == timedelta(0):
         registered = registered.strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -262,4 +267,51 @@ def validate(block: dict[str, Any], *, confirmatory: bool) -> dict[str, Any]:
         )
     if representative.get("endpoint", "R_completion") not in TIME_ENDPOINTS:
         raise ContractError("analysis.representative.endpoint", "Use a restricted time endpoint")
+    _event_tick(block.get("event_tick", {}))
+    if "taxonomy" in block:
+        _taxonomy(block["taxonomy"])
     return block
+
+
+def _event_tick(value: Any) -> None:
+    """SEL-4's rule for the decision tick a figure shows (FX-20): the first tick at or after ``after_s`` where the
+    route's first target differs from the greedy first, else the first with at least ``min_candidates``."""
+    if not isinstance(value, dict) or set(value) - {"after_s", "min_candidates"}:
+        raise ContractError("analysis.event_tick", "Use after_s and min_candidates")
+    if "after_s" in value:
+        _number(value["after_s"], "analysis.event_tick.after_s", 0, 1e7)
+    if "min_candidates" in value:
+        _number(
+            value["min_candidates"],
+            "analysis.event_tick.min_candidates",
+            1,
+            10_000,
+            integral=True,
+        )
+
+
+def _taxonomy(value: Any) -> None:
+    """The behaviour codebook a study declares before its runs are coded (FX-19): 2 to 20 categories, each with an
+    ID and a definition."""
+    categories = value.get("categories") if isinstance(value, dict) else None
+    if (
+        not isinstance(value, dict)
+        or set(value) != {"categories"}
+        or not isinstance(categories, list)
+    ):
+        raise ContractError("analysis.taxonomy", "Use categories: a list of {id, definition}")
+    if not 2 <= len(categories) <= 20:
+        raise ContractError("analysis.taxonomy.categories", "Declare 2 to 20 categories")
+    seen = set()
+    for index, category in enumerate(categories):
+        field = f"analysis.taxonomy.categories[{index}]"
+        if not isinstance(category, dict) or set(category) != {"id", "definition"}:
+            raise ContractError(field, "Use id and definition")
+        identity, definition = category["id"], category["definition"]
+        if not isinstance(identity, str) or not CATEGORY_ID.fullmatch(identity) or identity in seen:
+            raise ContractError(
+                field + ".id", "Use a distinct ID of letters, digits, _ and - (at most 64)"
+            )
+        if not isinstance(definition, str) or not 1 <= len(definition.strip()) <= 500:
+            raise ContractError(field + ".definition", "Define the category in 1 to 500 characters")
+        seen.add(identity)

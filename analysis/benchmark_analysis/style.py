@@ -39,6 +39,15 @@ from .errors import Refused  # noqa: E402
 
 STYLE = Path(__file__).with_name("publication.mplstyle")
 MM_PER_INCH = 25.4
+# a figure's height budget: below the IEEE 8.8 in page height, with room for the caption
+PAGE_MAX_MM = 215.0
+
+
+def page_note(height_mm: float, split: str = "world") -> str | None:
+    """The note a figure taller than ``PAGE_MAX_MM`` carries (split it by ``split`` for print), else None."""
+    if height_mm <= PAGE_MAX_MM:
+        return None
+    return f"Taller than a page ({height_mm:.0f} mm): split it by {split} for print."
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,6 +75,10 @@ PROFILE_COLOURS = (
     "#E69F00",
 )
 ROUTE_COLOUR = "#56B4E9"  # reserved for routes and rays in method figures, never a profile (FP-7)
+SEQUENTIAL_CMAP = "cividis"  # every sequential colour scale: time, shares, entries, costs (FX-12)
+# the suite's rejection level (0.90 for 10 wall s) and the low_rtf flag (0.95), MEASUREMENTS "Real-time factor
+# and quality flags": (value, line style, what it is); each figure words its legend from these
+RTF_LINES = ((0.90, "--", "rejection"), (0.95, ":", "flag"))
 MARKERS = ("o", "s", "^", "D", "v", "P")
 LINESTYLES: tuple[Any, ...] = ("-", "--", "-.", ":", (0, (5, 1)), (0, (3, 1, 1, 1)))
 OUTCOMES: dict[str, dict[str, Any]] = {
@@ -79,6 +92,14 @@ OUTCOMES: dict[str, dict[str, Any]] = {
     "not_done": dict(facecolor="none", hatch=None, label="Not done"),
 }
 MAP_FREE, MAP_UNKNOWN, MAP_OCCUPIED, MAP_OUTSIDE = "#FFFFFF", "#D9D9D9", "#6E6E6E", "#EDEDED"
+EDGE = "#333333"  # outlines of boxes, cells and outcome patches
+# F14's support classes: who reached a coverage threshold (fill, hatch); greys, never a profile hue
+SUPPORT_FILLS: dict[str, tuple[str, str | None]] = {
+    "both": ("#4D4D4D", None),
+    "default": ("#FFFFFF", "////"),
+    "profile": ("#B3B3B3", None),
+    "neither": ("#E6E6E6", None),
+}
 
 
 @dataclass(frozen=True, slots=True)

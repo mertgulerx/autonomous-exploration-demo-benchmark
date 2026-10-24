@@ -48,6 +48,7 @@ Row = dict[str, Any]
 Floats = NDArray[np.float64]
 GAP_S = 2.0  # RD-6: C(h), A_h and D(h) have no value across a longer gap between valid samples
 REPORTED = "reported"
+REPORTED_OUTCOMES = ("completed", "time_limit", "no_movement")  # the outcomes of reported runs
 MISSING = ("missing_startup", "missing_platform")
 EXCLUDED = ("excluded_runtime_failure", "excluded_stopped")
 VERSION_COLUMNS = (
@@ -265,6 +266,12 @@ def load(export: Export) -> Study:
         strata.append(
             Stratum(robot, world, spawn, keys[0] if keys else "", float(limits[0]), tuple(members))
         )
+    if not strata:  # nothing to estimate or draw: every final run failed or was stopped
+        raise Refused(
+            "no reported run in any stratum: no final run is reported (their classes in groups)",
+            column="report_class",
+            groups=_groups(finals, "report_class"),
+        )
     profiles: dict[str, Row] = {}
     for row in _rows(
         export.table(
@@ -323,6 +330,18 @@ def _trajectory(export: Export, attempts: set[str]) -> dict[str, tuple[Floats, F
         )
         for attempt, rows in grouped.items()
     }
+
+
+def block_starts(study: Study) -> dict[tuple[str, str, str, str], int]:
+    """The first attempt start (wall clock, ns) of every block of every cell, keyed by robot, world, spawn and
+    block: the execution order of blocks (F10's columns, F23's example runs). Blocks never started are absent."""
+    started: dict[tuple[str, str, str, str], int] = {}
+    for attempt in study.runs:
+        key = (attempt["robot_id"], attempt["world_id"], attempt["spawn_id"], attempt["block_id"])
+        start = attempt["wall_start_ns"]
+        if start is not None:
+            started[key] = min(started.get(key, start), start)
+    return started
 
 
 # Per-run values ---------------------------------------------------------------------------------------------
