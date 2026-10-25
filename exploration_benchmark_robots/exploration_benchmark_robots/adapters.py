@@ -23,6 +23,17 @@ from pathlib import Path
 import xml.etree.ElementTree as ET
 import yaml
 
+from .known_pose import (
+    BASE_FRAME,
+    GROUND_TRUTH_RATE_HZ,
+    GROUND_TRUTH_RECORD_PERIOD_NS,
+    MAPPING_CONDITION,
+    add_ground_truth_publisher,
+    ground_truth_bridge,
+    model_frame,
+)
+from .mapping_scan import FILL_OFFSET_M, MAPPING_SCAN_TOPIC, THRESHOLD_MARGIN_M
+
 
 # The E0 moving-object system (world_collection/plugins/moving_objects) and the ROS topic its pose
 # message is bridged to for the worker's startup check (docs/plans/worlds/I5, open point 1 (a)).
@@ -391,6 +402,104 @@ def spawn_pose(profile, scenario):
     return pose
 
 
+def mapping_parameters():
+    """The condition-defining values of MAPPING_CONDITION (comparison_profile)."""
+    return dict(
+        fill_offset_m=FILL_OFFSET_M,
+        threshold_margin_m=THRESHOLD_MARGIN_M,
+        ground_truth_rate_hz=GROUND_TRUTH_RATE_HZ,
+        ground_truth_record_period_ns=GROUND_TRUTH_RECORD_PERIOD_NS,
+    )
+
+
+def prepare_known_pose(profile, directory, generated, bridge):
+    """Ground-truth pose for every run (mapping-known-pose-v1, I10).
+
+    The PosePublisher goes into the spawned model and its bridge into the bridge
+    list; known_pose_tf turns the model pose into odom->base_footprint. Writes
+    known_pose.yaml and ``generated["known_pose"]``.
+    """
+    spawn = ET.parse(generated["spawn_file"])
+    frame = model_frame(spawn.getroot(), ET.fromstring(generated["robot_description"]))
+    settings = add_ground_truth_publisher(spawn.getroot())
+    spawn.write(generated["spawn_file"], encoding="unicode", xml_declaration=True)
+    bridge.append(ground_truth_bridge())
+    parameters = dict(
+        use_sim_time=True,
+        model=profile["model"],
+        model_frame=frame,
+        base_frame=BASE_FRAME,
+        odom_frame="odom",
+        spawn_pose=[float(value) for value in generated["spawn_pose"]],
+    )
+    path = Path(directory) / "known_pose.yaml"
+    path.write_text(
+        yaml.safe_dump({"known_pose_tf": {"ros__parameters": parameters}})
+    )
+    generated["known_pose"] = dict(
+        parameters=str(path),
+        model_frame=frame,
+        ground_truth_settings=settings,
+        tf="odom->base_footprint, planar, stamped with the ground-truth sim time",
+        odom_origin="base_footprint at the commanded spawn pose",
+    )
+
+
+def prepare_mapping(profile, directory, generated, shared):
+    """Per-robot SLAM Toolbox file and the mapping scan filter configuration.
+
+    Scans are placed at the known pose (no scan matching, no loop closing) and the
+    mapping topic carries no-return beams as V = range_max - FILL_OFFSET_M below
+    the sensor maximum; max_laser_range = range_max - THRESHOLD_MARGIN_M keeps V
+    beyond Karto's range threshold, so such beams clear free space and mark no
+    obstacle. Writes slam.yaml, mapping_scan.yaml and ``generated["slam"]``,
+    ``generated["mapping_scan"]`` and ``generated["mapping_condition"]``.
+    """
+    range_max = float(profile["lidar"]["range_max"])
+    threshold = round(range_max - THRESHOLD_MARGIN_M, 6)
+    slam = yaml.safe_load(Path(shared).read_text())
+    values = slam["slam_toolbox"]["ros__parameters"]
+    values.update(
+        scan_topic=MAPPING_SCAN_TOPIC,
+        use_scan_matching=False,
+        do_loop_closing=False,
+        max_laser_range=threshold,
+        scan_buffer_maximum_scan_distance=threshold,
+    )
+    slam_path = Path(directory) / "slam.yaml"
+    slam_path.write_text(yaml.safe_dump(slam, sort_keys=False))
+    generated["slam"] = str(slam_path)
+    filter_path = Path(directory) / "mapping_scan.yaml"
+    parameters = dict(
+        use_sim_time=True,
+        input_topic="/scan",
+        output_topic=MAPPING_SCAN_TOPIC,
+        max_laser_range=threshold,
+        fill_offset=FILL_OFFSET_M,
+    )
+    filter_path.write_text(
+        yaml.safe_dump({"mapping_scan_filter": {"ros__parameters": parameters}})
+    )
+    generated["mapping_scan"] = dict(
+        parameters=str(filter_path),
+        input="/scan",
+        output=MAPPING_SCAN_TOPIC,
+        replaced="readings >= message range_max (no-return +inf included)",
+        replacement=f"message range_max - {FILL_OFFSET_M}",
+        unchanged="NaN, -inf and every reading below range_max",
+        catalog_range_max=range_max,
+        max_laser_range=threshold,
+    )
+    generated["mapping_condition"] = dict(
+        id=MAPPING_CONDITION,
+        pose_source="Gazebo PosePublisher model pose via known_pose_tf",
+        ground_truth_rate_hz=GROUND_TRUTH_RATE_HZ,
+        scan_matching=False,
+        loop_closing=False,
+        slam_shared_source=str(shared),
+    )
+
+
 def prepare(profile, scenario, directory, lookup=None):
     from ament_index_python.packages import get_package_share_directory
     import xacro
@@ -460,7 +569,11 @@ def prepare(profile, scenario, directory, lookup=None):
                 "sensor_msgs/msg/CameraInfo",
             ):
                 bridge.append(entry)
-        generated["ekf"] = str(baseline / "config/ekf.yaml")
+        # Known pose (I10): the EKF keeps odometry/filtered but no longer owns the TF.
+        ekf = yaml.safe_load((baseline / "config/ekf.yaml").read_text())
+        ekf["ekf_filter_node"]["ros__parameters"]["publish_tf"] = False
+        generated["ekf"] = str(directory / "ekf.yaml")
+        Path(generated["ekf"]).write_text(yaml.safe_dump(ekf, sort_keys=False))
     elif family == "turtlebot3":
         share = Path(lookup("turtlebot3_gazebo"))
         generated["resource_paths"] = [str(share / "models")]
@@ -472,7 +585,8 @@ def prepare(profile, scenario, directory, lookup=None):
         enforce_drive_limits(sdf.getroot(), profile)
         turtlebot3_sensor_frames(sdf.getroot())
         generated["disabled_sensors"] = remove_unused_sensors(sdf.getroot())
-        # The model publishes measured differential-drive odometry and its TF.
+        # The model publishes measured differential-drive odometry; its TF is not
+        # bridged (known pose, I10: the ground-truth node owns odom->base_footprint).
         generated["spawn_file"] = str(directory / "robot.sdf")
         sdf.write(generated["spawn_file"], encoding="unicode", xml_declaration=True)
         for topic, ros, gz, direction in (
@@ -480,7 +594,6 @@ def prepare(profile, scenario, directory, lookup=None):
             ("/odom", "nav_msgs/msg/Odometry", "gz.msgs.Odometry", "GZ_TO_ROS"),
             ("/imu", "sensor_msgs/msg/Imu", "gz.msgs.IMU", "GZ_TO_ROS"),
             ("/scan", "sensor_msgs/msg/LaserScan", "gz.msgs.LaserScan", "GZ_TO_ROS"),
-            ("/tf", "tf2_msgs/msg/TFMessage", "gz.msgs.Pose_V", "GZ_TO_ROS"),
             (
                 "/joint_states",
                 "sensor_msgs/msg/JointState",
@@ -536,18 +649,14 @@ def prepare(profile, scenario, directory, lookup=None):
             rejected_value="NaN",
             parameters=settings,
         )
+    prepare_known_pose(profile, directory, generated, bridge)
     bridge_path = directory / "bridge.yaml"
     bridge_path.write_text(yaml.safe_dump(bridge, sort_keys=False))
     generated.update(bridge=str(bridge_path), navigation=str(nav_path))
-    slam_path = baseline / "config/slam_toolbox_mapping.yaml"
-    if "lidar_range" in profile.get("benchmark_overrides", {}):
-        slam = yaml.safe_load(slam_path.read_text())
-        values = slam["slam_toolbox"]["ros__parameters"]
-        values["max_laser_range"] = profile["lidar"]["range_max"]
-        values["scan_buffer_maximum_scan_distance"] = profile["lidar"]["range_max"]
-        slam_path = directory / "slam.yaml"
-        slam_path.write_text(yaml.safe_dump(slam, sort_keys=False))
-    generated["slam"] = str(slam_path)
+    prepare_mapping(
+        profile, directory, generated, baseline / "config/slam_toolbox_mapping.yaml"
+    )
+    slam_path = Path(generated["slam"])
     generated["visualization_description"] = visualization_description(
         generated["robot_description"], lookup
     )
@@ -587,6 +696,8 @@ def prepare(profile, scenario, directory, lookup=None):
         ),
         navigation_sha256=sha256(nav_path),
         slam_sha256=sha256(slam_path),
+        mapping_condition=MAPPING_CONDITION,
+        mapping_parameters=mapping_parameters(),
     )
     for path in directory.rglob("*"):
         if path.is_file():

@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The run record ``run-record-v1``: its field registry and the facts measured from an attempt's files.
+"""The run record ``run-record-v2``: its field registry and the facts measured from an attempt's files.
 
-Contract: docs/MEASUREMENTS.md, "Run record run-record-v1". ``measure`` runs in a spawned job (``jobs.py``)
+Contract: docs/MEASUREMENTS.md, "Run record run-record-v2". ``measure`` runs in a spawned job (``jobs.py``)
 and reads the manifest, the streams and the explorer log; ``run_records.RunRecords`` adds the engine's
 facts and stores the record once. Read-time fields (finality, report class) are derived from the store
 by ``read_time_fields``. Null never means zero.
@@ -51,7 +51,8 @@ from .run_map import GROUND_TRUTH_OFFSET, finite, triple
 from .storage import file_hash, load_object, sync_directory
 from .strata import COMPARISON_KEY_VERSION, comparison_key
 
-RUN_RECORD_VERSION = 1
+# 2 (I10): adds mapping_condition. Version 1 records stay beside the rebuilt ones (run_records.py).
+RUN_RECORD_VERSION = 2
 ELIGIBILITY_VERSION = "eligibility-v2"
 DERIVED_VERSION = 1
 # Goal statuses the explorer itself causes (a cancel request or a replacement goal).
@@ -61,7 +62,7 @@ STALL_DELTA_PP = 0.1  # stall-v1 (RESULTS_RESEARCH RD-18)
 MOTION_GAP_NS = 500_000_000  # eligibility-v2: largest interval between valid trajectory rows
 RESOURCE_CHAIN_NS = 2_500_000_000  # RD-20: valid resource samples at most 2.5 s apart
 # Where every field is defined; the study export's codebook cites it (R4).
-DEFINITION = "docs/MEASUREMENTS.md, Results overhaul contracts, Run record run-record-v1"
+DEFINITION = "docs/MEASUREMENTS.md, Results overhaul contracts, Run record run-record-v2"
 Kind = Literal["text", "int", "float", "bool", "list"]
 
 
@@ -84,6 +85,9 @@ FIELDS: tuple[Field, ...] = (
     *_fields("int", "", "never", "run_record_version"),
     *_fields("text", "", "never", "record_kind"),
     *_fields("int", "", "stub", "dataset_schema", "coverage_metric_version"),
+    # The mapping condition id (comparison_profile.mapping_condition, I10); null: a stub, or a run
+    # recorded before mapping-known-pose-v1 (the stock SLAM condition), or no robot configuration.
+    *_fields("text", "", "stub, or recorded before I10", "mapping_condition"),
     *_fields("text", "", "stub", "timing_rule"),
     *_fields("text", "", "never", "eligibility_version"),
     *_fields("int", "", "never", "comparison_key_version"),
@@ -850,9 +854,12 @@ def measure(payload: dict[str, Any]) -> dict[str, Any]:
     finished = completion(outcome, elapsed, limit)
     if outcome == "completed" and elapsed is None:
         quality_flags.add("completion_without_motion")
+    profile = (manifest.get("robot_configuration") or {}).get("comparison_profile") or {}
+    condition = profile.get("mapping_condition")
     record: dict[str, Any] = dict(
         dataset_schema=version,
         coverage_metric_version=(manifest.get("coverage") or {}).get("metric_version"),
+        mapping_condition=condition if isinstance(condition, str) else None,
         timing_rule=manifest.get("timing_rule")
         or ("timing-rule-v2" if version >= 10 else "timing-rule-v1"),
         time_limit_s=limit,

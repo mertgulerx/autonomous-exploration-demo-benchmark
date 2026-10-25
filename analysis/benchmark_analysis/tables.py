@@ -43,7 +43,7 @@ from pathlib import Path
 import re
 from typing import Any
 
-from .data import EXCLUDED, MISSING, REPORTED, Stratum, Study
+from .data import EXCLUDED, MISSING, REPORTED, Stratum, Study, mapping_condition
 from .estimates import EFFECTS, PRIMARY_TIME, UNITS, Entries, EstimateContext, time_endpoints
 from .families import CONTRACT as FAMILY_CONTRACT
 from .settings import Family, Settings
@@ -517,6 +517,7 @@ def t2(src: Sources) -> Table:
             for r in study.finals
         ],
     )
+    add("Mapping condition", [mapping_condition(r) or "not recorded" for r in study.finals])
     table.attempt_ids = {r["attempt_id"] for r in study.finals}
     table.notes = ["Hashes and commits shortened to 12 characters; full values in provenance.json."]
     return table

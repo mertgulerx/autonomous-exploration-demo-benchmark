@@ -59,6 +59,10 @@ VERSION_COLUMNS = (
     "comparison_key_version",
     "timing_rule",
 )
+# I10: the mapping condition of a run (run record 2). A run with a comparison key and no condition (run record
+# 1, or recorded before mapping-known-pose-v1) mapped under the earlier stock SLAM condition.
+MAPPING_CONDITION = "mapping_condition"
+BEFORE_MAPPING_CONDITION = "none (before mapping-known-pose-v1)"
 TIME_ENDPOINTS = {
     "R_completion": "completion",
     "R_25": "t25",
@@ -190,12 +194,29 @@ def _groups(runs: Iterable[Row], column: str) -> list[dict[str, Any]]:
     ]
 
 
+def mapping_condition(run: Row) -> str | None:
+    """The run's mapping condition; None for a run without a stratum (no data of any condition)."""
+    if run[MAPPING_CONDITION] is not None:
+        return str(run[MAPPING_CONDITION])
+    return BEFORE_MAPPING_CONDITION if run["comparison_key"] else None
+
+
 def load(export: Export) -> Study:
     """The study's runs, strata and series, or a refusal naming what does not fit."""
     runs = _rows(export.table("runs"))
+    for run in runs:  # exports of run record 1 have no column: those runs predate the condition
+        run.setdefault(MAPPING_CONDITION, None)
     finals = [run for run in runs if run["is_final"]]
     if not finals:
         raise Refused("the export holds no final runs")
+    conditions = {c for run in finals if (c := mapping_condition(run)) is not None}
+    if len(conditions) > 1:
+        # one study-wide condition also keeps every stratum and family to one
+        raise Refused(
+            f"final runs mix mapping conditions {sorted(conditions)}; analyse each separately",
+            column=MAPPING_CONDITION,
+            groups=_groups(finals, MAPPING_CONDITION),
+        )
     for column in VERSION_COLUMNS:
         # a run without the value (a startup failure before recording began) holds no data of that version
         found = sorted({str(run[column]) for run in finals if run[column] is not None})

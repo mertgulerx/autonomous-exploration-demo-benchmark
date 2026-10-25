@@ -80,6 +80,53 @@ class RunRecords:
                 "run_records lacks index columns: "
                 + ", ".join(sorted(set(INDEX_COLUMNS) - columns))
             )
+        self.carry_stubs()
+
+    def carry_stubs(self) -> None:
+        """Copy the stubs of an older record version to the current one (engine start).
+
+        A stub's attempt has no files to measure again (a discard) or incomplete ones (an
+        engine interruption), and the reservation event its facts came from may be deleted,
+        so ``pending`` never rebuilds it: the newest older stub is copied with the current
+        ``run_record_version``, fields the older version lacked null. Older rows stay.
+        """
+        rows = self.store.rows(
+            "SELECT r.attempt_id,r.run_record_version,r.record FROM run_records r "
+            "WHERE r.record_kind='stub' AND r.run_record_version<? AND NOT EXISTS "
+            "(SELECT 1 FROM run_records n WHERE n.attempt_id=r.attempt_id "
+            "AND n.run_record_version=?) ORDER BY r.attempt_id,r.run_record_version DESC",
+            (RUN_RECORD_VERSION, RUN_RECORD_VERSION),
+        )
+        carried: set[str] = set()
+        with self.store.transaction():
+            for row in rows:
+                if row["attempt_id"] in carried:
+                    continue
+                older = json.loads(row["record"])
+                record = ordered(
+                    {
+                        **dict.fromkeys(NAMES),
+                        **{name: value for name, value in older.items() if name in NAMES},
+                        "run_record_version": RUN_RECORD_VERSION,
+                    }
+                )
+                try:
+                    self._store({"id": row["attempt_id"]}, record)
+                except ValueError as exc:
+                    # one malformed old stub must not stop the engine from starting
+                    self.store.event(
+                        "run_record.failed",
+                        {"detail": f"stub not carried to version {RUN_RECORD_VERSION}: {exc}"},
+                        None,
+                        row["attempt_id"],
+                    )
+                    continue
+                carried.add(row["attempt_id"])
+            if carried:
+                self.store.event(
+                    "run_record.stubs_carried",
+                    dict(version=RUN_RECORD_VERSION, stubs=len(carried)),
+                )
 
     def pending(self, campaign_id: str | None = None) -> list[str]:
         """Finished attempts that still need a record, oldest first (excluding failures until restart)."""

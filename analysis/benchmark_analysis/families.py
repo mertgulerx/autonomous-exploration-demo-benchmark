@@ -57,7 +57,16 @@ from numpy.typing import NDArray
 from scipy import stats as distributions
 
 from . import stats
-from .data import EXCLUDED, REPORTED, TIME_EPSILON, Row, Stratum, Study, Value
+from .data import (
+    EXCLUDED,
+    REPORTED,
+    TIME_EPSILON,
+    Row,
+    Stratum,
+    Study,
+    Value,
+    mapping_condition,
+)
 from .errors import Refused
 from .estimates import POPULATIONS, horizon_value, interval_document, pairs, runs_for, time_value
 from .settings import DensityContrast, Factor, Family, Hypothesis, Level, Settings
@@ -409,6 +418,15 @@ def _slam(context: Context, run: Row) -> Any:
     return profile.get("slam_sha256")
 
 
+def _mapping_parameters(context: Context, run: Row) -> Any:
+    """The condition-defining values (comparison_profile.mapping_parameters, I10; null before)."""
+    manifest = _manifest(context, run["attempt_id"])
+    if manifest is None:
+        return NO_MANIFEST
+    profile = (manifest.get("robot_configuration") or {}).get("comparison_profile") or {}
+    return profile.get("mapping_parameters")
+
+
 def _time_limit_rule(context: Context, run: Row) -> Any:
     for campaign in context.study.export.study.get("campaigns") or ():
         if campaign.get("id") == run["campaign_id"]:
@@ -435,15 +453,17 @@ CHECKS: tuple[tuple[str, Callable[[Context, Row], Any]], ...] = (
     ("registry_sha256", _registry),
     ("provenance_id", lambda context, run: run["provenance_id"]),
     ("slam_sha256", _slam),
+    ("mapping_condition", lambda context, run: mapping_condition(run)),
+    ("mapping_parameters", _mapping_parameters),
     ("time_limit_rule", _time_limit_rule),
 )
 
 
 def _homogeneous(context: Context, unit: Unit) -> None:
     """Refuse a unit whose runs (every population it reports: reported runs, and excluded runs when
-    ``exclusions_as_failures`` is used) mix robot, registry, code identity, SLAM configuration, time-limit rule
-    or (a family) generator version, naming each value's runs (RO-22). Only uniformity is checked, not the
-    values themselves."""
+    ``exclusions_as_failures`` is used) mix robot, registry, code identity, SLAM configuration, mapping condition
+    or its parameters (I10), time-limit rule or (a family) generator version, naming each value's runs (RO-22).
+    Only uniformity is checked, not the values themselves."""
     classes = [REPORTED]
     if "exclusions_as_failures" in context.populations(unit.ref.mandated):
         classes += EXCLUDED

@@ -64,7 +64,14 @@ CENSORED_SORT = {
     **{f"t{m}_s": f"t{m}_censor_s" for m in MILESTONES},
 }
 # Values whose mixing among full final records the export refuses (``refused_mixes``).
-REFUSED_MIXES = ("run_record_version", "dataset_schema", "coverage_metric_version")
+REFUSED_MIXES = (
+    "run_record_version",
+    "dataset_schema",
+    "coverage_metric_version",
+    "mapping_condition",
+)
+# A full record with a stratum (comparison key) and no mapping condition ran before I10.
+BEFORE_MAPPING_CONDITION = "none (before mapping-known-pose-v1)"
 HOMOGENEOUS = ("timing_rule", "debug_streams", "diagnostics_enabled", "provenance_id")
 EXPORTS_LISTED = 20
 
@@ -332,14 +339,25 @@ def studies_page(database: sqlite3.Connection, offset: Any = 0, limit: Any = 100
     )
 
 
+def _mix_value(column: str, record: dict[str, Any]) -> Any:
+    """The value of ``column`` that ``refused_mixes`` compares (None: no data of that kind)."""
+    value = record[column]
+    if column == "mapping_condition" and value is None and record["comparison_key"] is not None:
+        return BEFORE_MAPPING_CONDITION
+    return value
+
+
 def refused_mixes(full: Iterable[dict[str, Any]]) -> list[str]:
     """The export's refusal (``exports._run_rows``) and ``study.get``'s warning: full final records whose
-    record, dataset-schema or coverage-metric versions differ. A run without a value (a startup failure before
-    recording began has no coverage block) holds no data of that version and mixes nothing."""
+    record, dataset-schema or coverage-metric versions or mapping conditions differ. A run without a value (a
+    startup failure before recording began has no coverage block) holds no data of that version and mixes
+    nothing, except a null mapping condition of a record with a comparison key: that run mapped under the
+    condition before I10 (``BEFORE_MAPPING_CONDITION``)."""
     full = list(full)
     mixes = []
     for column in REFUSED_MIXES:
-        values = sorted({str(record[column]) for record in full if record[column] is not None})
+        found = (_mix_value(column, record) for record in full)
+        values = sorted({str(value) for value in found if value is not None})
         if len(values) > 1:
             mixes.append(f"Final runs mix {column} values {', '.join(values)}")
     return mixes
@@ -407,7 +425,7 @@ RECORD_COLUMNS = (
     "parameter_hash",
     "comparison_key",
 )
-RECORD_VALUES = ("dataset_schema", "coverage_metric_version", *HOMOGENEOUS)
+RECORD_VALUES = ("dataset_schema", "coverage_metric_version", "mapping_condition", *HOMOGENEOUS)
 SELECTORS = (
     "robot_id",
     "world_id",

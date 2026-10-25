@@ -81,7 +81,7 @@ def ensure_footprint(plant):
         )
     # Re-root the fixed ancestor chain, including vendors that put the footprint
     # below a body_link rather than directly below base_link. Physical relative
-    # transforms remain identical and the controller is the sole odom TF owner.
+    # transforms remain identical; known_pose_tf is the sole odom TF owner (I10).
     incoming = {j.find("child").get("link"): j for j in plant.findall("joint")}
     child = "base_footprint"
     ancestors = []
@@ -162,7 +162,8 @@ def prepare_wheeled(profile, scenario, directory, lookup, generated, bridge):
         drive.update(
             use_sim_time=True,
             base_frame_id="base_footprint",
-            enable_odom_tf=True,
+            # Known pose (I10): known_pose_tf owns odom->base_footprint.
+            enable_odom_tf=False,
             use_stamped_vel=True,
         )
         controller_file = directory / "controllers.yaml"
@@ -214,9 +215,10 @@ def prepare_rosbot(profile, directory, lookup, generated, bridge):
     )
     controls = yaml.safe_load(content)
     drive = controls["/**"][drive_name]["ros__parameters"]
-    drive.update(use_sim_time=True, enable_odom_tf=True, base_frame_id="base_footprint")
-    if profile.get("measurement_odom_topic"):
-        drive["enable_odom_tf"] = False
+    # Known pose (I10): known_pose_tf owns odom->base_footprint.
+    drive.update(
+        use_sim_time=True, enable_odom_tf=False, base_frame_id="base_footprint"
+    )
     controls["/**"]["controller_manager"]["ros__parameters"]["use_sim_time"] = True
     controller_file = directory / "controllers.yaml"
     controller_file.write_text(yaml.safe_dump(controls, sort_keys=False))
@@ -261,6 +263,7 @@ def prepare_rosbot(profile, directory, lookup, generated, bridge):
             base_link_frame="base_footprint",
             odom0=profile["measurement_odom_topic"],
             imu0="/imu",
+            publish_tf=False,
         )
         filename = directory / "ekf.yaml"
         filename.write_text(
@@ -295,7 +298,10 @@ def prepare_ugv(profile, directory, lookup, generated, bridge):
     )
     controls = yaml.safe_load(content)
     drive = controls["/**"]["drive_controller"]["ros__parameters"]
-    drive.update(use_sim_time=True, enable_odom_tf=True, base_frame_id="base_footprint")
+    # Known pose (I10): known_pose_tf owns odom->base_footprint.
+    drive.update(
+        use_sim_time=True, enable_odom_tf=False, base_frame_id="base_footprint"
+    )
     controls["/**"]["controller_manager"]["ros__parameters"]["use_sim_time"] = True
     controller_file = directory / "controllers.yaml"
     controller_file.write_text(yaml.safe_dump(controls, sort_keys=False))

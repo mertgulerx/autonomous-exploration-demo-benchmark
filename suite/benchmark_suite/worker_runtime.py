@@ -24,6 +24,7 @@ from typing import Any
 import uuid
 import zlib
 
+from exploration_benchmark_robots.known_pose import GROUND_TRUTH_RECORD_PERIOD_NS
 import psutil
 
 from .contracts import ContractError, average_speed
@@ -266,19 +267,27 @@ class WorkerRuntime:
         )
 
     def align_odometry(self, alignment: tuple[float, float, float]) -> None:
+        """Exact frames of the known-pose condition (I10) for odometry and ground truth.
+
+        ``alignment`` is world_from_map, the commanded spawn pose. map -> odom is the identity,
+        so world_from_odom is the same pose: the raw odometry topic is placed with its origin at
+        the commanded spawn. The model frame is base_footprint (known_pose.model_frame), so
+        model_to_base is exactly zero; the offset measured at readiness (TF base pose against
+        the Gazebo model pose, the value earlier conditions used) is recorded as a check.
+        """
         from rclpy.time import Time
 
-        transform = self.worker.buffer.lookup_transform("map", "odom", Time()).transform
-        q = transform.rotation
-        yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
         x, y, angle = alignment
-        c, s = math.cos(angle), math.sin(angle)
-        self.world_from_odom = (
-            x + c * transform.translation.x - s * transform.translation.y,
-            y + s * transform.translation.x + c * transform.translation.y,
-            angle + yaw,
+        self.world_from_odom = (x, y, angle)
+        self.model_to_base = (0.0, 0.0, 0.0)
+        alignment_record: dict[str, Any] = dict(
+            model_to_base=self.model_to_base,
+            source="known-pose condition: the Gazebo model frame is base_footprint",
+            simulation_ns=round(self.worker.clock_value * 1e9),
+            measured_model_to_base=None,
         )
         if self.ground_truth is not None:
+            c, s = math.cos(angle), math.sin(angle)
             transform = self.worker.buffer.lookup_transform(
                 "map", "base_footprint", Time()
             ).transform
@@ -291,16 +300,12 @@ class WorkerRuntime:
             p, q = self.ground_truth.pose.pose.position, self.ground_truth.pose.pose.orientation
             model_yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
             c, s = math.cos(model_yaw), math.sin(model_yaw)
-            self.model_to_base = (
+            alignment_record["measured_model_to_base"] = (
                 c * (base_x - p.x) + s * (base_y - p.y),
                 -s * (base_x - p.x) + c * (base_y - p.y),
-                base_yaw - model_yaw,
+                math.atan2(math.sin(base_yaw - model_yaw), math.cos(base_yaw - model_yaw)),
             )
-            self.worker.recorder.manifest["ground_truth_alignment"] = dict(
-                model_to_base=self.model_to_base,
-                source="stationary preparation TF and Gazebo model pose",
-                simulation_ns=round(self.worker.clock_value * 1e9),
-            )
+        self.worker.recorder.manifest["ground_truth_alignment"] = alignment_record
 
     def receive_ground_truth(self, message: Any) -> None:
         worker, recorder = self.worker, self.worker.recorder
@@ -361,6 +366,14 @@ class WorkerRuntime:
             if transform.child_frame_id.split("::")[-1] != self.worker.config["robot"]["model"]:
                 continue
             stamp = transform.header.stamp.sec * 10**9 + transform.header.stamp.nanosec
+            # The publisher runs at 100 Hz for the known-pose TF; the stream keeps the first pose
+            # of every 50 ms simulation bucket (20 Hz, as before) and its velocity differences.
+            if (
+                self.ground_truth_previous
+                and stamp // GROUND_TRUTH_RECORD_PERIOD_NS
+                == self.ground_truth_previous[0] // GROUND_TRUTH_RECORD_PERIOD_NS
+            ):
+                continue
             p, q = transform.transform.translation, transform.transform.rotation
             yaw = math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z))
             observation = Odometry()
@@ -642,7 +655,15 @@ class WorkerRuntime:
                     scope = "gazebo_including_embedded_drive"
                 elif "/lib/nav2_" in command or "opennav_" in command:
                     scope = "navigation"
-                elif "slam_toolbox" in command or "robot_localization" in command:
+                elif any(
+                    name in command
+                    for name in (
+                        "slam_toolbox",
+                        "robot_localization",
+                        "known_pose_tf",
+                        "mapping_scan_filter",
+                    )
+                ):
                     scope = "mapping_and_estimation"
                 elif "controller_manager" in command or "rosbot_controller" in command:
                     scope = "locomotion"

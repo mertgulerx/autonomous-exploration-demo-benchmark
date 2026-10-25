@@ -40,6 +40,8 @@ setup(
     entry_points={
         "console_scripts": [
             "command_bridge = exploration_benchmark_robots.command_bridge:main",
+            "known_pose_tf = exploration_benchmark_robots.known_pose:main",
+            "mapping_scan_filter = exploration_benchmark_robots.mapping_scan:main",
             "robot_dependencies = exploration_benchmark_robots.dependencies:main",
             "robot_geometry = exploration_benchmark_robots.geometry:main",
         ]

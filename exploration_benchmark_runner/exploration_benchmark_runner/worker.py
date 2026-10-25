@@ -78,6 +78,11 @@ from exploration_benchmark_robots.adapters import (
     MOVING_OBJECTS_TOPIC,
     prepare as prepare_robot,
 )
+from exploration_benchmark_robots.known_pose import (
+    GROUND_TRUTH_TOPIC,
+    MAPPING_STATUS_TOPIC,
+    odom_origin,
+)
 
 # RunMetrics fields that are None when unmeasured (measurements.py, coverage.py).
 NULLABLE_METRICS = frozenset(
@@ -95,6 +100,23 @@ LATCHED = QoSProfile(
     reliability=ReliabilityPolicy.RELIABLE,
     durability=DurabilityPolicy.TRANSIENT_LOCAL,
 )
+# Two latched publishers (known_pose_tf, mapping_scan_filter) share the status topic.
+MAPPING_STATUS_QOS = QoSProfile(
+    depth=10,
+    reliability=ReliabilityPolicy.RELIABLE,
+    durability=DurabilityPolicy.TRANSIENT_LOCAL,
+)
+# Integer status fields per mapping node; a status without them is ignored.
+MAPPING_STATUS_COUNTS = {
+    "known_pose_tf": ("published", "foreign"),
+    "mapping_scan_filter": ("scans", "rejected_scans"),
+}
+# Executables of the known-pose condition (I10) the runtime image must provide.
+MAPPING_EXECUTABLES = ("known_pose_tf", "mapping_scan_filter")
+# Manual runner: the 100 Hz /tf (known-pose TF) is forwarded to the observer domain at
+# most every 50 ms of simulation time, and at once when a new frame appears (the
+# period less 1 µs, so float clock steps keep 20 Hz).
+TF_FORWARD_PERIOD_S = 0.05 - 1e-6
 NAV_NODES = (
     "controller_server",
     "planner_server",
@@ -112,6 +134,26 @@ NAV_ACTIVATION_TIMEOUT_SECONDS = 60.0
 # Frontier insight node (suite runs): its output topic and the attempt log it writes.
 INSIGHT_TOPIC = "/benchmark/frontier_insight"
 INSIGHT_LOG = "insight.log"
+
+
+def require_mapping_executables():
+    """Refuse a runtime image older than I10 (no known-pose nodes)."""
+    from ament_index_python.packages import PackageNotFoundError, get_package_prefix
+
+    try:
+        prefix = FilePath(get_package_prefix("exploration_benchmark_robots"))
+    except PackageNotFoundError as exc:
+        raise RuntimeError("exploration_benchmark_robots is not installed") from exc
+    missing = [
+        name
+        for name in MAPPING_EXECUTABLES
+        if not (prefix / "lib/exploration_benchmark_robots" / name).is_file()
+    ]
+    if missing:
+        raise RuntimeError(
+            "runtime image older than I10 (known-pose mapping): rebuild the runtime "
+            f"image, then the suite image (missing {', '.join(missing)} in {prefix})"
+        )
 
 
 class Worker:
@@ -148,6 +190,7 @@ class Worker:
         self.motion_recorded = False
         self.recorder = None
         self.cache, self.tf_cache = {}, {"tf": {}, "tf_static": {}}
+        self.tf_forwarded = None
         self.marker_cache = {}
         self.streams, self.active_states, self.state_futures = {}, {}, {}
         self.nav_state_received = {}
@@ -219,10 +262,14 @@ class Worker:
                 NavigateToPose.Impl.FeedbackMessage, "/navigate_to_pose/_action/feedback",
                 self.runtime.feedback, qos_profile_sensor_data
             )
-            self.worker.create_subscription(
-                TFMessage, "/benchmark/ground_truth/pose", self.runtime.receive_ground_truth_pose,
-                qos_profile_sensor_data
-            )
+            if config.get("suite_diagnostics", True):
+                # Every run publishes the pose (known-pose TF); diagnostics record it.
+                self.worker.create_subscription(
+                    TFMessage,
+                    GROUND_TRUTH_TOPIC,
+                    self.runtime.receive_ground_truth_pose,
+                    qos_profile_sensor_data,
+                )
             try:
                 from exploration_benchmark_insight.msg import FrontierInsight
             except ImportError:
@@ -246,6 +293,19 @@ class Worker:
                     qos_profile_sensor_data,
                 )
             )
+        # Known-pose mapping condition (I10): known_pose_tf and mapping_scan_filter
+        # report on one latched topic; readiness needs both. A second publisher of
+        # base_footprint's parent (TF conflict) or a withheld mapping scan fails
+        # readiness, or after it the run (mapping_failure).
+        self.mapping_status = {}
+        self.subscriptions.append(
+            self.worker.create_subscription(
+                String,
+                MAPPING_STATUS_TOPIC,
+                self.receive_mapping_status,
+                MAPPING_STATUS_QOS,
+            )
+        )
         self.worker_executor = SingleThreadedExecutor(context=self.worker_context)
         self.worker_executor.add_node(self.worker)
         self.buffer = Buffer(node=self.worker)
@@ -470,6 +530,7 @@ class Worker:
         from ament_index_python.packages import get_package_share_directory
 
         robot = self.config["robot"]
+        require_mapping_executables()
         generated, robot_file = prepare_robot(robot, scenario, directory)
         if self.campaign and self.config.get("suite_diagnostics", True):
             from benchmark_suite.instrumentation import prepare as instrument
@@ -560,11 +621,25 @@ class Worker:
             if self.campaign and channel in ("scan", "imu", "tf", "tf_static", "robot_description"):
                 return
             if channel in ("tf", "tf_static"):
+                frames = self.tf_cache[channel]
+                appeared = False
                 for transform in message.transforms:
-                    self.tf_cache[channel][transform.child_frame_id] = deepcopy(
-                        transform
-                    )
-                message = TFMessage(transforms=list(self.tf_cache[channel].values()))
+                    appeared |= transform.child_frame_id not in frames
+                    frames[transform.child_frame_id] = deepcopy(transform)
+                if channel == "tf":
+                    # The cache always holds the newest transforms (republished on pause
+                    # and stop); only the forward to the observer domain is throttled.
+                    self.cache[channel] = TFMessage(transforms=list(frames.values()))
+                    if (
+                        not appeared
+                        and self.tf_forwarded is not None
+                        and 0
+                        <= self.clock_value - self.tf_forwarded
+                        < TF_FORWARD_PERIOD_S
+                    ):
+                        return
+                    self.tf_forwarded = self.clock_value
+                message = TFMessage(transforms=list(frames.values()))
             if channel == "frontiers":
                 for marker in message.markers:
                     key = (marker.ns, marker.id)
@@ -663,6 +738,62 @@ class Worker:
             self.terminal.put(
                 ("runtime_failure", "Native simulated emergency stop engaged", -1)
             )
+
+    def receive_mapping_status(self, message):
+        try:
+            status = json.loads(message.data)
+        except ValueError:
+            return
+        if not isinstance(status, dict):
+            return
+        counts = MAPPING_STATUS_COUNTS.get(status.get("node"))
+        if (
+            counts is None
+            or not isinstance(status.get("ok"), bool)
+            or not all(
+                isinstance(status.get(name), int)
+                and not isinstance(status.get(name), bool)
+                for name in counts
+            )
+        ):
+            return
+        with self.lock:
+            self.mapping_status[status["node"]] = status
+
+    def check_mapping_condition(self):
+        """Readiness items of the known-pose condition (empty when satisfied)."""
+        with self.lock:
+            pose = self.mapping_status.get("known_pose_tf")
+            scan = self.mapping_status.get("mapping_scan_filter")
+        missing = []
+        if pose and pose["foreign"] > 0:
+            missing.append("TF conflict (second publisher of base_footprint's parent)")
+        elif not pose or not pose["ok"]:
+            missing.append("known-pose TF")
+        if not scan or not scan["ok"]:
+            missing.append("mapping scan")
+        return missing
+
+    def mapping_failure(self):
+        """Why the known-pose condition no longer holds after readiness, or None.
+
+        A second base_footprint parent publisher (TF conflict) or a withheld mapping
+        scan ends a READY run as startup_failure and a RUNNING run as runtime_failure.
+        """
+        with self.lock:
+            pose = self.mapping_status.get("known_pose_tf") or {}
+            scan = self.mapping_status.get("mapping_scan_filter") or {}
+        if pose.get("foreign", 0) > 0:
+            return (
+                "TF conflict: a second publisher of base_footprint's parent; "
+                "see robot.log"
+            )
+        if scan.get("rejected_scans", 0) > 0:
+            return (
+                "Mapping scan withheld: scan range_max inconsistent with "
+                "max_laser_range; see robot.log"
+            )
+        return None
 
     def initialize_robot(self, wall):
         """Release a native simulation latch once; retain its runtime mechanism."""
@@ -764,6 +895,15 @@ class Worker:
             self.runtime.odometry(message, wall)
 
     def prepare_coverage(self):
+        """Place the SLAM map frame in the world (coverage, Monitor, odometry).
+
+        Known pose (I10): map -> odom is the identity and odom is base_footprint at
+        the commanded spawn pose, so world_from_map is exactly that pose
+        (known_pose.odom_origin, the value known_pose_tf uses). The anchor of earlier
+        conditions, spawn composed with (map -> base_footprint)^-1 at readiness, is
+        recorded as a check: it differs from the exact value by the robot's settling
+        offset between the spawn command and rest.
+        """
         transform = self.buffer.lookup_transform(
             "map", "base_footprint", Time()
         ).transform
@@ -772,19 +912,39 @@ class Worker:
             2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z)
         )
         spawn = self.config["scenario"]["spawn"]
+        x, y = transform.translation.x, transform.translation.y
         yaw = spawn[3] - map_yaw
         c, s = math.cos(yaw), math.sin(yaw)
-        x, y = transform.translation.x, transform.translation.y
-        alignment = (spawn[0] - c * x + s * y, spawn[1] - s * x - c * y, yaw)
+        estimate = (spawn[0] - c * x + s * y, spawn[1] - s * x - c * y, yaw)
+        odom = self.buffer.lookup_transform("map", "odom", Time()).transform
+        q = odom.rotation
+        map_odom = [
+            odom.translation.x,
+            odom.translation.y,
+            math.atan2(2 * (q.w * q.z + q.x * q.y), 1 - 2 * (q.y * q.y + q.z * q.z)),
+        ]
+        alignment = odom_origin(spawn)
         self.coverage = Coverage(Calculator(self.coverage_reference, alignment))
         if self.runtime:
             self.runtime.align_odometry(alignment)
         self.recorder.manifest["coverage"]["alignment"] = dict(
             world_from_map=list(alignment),
-            anchor="stationary_spawn_and_map_to_base_tf",
+            anchor="known_pose_spawn",
             simulation=self.clock_value,
             map_base_pose=[x, y, map_yaw],
+            map_odom_pose=map_odom,
             spawn=spawn,
+            check=dict(
+                anchor="stationary_spawn_and_map_to_base_tf",
+                world_from_map=list(estimate),
+                offset_m=math.hypot(
+                    estimate[0] - alignment[0], estimate[1] - alignment[1]
+                ),
+                offset_yaw_rad=math.atan2(
+                    math.sin(estimate[2] - alignment[2]),
+                    math.cos(estimate[2] - alignment[2]),
+                ),
+            ),
         )
         self.recorder.flush()
 
@@ -867,6 +1027,7 @@ class Worker:
         movers = self.check_moving_objects()
         if movers:
             missing.append(movers)
+        missing.extend(self.check_mapping_condition())
         missing.extend(
             name
             for name in self.native_controller_names
@@ -1314,6 +1475,8 @@ class Worker:
         self.close_source()
         if recorder:
             recorder.manifest["robot_diagnostics"] = self.robot_diagnostics
+            with self.lock:
+                recorder.manifest["mapping_status"] = deepcopy(self.mapping_status)
             if self.campaign and "insight" in recorder.manifest:
                 recorder.manifest["insight"].update(self.runtime.insight_manifest())
             snapshot = self.measurements.latest if self.measurements else {}
@@ -1468,6 +1631,13 @@ class Worker:
                     "startup_failure" if self.phase != "RUNNING" else "runtime_failure",
                     "Simulation launch exited",
                 )
+        if self.phase in ("READY", "RUNNING"):
+            failure = self.mapping_failure()
+            if failure:
+                outcome = (
+                    "startup_failure" if self.phase == "READY" else "runtime_failure"
+                )
+                self.terminal.put((outcome, failure, -1))
         if self.phase == "RUNNING":
             self.coverage_tick(wall)
             self.check_native_controllers(wall)

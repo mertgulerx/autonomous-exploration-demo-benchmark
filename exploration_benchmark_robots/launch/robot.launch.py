@@ -106,6 +106,20 @@ def spawn(context):
                 remappings=[("scan", "/robot/scan/raw"), ("scan_filtered", "/scan")],
             )
         )
+    # Known-pose mapping (mapping-known-pose-v1): ground-truth odom->base_footprint
+    # and the mapping-only scan for SLAM Toolbox (after the body filter's /scan).
+    for executable, key in (
+        ("known_pose_tf", "known_pose"),
+        ("mapping_scan_filter", "mapping_scan"),
+    ):
+        actions.append(
+            Node(
+                package="exploration_benchmark_robots",
+                executable=executable,
+                parameters=[config[key]["parameters"]],
+                output="screen",
+            )
+        )
     if profile["adapter"] not in ("mogi", "turtlebot3"):
         from exploration_benchmark_robots.wheeled import wheeled_actions
 

@@ -293,7 +293,7 @@ class Engine:
                         "terminal_ns=?,cleanup_ns=? WHERE id=?",
                         (time.time_ns(), time.time_ns(), attempt["id"]),
                     )
-                    # Its files are incomplete: a stub record (MEASUREMENTS, run-record-v1).
+                    # Its files are incomplete: a stub record (MEASUREMENTS, run-record-v2).
                     self.run_records.stub(self.store.attempt(attempt["id"]), None)
                     self.store.db.execute(
                         "UPDATE experiments SET state='NOT_DONE',held=0 WHERE id=?",
