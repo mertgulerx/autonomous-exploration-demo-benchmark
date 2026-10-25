@@ -81,6 +81,9 @@ from exploration_benchmark_robots.adapters import (
 from exploration_benchmark_robots.known_pose import (
     GROUND_TRUTH_TOPIC,
     MAPPING_STATUS_TOPIC,
+    SLAM_TOOLBOX_PATCH,
+    SLAM_TOOLBOX_PATCH_MARKER,
+    SLAM_TOOLBOX_PATCH_SHA256,
     odom_origin,
 )
 
@@ -153,6 +156,19 @@ def require_mapping_executables():
         raise RuntimeError(
             "runtime image older than I10 (known-pose mapping): rebuild the runtime "
             f"image, then the suite image (missing {', '.join(missing)} in {prefix})"
+        )
+    # mapping-known-pose-v4: the SLAM Toolbox that launches must be the patched build.
+    try:
+        slam_prefix = FilePath(get_package_prefix("slam_toolbox"))
+    except PackageNotFoundError as exc:
+        raise RuntimeError("slam_toolbox is not installed") from exc
+    marker = slam_prefix / SLAM_TOOLBOX_PATCH_MARKER
+    found = marker.read_text().strip() if marker.is_file() else None
+    if found != SLAM_TOOLBOX_PATCH_SHA256:
+        raise RuntimeError(
+            f"SLAM Toolbox in {slam_prefix} is not the build with {SLAM_TOOLBOX_PATCH} "
+            "(mapping-known-pose-v4): rebuild the runtime image, then the suite image "
+            f"(marker {'missing' if found is None else 'differs'})"
         )
 
 

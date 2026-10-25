@@ -81,8 +81,15 @@ RUN /bin/bash -lc "source /opt/ros/${ROS_DISTRO}/setup.bash && \
     rosdep install --from-paths exploration_packages simulation rviz exploration_benchmark_interfaces exploration_benchmark_robots exploration_benchmark_runner --ignore-src -r -y && \
     rm -rf /var/lib/apt/lists/*"
 
+# SLAM Toolbox 2.8.5 with the grid-extent patch, built in the workspace so it overlays the apt package.
+RUN bash docker/fetch_slam_toolbox.sh ${WORKSPACE_DIR}/vendor_src
+
 RUN /bin/bash -lc "source /opt/ros/${ROS_DISTRO}/setup.bash && \
     CMAKE_BUILD_PARALLEL_LEVEL=2 colcon build --symlink-install --executor sequential --cmake-args -DBUILD_TESTING=OFF"
+# Mark the patched SLAM Toolbox build with its patch hash; the worker refuses any other build
+# (mapping-known-pose-v3, plans/worlds/I10).
+RUN sha256sum docker/patches/slam_toolbox-2.8.5-grid-extent.patch | cut -d' ' -f1 \
+    > install/slam_toolbox/share/slam_toolbox/benchmark_grid_extent.sha256
 
 # E0 moving-object system (world_collection/plugins/moving_objects, plain CMake; COLCON_IGNORE keeps it out of
 # the colcon build). No build type: the project's fixed flags alone, as in its agreement test. Workers launch

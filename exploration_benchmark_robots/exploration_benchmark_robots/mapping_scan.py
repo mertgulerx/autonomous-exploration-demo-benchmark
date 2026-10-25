@@ -18,9 +18,10 @@ Every reading at or above the message's ``range_max`` (no-return beams arrive as
 +inf) becomes ``V = range_max - FILL_OFFSET_M``; NaN stays NaN and every other
 reading, -inf included, is unchanged. SLAM Toolbox's ``max_laser_range`` is
 ``range_max - THRESHOLD_MARGIN_M``, below V, so Karto traces such a beam as free
-space up to ``max_laser_range`` and marks no obstacle (V >= threshold, V <
-range_max). A real return in [threshold, range_max) is traced the same way
-(free, no obstacle) and is counted. Nav2, the explorer and the recorder keep the
+space and marks no obstacle (V >= threshold, V < range_max); the patched SLAM
+Toolbox limits that free ray to known_pose.NO_RETURN_FREE_LENGTH_M (5 m,
+mapping-known-pose-v4). A real return in [threshold, range_max) is traced the
+same way (free, no obstacle) and is counted. Nav2, the explorer and the recorder keep the
 real /scan.
 
 A message whose ``range_max`` does not sit exactly ``THRESHOLD_MARGIN_M`` above

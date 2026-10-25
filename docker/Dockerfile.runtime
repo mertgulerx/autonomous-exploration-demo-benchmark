@@ -57,15 +57,24 @@ COPY simulation/Week-7-8-ROS2-Navigation/bme_ros2_navigation/package.xml /opt/be
 COPY simulation/Week-7-8-ROS2-Navigation/bme_ros2_navigation_py/setup.py simulation/Week-7-8-ROS2-Navigation/bme_ros2_navigation_py/package.xml /opt/benchmark_ws/simulation/Week-7-8-ROS2-Navigation/bme_ros2_navigation_py/
 COPY simulation/Week-7-8-ROS2-Navigation/bme_ros2_navigation/launch /opt/benchmark_ws/simulation/Week-7-8-ROS2-Navigation/bme_ros2_navigation/launch
 COPY simulation/Week-7-8-ROS2-Navigation/bme_ros2_navigation/rviz /opt/benchmark_ws/simulation/Week-7-8-ROS2-Navigation/bme_ros2_navigation/rviz
+# Registry worlds kept under simulation/worlds that bases built before them lack (the FIT-SLAM corridor).
+COPY simulation/worlds/fitslam_corridor /opt/benchmark_ws/simulation/worlds/fitslam_corridor
 COPY launch.sh docker.sh /opt/benchmark_ws/
 COPY docker/entrypoint.sh /opt/benchmark_ws/docker/entrypoint.sh
-COPY docker/Dockerfile docker/Dockerfile.runtime docker/build_robot_dependencies.sh /opt/benchmark_ws/docker/
+COPY docker/Dockerfile docker/Dockerfile.runtime docker/build_robot_dependencies.sh docker/fetch_slam_toolbox.sh /opt/benchmark_ws/docker/
+COPY docker/patches /opt/benchmark_ws/docker/patches
+# SLAM Toolbox 2.8.5 with the grid-extent patch (Dockerfile has the same step).
+RUN bash /opt/benchmark_ws/docker/fetch_slam_toolbox.sh /opt/benchmark_ws/vendor_src
 COPY README.md /opt/benchmark_ws/README.md
 RUN /bin/bash -c "source /opt/ros/jazzy/setup.bash && source install/setup.bash && \
     CMAKE_BUILD_PARALLEL_LEVEL=2 \
     colcon build --symlink-install --executor sequential \
-    --packages-select exploration_benchmark_interfaces frontier_exploration_ros2 bme_ros2_navigation bme_ros2_navigation_py exploration_benchmark_robots exploration_benchmark_runner rviz_autonomous_exploration_benchmark \
+    --packages-select exploration_benchmark_interfaces frontier_exploration_ros2 bme_ros2_navigation bme_ros2_navigation_py exploration_benchmark_robots exploration_benchmark_runner rviz_autonomous_exploration_benchmark slam_toolbox \
     --cmake-args -DBUILD_TESTING=OFF"
+# Mark the patched SLAM Toolbox build with its patch hash; the worker refuses any other build
+# (mapping-known-pose-v3, plans/worlds/I10).
+RUN cd /opt/benchmark_ws && sha256sum docker/patches/slam_toolbox-2.8.5-grid-extent.patch | cut -d' ' -f1 \
+    > install/slam_toolbox/share/slam_toolbox/benchmark_grid_extent.sha256
 # Rebuild the E0 moving-object system from the current sources (Dockerfile has the same step; the variable
 # is repeated for bases built before it).
 RUN rm -rf /opt/benchmark_ws/world_collection/plugins/moving_objects /opt/benchmark-moving-objects

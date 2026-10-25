@@ -1,0 +1,72 @@
+--- a/lib/karto_sdk/include/karto_sdk/Karto.h
++++ b/lib/karto_sdk/include/karto_sdk/Karto.h
+@@ -5403,6 +5403,15 @@
+ ////////////////////////////////////////////////////////////////////////////////////////
+ 
+ /**
++ * Benchmark no-return patch: a reading in [range threshold, maximum range) has no usable
++ * endpoint (the benchmark fills a no-return beam just below the maximum range). AddScan traces
++ * such a reading as free space for at most this length, Cartographer's default
++ * missing_data_ray_length, because a real lidar also returns nothing from glass, mirrors and
++ * dark or grazed surfaces. Real hits keep the full range threshold.
++ */
++const kt_double kBenchmarkNoReturnFreeLength = 5.0;
++
++/**
+  * The LocalizedRangeScan contains range data from a single sweep of a laser range finder sensor
+  * in a two-dimensional space and position information. The odometer position is the position
+  * reported by the robot when the range data was recorded. The corrected position is the position
+@@ -5650,9 +5659,17 @@
+       m_UnfilteredPointReadings.clear();
+ 
+       kt_double rangeThreshold = pLaserRangeFinder->GetRangeThreshold();
++      kt_double maximumRange = pLaserRangeFinder->GetMaximumRange();
+       kt_double minimumAngle = pLaserRangeFinder->GetMinimumAngle();
+       kt_double angularResolution = pLaserRangeFinder->GetAngularResolution();
+       Pose2 scanPose = GetSensorPose();
++      // Benchmark grid-extent patch: a reading in [range threshold, maximum range) is traced
++      // as free space for min(range threshold, kBenchmarkNoReturnFreeLength) (AddScan). The
++      // grid must hold that free ray and, as unknown cells, one range threshold beyond its
++      // end (what a next scan from there could see), so the open edge stays a free/unknown
++      // boundary. Only the grid's extent changes here.
++      kt_double freeRayLength = std::min(rangeThreshold, kBenchmarkNoReturnFreeLength);
++      PointVectorDouble freeRayExtents;
+ 
+       // compute point readings
+       Vector2<kt_double> rangePointsSum;
+@@ -5667,6 +5684,13 @@
+           point.SetY(scanPose.GetY() + (rangeReading * sin(angle)));
+ 
+           m_UnfilteredPointReadings.push_back(point);
++          if (rangeReading >= rangeThreshold && rangeReading < maximumRange) {
++            kt_double extentLength = freeRayLength + rangeThreshold;
++            Vector2<kt_double> extent;
++            extent.SetX(scanPose.GetX() + (extentLength * cos(angle)));
++            extent.SetY(scanPose.GetY() + (extentLength * sin(angle)));
++            freeRayExtents.push_back(extent);
++          }
+           continue;
+         }
+ 
+@@ -5698,6 +5722,11 @@
+       {
+         m_BoundingBox.Add(*iter);
+       }
++      // Benchmark grid-extent patch (see freeRayExtents above).
++      forEach(PointVectorDouble, &freeRayExtents)
++      {
++        m_BoundingBox.Add(*iter);
++      }
+     }
+ 
+     m_IsDirty = false;
+@@ -6172,7 +6201,8 @@
+         continue;
+       } else if (rangeReading >= rangeThreshold) {
+         // trace up to range reading
+-        kt_double ratio = rangeThreshold / rangeReading;
++        // Benchmark no-return patch: free space for at most kBenchmarkNoReturnFreeLength.
++        kt_double ratio = std::min(rangeThreshold, kBenchmarkNoReturnFreeLength) / rangeReading;
+         kt_double dx = point.GetX() - scanPosition.GetX();
+         kt_double dy = point.GetY() - scanPosition.GetY();
+         point.SetX(scanPosition.GetX() + ratio * dx);

@@ -1,0 +1,95 @@
+{
+  "id": "fitslam_corridor_coverage_v2",
+  "metric_version": 2,
+  "target_margin_m": 0.1,
+  "world": "fitslam_corridor",
+  "spawn": [
+    0.0,
+    0.0,
+    0.11,
+    0.0
+  ],
+  "resolution": 0.05,
+  "origin": [
+    -3.0,
+    -30.5,
+    0.0
+  ],
+  "width": 2630,
+  "height": 2030,
+  "target_cells": 1228126,
+  "target_area_m2": 3070.3150000000005,
+  "grid_file": "fitslam_corridor.npz",
+  "grid_sha256": "03c9a6aa91ad3027cc85d48239fdaf501b358a4a69e1cd9b0118ce5a89779cc1",
+  "source_sha256": {
+    "simulation/worlds/fitslam_corridor/fitslam_corridor.world": "fa52a6d58faf20b7f23612b61bf24ad61ebf9368ed56130901544ea2c8633cf0",
+    "exploration_benchmark_runner/config/coverage/fitslam_corridor_scenario.yaml": "85e68e9c5fb3b6b8ac57c0fb820f7ab4aa1c1d8967dd7b153108b3f67b4bfb76",
+    "simulation/Week-7-8-ROS2-Navigation/bme_ros2_navigation/urdf/mogi_bot.urdf": "11b3a0684efb4f44bd12719f36ed6732b6dbf1d4570ea14580f4e81ba8af263a",
+    "simulation/worlds/fitslam_corridor/models/indoor/model.config": "ff7d33391b61edc9c750362bb56c6f7a333293dcf12cd9391be6217f509e300e",
+    "simulation/worlds/fitslam_corridor/models/indoor/model.sdf": "3bc3d2e8d39bf5ccdb00e501f413ffd52d0ec2533221a8927d70cbbf56e5322e",
+    "simulation/worlds/fitslam_corridor/models/indoor/meshes/indoor.dae": "a20425d0217315da769fde9d3beb1c17707163c5155effd814b94ce6c360a651"
+  },
+  "generation": {
+    "body_height_slab": [
+      0.03,
+      0.35
+    ],
+    "settings": {
+      "bounds": [
+        -3.0,
+        -30.5,
+        128.5,
+        71.0
+      ],
+      "inclusion_polygons": [
+        [
+          [
+            -3.0,
+            -30.5
+          ],
+          [
+            128.5,
+            -30.5
+          ],
+          [
+            128.5,
+            71.0
+          ],
+          [
+            -3.0,
+            71.0
+          ]
+        ]
+      ],
+      "exclusion_polygons": [],
+      "review": "FIT-SLAM 2 corridor world (gz-sim-environment indoor.sdf): free floor connected to the spawn of the FIT-SLAM simulator (0, 0)"
+    },
+    "connectivity": "4-connected free floor from spawn; not a footprint planner",
+    "unreachable_free_cells": 3898686,
+    "collision_records": [
+      {
+        "model": "indoor",
+        "collision": "collision",
+        "bounds": [
+          [
+            -2.0520310401916504,
+            -29.17371940612793,
+            -0.1058432012796402
+          ],
+          [
+            127.63189697265625,
+            70.11000061035156,
+            3.794157028198242
+          ]
+        ]
+      }
+    ],
+    "generator_sha256": "e00d7942d0dbbf5fb3f5c9df5bcdc2a5fe4d0d6db9cfe74a9677e0948c8edd75",
+    "tool_versions": {
+      "numpy": "2.4.4",
+      "scipy": "1.17.1",
+      "shapely": "2.1.2",
+      "trimesh": "4.12.2"
+    }
+  }
+}

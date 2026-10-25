@@ -35,7 +35,22 @@ import xml.etree.ElementTree as ET
 # Condition-defining constants of MAPPING_CONDITION (with mapping_scan.FILL_OFFSET_M
 # and THRESHOLD_MARGIN_M): changing one of them requires a new MAPPING_CONDITION id.
 # Recorded per run in robot_configuration.comparison_profile.mapping_parameters.
-MAPPING_CONDITION = "mapping-known-pose-v1"
+# v1: stock SLAM Toolbox 2.8.5; v2: a Cartographer trial, reverted (tuning runs
+# only); v3: SLAM Toolbox 2.8.5 with the grid-extent patch, no-return beams free to
+# the range threshold (tuning runs only); v4: the same patch with no-return beams
+# free for NO_RETURN_FREE_LENGTH_M only (docker/patches, plan I10 §8).
+MAPPING_CONDITION = "mapping-known-pose-v4"
+# Free length of a no-return beam (Cartographer's default missing_data_ray_length): a
+# real lidar also returns nothing from glass, mirrors and dark or grazed surfaces.
+# Compiled into the patch as kBenchmarkNoReturnFreeLength; keep the two equal.
+NO_RETURN_FREE_LENGTH_M = 5.0
+SLAM_TOOLBOX_VERSION = "2.8.5"
+SLAM_TOOLBOX_PATCH = "slam_toolbox-2.8.5-grid-extent.patch"
+SLAM_TOOLBOX_PATCH_SHA256 = (
+    "381910851b8d625e982b870937318e489282f8463b7db93fc42b83a4940c6b8b"
+)
+# Written next to the patched build's share files by the Dockerfiles.
+SLAM_TOOLBOX_PATCH_MARKER = "share/slam_toolbox/benchmark_grid_extent.sha256"
 # 100 Hz: an exact 5:1 multiple of the recorded 20 Hz ground_truth stream on both
 # physics steps in use (0.01 s and 0.001 s); 50 Hz would not decimate to 20 Hz.
 GROUND_TRUTH_RATE_HZ = 100

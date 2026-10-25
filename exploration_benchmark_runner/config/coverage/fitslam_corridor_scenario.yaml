@@ -1,0 +1,12 @@
+# Coverage settings of fitslam_corridor (the FIT-SLAM 2 corridor world, CMU "indoor" mesh); hashed into
+# fitslam_corridor_v2.json. Bounds: the mesh's point-cloud extent (x -1.9..127.5, y -29.2..70.0) plus margin;
+# the inclusion is the 4-connected free floor reachable from the spawn inside them.
+resolution: 0.05
+body_height_slab: [0.03, 0.35]
+scenarios:
+  fitslam_corridor:
+    bounds: [-3.0, -30.5, 128.5, 71.0]
+    inclusion_polygons:
+    - [[-3.0, -30.5], [128.5, -30.5], [128.5, 71.0], [-3.0, 71.0]]
+    exclusion_polygons: []
+    review: 'FIT-SLAM 2 corridor world (gz-sim-environment indoor.sdf): free floor connected to the spawn of the FIT-SLAM simulator (0, 0)'

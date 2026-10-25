@@ -28,6 +28,9 @@ from .known_pose import (
     GROUND_TRUTH_RATE_HZ,
     GROUND_TRUTH_RECORD_PERIOD_NS,
     MAPPING_CONDITION,
+    NO_RETURN_FREE_LENGTH_M,
+    SLAM_TOOLBOX_PATCH_SHA256,
+    SLAM_TOOLBOX_VERSION,
     add_ground_truth_publisher,
     ground_truth_bridge,
     model_frame,
@@ -409,6 +412,9 @@ def mapping_parameters():
         threshold_margin_m=THRESHOLD_MARGIN_M,
         ground_truth_rate_hz=GROUND_TRUTH_RATE_HZ,
         ground_truth_record_period_ns=GROUND_TRUTH_RECORD_PERIOD_NS,
+        no_return_free_length_m=NO_RETURN_FREE_LENGTH_M,
+        slam_toolbox_version=SLAM_TOOLBOX_VERSION,
+        slam_toolbox_patch_sha256=SLAM_TOOLBOX_PATCH_SHA256,
     )
 
 

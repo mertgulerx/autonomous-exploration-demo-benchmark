@@ -38,6 +38,33 @@ worlds:
     descriptors:
       file: exploration_benchmark_runner/config/coverage/bookstore_descriptors.json
       sha256: 8954682c64265928ebe2105391cdbb9855cc0e28cb589e8dca808b77d69387a1
+  fitslam_corridor:
+    label: FIT-SLAM corridor
+    tier: A
+    family: null
+    role: evaluation
+    world_file: simulation/worlds/fitslam_corridor/fitslam_corridor.world
+    source: null
+    # The corridor world of FIT-SLAM 2 (Saravanan et al., RAS 2025): gz-sim-environment indoor.sdf (CMU mesh).
+    scenario:
+      file: exploration_benchmark_runner/config/coverage/fitslam_corridor_scenario.yaml
+      key: fitslam_corridor
+    reference:
+      metric_version: 2
+      id: fitslam_corridor_coverage_v2
+      metadata_sha256: 759fac80e688e3355239e7ca2c73757d812efb0488d19421cfa99ab3bd1bc73b
+    # The spawn of FIT-SLAM's simulator for this world (spawn_robot.launch.py robot_coordinates[0], "# corridor":
+    # x 0.0, y 0.0; no yaw given, so 0).
+    default_spawn: {id: default-fitslam_corridor, name: Default, x: 0.0, y: 0.0, z: 0.11, yaw: 0.0}
+    spawns: []
+    robots:
+      mogi: {}
+    fuel_models: []
+    resource_paths: []
+    moving_objects: null
+    descriptors:
+      file: exploration_benchmark_runner/config/coverage/fitslam_corridor_descriptors.json
+      sha256: 97f272166a837ea834ad7da672637e6d57832f741d642b7ae5b2bf9d801d31d4
   corridor:
     label: Corridor
     tier: A
