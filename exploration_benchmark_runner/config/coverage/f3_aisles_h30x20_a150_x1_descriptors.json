@@ -42,20 +42,58 @@
  "junctions": 14,
  "regions": 1,
  "robots": {
-  "mogi": {
-   "radius_m": 0.29,
-   "r_eff_m": 10.0,
+  "tb3_waffle_pi": {
+   "radius_m": 0.2561,
+   "r_eff_m": 8.0,
    "visible_area_m2": {
-    "mean": 48.29,
+    "mean": 40.86,
     "n": 400,
-    "mc_se": 0.78
+    "mc_se": 0.64
    },
-   "visible_fraction": 0.1223,
-   "area_over_pi_r2": 1.2567,
+   "visible_fraction": 0.1035,
+   "area_over_pi_r2": 1.9636,
    "spawn_visible_fraction": {
-    "S1": 0.0739
+    "S1": 0.0645
+   }
+  },
+  "tb4_standard": {
+   "radius_m": 0.2537,
+   "r_eff_m": 12.0,
+   "visible_area_m2": {
+    "mean": 55.8,
+    "n": 400,
+    "mc_se": 0.94
+   },
+   "visible_fraction": 0.1413,
+   "area_over_pi_r2": 0.8727,
+   "spawn_visible_fraction": {
+    "S1": 0.0816
+   }
+  },
+  "rosbot_pro": {
+   "radius_m": 0.1577,
+   "r_eff_m": 30.0,
+   "visible_area_m2": {
+    "mean": 75.44,
+    "n": 400,
+    "mc_se": 1.2
+   },
+   "visible_fraction": 0.1911,
+   "area_over_pi_r2": 0.1396,
+   "spawn_visible_fraction": {
+    "S1": 0.1246
    }
   }
+ },
+ "robots_definition": {
+  "version": "reference-robot-visibility-v1",
+  "catalog": "exploration_benchmark_robots/config/robots.yaml",
+  "inputs_sha256": "767b219f72c87e29e7311577bcc25fb6c82878bc3c2deb2a8d42786932e70030",
+  "inputs": "canonical JSON [[id, footprint, lidar range_max], ...] in catalog order",
+  "radius": "footprint circumradius, no padding",
+  "range": "catalog lidar range_max",
+  "seed": 2026,
+  "rng_key": "bytes of the robot ID"
  },
  "regions_worldgen_watershed": 1,
  "region_growth": "geodesic-nearest-core",
@@ -93,6 +131,6 @@
   },
   "numpy": "2.2.6",
   "scipy": "1.15.3",
-  "adapter_sha256": "358d4da244bd096d2a1d262a970276c511605fd367c003e99dc3706b6937eb50"
+  "adapter_sha256": "ef1ead780c7821c16e07ec9b20519c2fdf79d3266f28beaf5274df26d5eca246"
  }
 }

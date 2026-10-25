@@ -23,7 +23,6 @@ limitations under the License.
 #include <QGridLayout>
 #include <QGroupBox>
 #include <QLabel>
-#include <QFormLayout>
 #include <QLineEdit>
 #include <QMainWindow>
 #include <QPushButton>
@@ -71,33 +70,11 @@ ExplorationControlPanel::ExplorationControlPanel(QWidget* parent) : rviz_common:
   scenario_layout->addWidget(world_);
   robot_ = new QComboBox;
   robot_->setObjectName("benchmark_robot");
-  robot_->addItem("MOGI — loading robot catalog", "mogi");
+  robot_->addItem("Loading robot catalog…", "");
   scenario_layout->addWidget(robot_);
   robot_details_ = new QLabel("Waiting for robot catalog");
   robot_details_->setWordWrap(true);
   scenario_layout->addWidget(robot_details_);
-  auto* mogi_settings = new QGroupBox("MOGI Reference Robot");
-  mogi_settings_ = mogi_settings;
-  auto* robot_form = new QFormLayout(mogi_settings);
-  movement_speed_ = new QDoubleSpinBox;
-  turning_speed_ = new QDoubleSpinBox;
-  lidar_range_ = new QDoubleSpinBox;
-  for (auto* field : {movement_speed_, turning_speed_, lidar_range_})
-  {
-    field->setDecimals(3);
-    field->setRange(0.001, 10000.0);
-    field->setSingleStep(0.1);
-  }
-  movement_speed_->setSuffix(" m/s");
-  turning_speed_->setSuffix(" rad/s");
-  lidar_range_->setSuffix(" m");
-  robot_form->addRow("Movement speed limit", movement_speed_);
-  robot_form->addRow("Turning speed limit", turning_speed_);
-  robot_form->addRow("Lidar range", lidar_range_);
-  auto* reset_robot = new QPushButton("Reset to Default");
-  robot_form->addRow(reset_robot);
-  connect(reset_robot, &QPushButton::clicked, this, &ExplorationControlPanel::resetMogiSettings);
-  scenario_layout->addWidget(mogi_settings);
   mode_ = new QComboBox;
   mode_->setObjectName("benchmark_mode");
   mode_->addItem("Single Run");
@@ -405,11 +382,6 @@ void ExplorationControlPanel::robotCatalogReceived(const interfaces::msg::RobotC
 {
   const auto selected = robot_->currentData().toString();
   robot_catalog_ = catalog;
-  if (!mogi_settings_initialized_)
-  {
-    resetMogiSettings();
-    mogi_settings_initialized_ = !catalog.robots.empty();
-  }
   robot_->blockSignals(true);
   robot_->clear();
   for (const auto& profile : catalog.robots)
@@ -427,7 +399,6 @@ void ExplorationControlPanel::robotCatalogReceived(const interfaces::msg::RobotC
 void ExplorationControlPanel::robotChanged()
 {
   const auto selected = robot_->currentData().toString().toStdString();
-  mogi_settings_->setVisible(selected == "mogi");
   auto found = std::find_if(robot_catalog_.robots.begin(), robot_catalog_.robots.end(),
                             [&selected](const auto& profile) { return profile.id == selected; });
   if (found == robot_catalog_.robots.end()) return;
@@ -443,9 +414,8 @@ void ExplorationControlPanel::robotChanged()
   {
     if (definition.name != "max_linear_speed_vmax" && definition.name != "max_angular_speed_wmax")
       continue;
-    if (selected != "mogi")
-      definition.default_value.double_value = definition.name == "max_linear_speed_vmax"
-          ? found->max_linear_speed : found->max_angular_speed;
+    definition.default_value.double_value = definition.name == "max_linear_speed_vmax"
+        ? found->max_linear_speed : found->max_angular_speed;
     for (auto& row : rows_)
       for (auto& parameter : row.parameters)
         for (const auto& old : previous.parameters)
@@ -468,38 +438,11 @@ void ExplorationControlPanel::editParameters(size_t index)
   rows_[index].editor->setText(changed ? QString("Edit Parameters (%1 changed)").arg(changed)
                                        : "Edit Parameters (Default)");
 }
-void ExplorationControlPanel::resetMogiSettings()
-{
-  const auto found = std::find_if(robot_catalog_.robots.begin(), robot_catalog_.robots.end(),
-                                  [](const auto& profile) { return profile.id == "mogi"; });
-  if (found == robot_catalog_.robots.end()) return;
-  movement_speed_->setValue(found->max_linear_speed);
-  turning_speed_->setValue(found->max_angular_speed);
-  lidar_range_->setValue(found->lidar_range);
-}
-std::vector<rcl_interfaces::msg::Parameter> ExplorationControlPanel::robotOverrides() const
-{
-  std::vector<rcl_interfaces::msg::Parameter> overrides;
-  if (robot_->currentData().toString() != "mogi") return overrides;
-  const auto found = std::find_if(robot_catalog_.robots.begin(), robot_catalog_.robots.end(),
-                                  [](const auto& profile) { return profile.id == "mogi"; });
-  if (found == robot_catalog_.robots.end()) return overrides;
-  auto add = [&overrides](const char* name, double value, double baseline)
-  {
-    if (value != baseline)
-      overrides.push_back(rclcpp::Parameter(name, value).to_parameter_msg());
-  };
-  add("movement_speed", movement_speed_->value(), found->max_linear_speed);
-  add("turning_speed", turning_speed_->value(), found->max_angular_speed);
-  add("lidar_range", lidar_range_->value(), found->lidar_range);
-  return overrides;
-}
 void ExplorationControlPanel::startSingle()
 {
   auto message = std::make_shared<interfaces::srv::StartSingleRun::Request>();
   message->world = world_->currentData().toString().toStdString();
   message->robot_id = robot_->currentData().toString().toStdString();
-  message->robot_overrides = robotOverrides();
   message->simulation_time_limit = limit_->value();
   message->spec.profile = "default";
   message->spec.label = rows_[0].label->text().toStdString();
@@ -510,7 +453,6 @@ void ExplorationControlPanel::startComparison()
 {
   auto message = std::make_shared<interfaces::srv::StartComparison::Request>();
   message->robot_id = robot_->currentData().toString().toStdString();
-  message->robot_overrides = robotOverrides();
   message->world = world_->currentData().toString().toStdString();
   message->simulation_time_limit = limit_->value();
   for (int i = 0; i < count_->value(); ++i)
@@ -676,7 +618,6 @@ void ExplorationControlPanel::stateReceived(const interfaces::msg::SessionState&
     return;
   }
   session_state_ = state;
-  mogi_settings_->setEnabled(!state.busy && state.mode != "SWITCHING" && state.mode != "STOPPING");
   const bool single = state.mode == "SINGLE";
   const bool comparison = state.mode == "COMPARISON";
   const bool live = single && !state.runs.empty() && state.runs.front().phase == "RUNNING";

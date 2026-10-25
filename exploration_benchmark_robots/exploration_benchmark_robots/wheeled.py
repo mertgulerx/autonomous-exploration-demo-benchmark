@@ -193,8 +193,6 @@ def prepare_wheeled(profile, scenario, directory, lookup, generated, bridge):
         save_description(plant, directory, generated)
     elif adapter == "rosbot":
         prepare_rosbot(profile, directory, lookup, generated, bridge)
-    elif adapter == "husarion_ugv":
-        prepare_ugv(profile, directory, lookup, generated, bridge)
     else:
         raise ValueError(f"{profile['label']}: unsupported native adapter")
 
@@ -275,71 +273,6 @@ def prepare_rosbot(profile, directory, lookup, generated, bridge):
         generated["odometry_provenance"] = (
             "Native ROSbot EKF: measured wheel velocities and IMU yaw/rate; raw wheel metrics retained"
         )
-    save_description(plant, directory, generated)
-
-
-def prepare_ugv(profile, directory, lookup, generated, bridge):
-    import xacro
-
-    model = profile["model"]
-    wheels = "WH01" if model == "panther" else "WH05"
-    source = (
-        Path(lookup("husarion_ugv_controller"))
-        / "config"
-        / (wheels + "_controller.yaml")
-    )
-    content = (
-        source.read_text()
-        .replace("<namespace>/", "")
-        .replace(
-            "<static_covariance_orientation>",
-            "[0.001849, 0.0, 0.0, 0.0, 0.001849, 0.0, 0.0, 0.0, 0.001849]",
-        )
-    )
-    controls = yaml.safe_load(content)
-    drive = controls["/**"]["drive_controller"]["ros__parameters"]
-    # Known pose (I10): known_pose_tf owns odom->base_footprint.
-    drive.update(
-        use_sim_time=True, enable_odom_tf=False, base_frame_id="base_footprint"
-    )
-    controls["/**"]["controller_manager"]["ros__parameters"]["use_sim_time"] = True
-    controller_file = directory / "controllers.yaml"
-    controller_file.write_text(yaml.safe_dump(controls, sort_keys=False))
-    components = directory / "components.yaml"
-    components.write_text(
-        yaml.safe_dump(
-            dict(
-                components=[
-                    dict(
-                        type="LDR06",
-                        parent_link="mount_link",
-                        xyz="0.0 0.0 0.0",
-                        rpy="0.0 0.0 0.0",
-                    )
-                ]
-            ),
-            sort_keys=False,
-        )
-    )
-    share = Path(lookup("husarion_ugv_description"))
-    plant = ET.fromstring(
-        xacro.process_file(
-            str(share / "urdf" / (model + ".urdf.xacro")),
-            mappings=dict(
-                use_sim="true",
-                namespace="",
-                controller_config_file=str(controller_file),
-                battery_config_file="",
-                components_config_path=str(components),
-            ),
-        ).toxml()
-    )
-    ensure_footprint(plant)
-    sensor_interfaces(plant, bridge)
-    remap_controller(plant, "drive_controller")
-    generated["controllers"] = ["joint_state_broadcaster", "drive_controller"]
-    generated["command_topic"] = "/drive_controller/cmd_vel"
-    generated["odometry_provenance"] = "Native Husarion UGV closed-loop wheel feedback"
     save_description(plant, directory, generated)
 
 

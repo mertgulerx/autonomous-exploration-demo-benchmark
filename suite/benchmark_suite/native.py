@@ -380,12 +380,8 @@ class NativeBackend:
         world = scenario(self.root, experiment["world_id"], registry=self.registry)
         pose = accepted["spawn"]
         default_z = world["spawn"][2]
-        height = (
-            default_z
-            if robot.get("spawn_z_policy") == "scenario"
-            else robot.get("spawn_z_by_world", {}).get(
-                experiment["world_id"], robot.get("spawn_z", default_z)
-            )
+        height = robot.get("spawn_z_by_world", {}).get(
+            experiment["world_id"], robot.get("spawn_z", default_z)
         )
         world["spawn"] = [
             pose["x"],

@@ -19,7 +19,8 @@ source /opt/ros/jazzy/setup.bash
 export PYTHONPATH="/opt/benchmark_ws/exploration_benchmark_robots:${PYTHONPATH:-}"
 ROBOT_RESOURCES=/opt/benchmark_ws/exploration_benchmark_robots
 
-for family in rosbot ugv; do
+# One vendor family since the robot set (25 October 2026); the loops keep room for another.
+for family in rosbot; do
   python3 -m exploration_benchmark_robots.dependencies fetch --family "$family" \
     --directory /opt/vendor --resource-directory "$ROBOT_RESOURCES"
 done
@@ -31,11 +32,10 @@ python3 -m exploration_benchmark_robots.dependencies install-binaries --resource
 export HUSARION_ROS_BUILD_TYPE=simulation
 export CMAKE_BUILD_PARALLEL_LEVEL=2
 export MAKEFLAGS=-j2
-for family in rosbot ugv; do
+for family in rosbot; do
   cd "/opt/vendor/$family"
   case "$family" in
     rosbot) packages=(rosbot_gazebo) ;;
-    ugv) packages=(husarion_ugv_gazebo husarion_ugv_description husarion_ugv_controller) ;;
   esac
   # Build native controllers/descriptions in separate underlays. Never source a
   # different vendor family's conflicting component/controller revision here.

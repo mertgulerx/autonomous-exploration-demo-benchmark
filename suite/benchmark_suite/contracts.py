@@ -201,8 +201,8 @@ def resolve_time_limit_inputs(
 ) -> str | None:
     """The ``time_limit_inputs`` (world -> robot -> RuleValue) as canonical JSON, checked against the
     campaign: present exactly with a rule, one entry per selected world naming exactly the robots with a
-    retained combination in it (``retained``: (robot, world) pairs), no capped pair (I4 open point 2 (a)),
-    one limit per world, equal to ``world_time_limits``. ``Library.resolve_campaign`` computes the values;
+    retained combination in it (``retained``: (robot, world) pairs), capped pairs run at the cap (robot set
+    R5, 25 October 2026: their unfinished runs are right-censored at it), one limit per world, equal to ``world_time_limits``. ``Library.resolve_campaign`` computes the values;
     a stored specification (restart) is checked as stored. The one place these refusals live."""
     if rule is None:
         if value is not None:
@@ -232,13 +232,11 @@ def resolve_time_limit_inputs(
                 raise ContractError(where, "Expected " + ", ".join(RULE_VALUE_FIELDS))
             seconds = integer(entry["seconds"], where + ".seconds", 1, 2**31 - 1)
             uncapped = integer(entry["uncapped_seconds"], where + ".uncapped_seconds", 1, 2**31 - 1)
-            if entry["capped"] is not False:
-                raise ContractError(
-                    "compatibility",
-                    f"{robot} in {world}: limit above the {seconds} s cap ({uncapped} s uncapped); "
-                    "exclude this combination (decision 10)",
-                )
-            if uncapped != seconds:
+            if not isinstance(entry["capped"], bool):
+                raise ContractError(where + ".capped", "Expected true or false")
+            if entry["capped"] and uncapped <= seconds:
+                raise ContractError(where, "A capped limit lies below its uncapped value")
+            if not entry["capped"] and uncapped != seconds:
                 raise ContractError(where, "Below the cap, the uncapped value is the limit")
             for key in ("area_m2", "range_m", "speed_mps"):
                 if number(entry[key], f"{where}.{key}") <= 0:

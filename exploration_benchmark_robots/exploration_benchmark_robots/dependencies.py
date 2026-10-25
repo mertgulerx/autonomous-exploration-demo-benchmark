@@ -150,7 +150,7 @@ def main():
         "operation",
         choices=["fetch", "snapshot", "install-binaries", "verify-binaries"],
     )
-    parser.add_argument("--family", choices=["rosbot", "ugv"], default="rosbot")
+    parser.add_argument("--family", choices=["rosbot"], default="rosbot")
     parser.add_argument("--directory", type=Path, default=Path("robot_dependencies"))
     parser.add_argument("--resource-directory", type=Path)
     args = parser.parse_args()

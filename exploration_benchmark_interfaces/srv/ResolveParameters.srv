@@ -14,7 +14,8 @@
 
 # YAML initializes Default plus supplied values; typed overrides take precedence.
 string yaml
-string robot_id mogi
+# Robot catalog ID; empty: the catalog default robot.
+string robot_id
 rcl_interfaces/Parameter[] overrides
 ---
 bool accepted

@@ -904,8 +904,13 @@ class RobotSelector(QtWidgets.QWidget):
         outer.addWidget(self.grid)
 
     def set_catalog(
-        self, robots: list[dict[str, Any]], metadata: dict[str, Any] | None = None
+        self,
+        robots: list[dict[str, Any]],
+        metadata: dict[str, Any] | None = None,
+        default_robot: str | None = None,
     ) -> None:
+        """Show the catalog's robots; on the first catalog, ``default_robot`` (the catalog's default, absent
+        from older engine replies) starts selected when available, else no robot does."""
         initial = not self._initialized
         if metadata is not None and metadata != self._metadata:
             self._metadata = deepcopy(metadata)
@@ -919,7 +924,7 @@ class RobotSelector(QtWidgets.QWidget):
             available = bool(robot.get("available", True))
             self._references.setdefault(identity, ["Default"])
             if identity not in self._selected:
-                self._selected[identity] = initial and identity == "mogi" and available
+                self._selected[identity] = initial and identity == default_robot and available
             elif self._selected[identity] and not available:
                 self._selected[identity] = False
                 left_out.append(str(robot["label"]))

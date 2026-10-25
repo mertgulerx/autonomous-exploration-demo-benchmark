@@ -26,10 +26,9 @@ def configure_transport():
 
 
 def sdk_prefix(profile):
-    family = {"husarion_ugv": "ugv"}.get(profile["family"], profile["family"])
     root = (
         Path(os.environ.get("BENCHMARK_ROBOT_DEPENDENCIES", "/opt/vendor"))
-        / family
+        / profile["family"]
         / "install"
     )
     return str(root) if (root / "local_setup.bash").is_file() else ""

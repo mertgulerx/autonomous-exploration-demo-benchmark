@@ -120,7 +120,7 @@ def spawn(context):
                 output="screen",
             )
         )
-    if profile["adapter"] not in ("mogi", "turtlebot3"):
+    if profile["adapter"] != "turtlebot3":
         from exploration_benchmark_robots.wheeled import wheeled_actions
 
         actions.extend(wheeled_actions(config))

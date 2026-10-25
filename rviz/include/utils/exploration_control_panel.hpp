@@ -97,8 +97,6 @@ class ExplorationControlPanel : public rviz_common::Panel
   void setStatusText(const QString&);
   void postStatusText(const QString&);
   void startBackgroundOperation(std::function<void()>);
-  void resetMogiSettings();
-  std::vector<rcl_interfaces::msg::Parameter> robotOverrides() const;
   void onInitialPose(const geometry_msgs::msg::PoseStamped::SharedPtr);
   void clearFrontierMarkers();
   void clearTraveledPath();
@@ -188,11 +186,6 @@ class ExplorationControlPanel : public rviz_common::Panel
   QPushButton* single_mode_button_;
   QSpinBox* count_;
   QDoubleSpinBox* limit_;
-  QWidget* mogi_settings_;
-  QDoubleSpinBox* movement_speed_;
-  QDoubleSpinBox* turning_speed_;
-  QDoubleSpinBox* lidar_range_;
-  bool mogi_settings_initialized_{false};
   QPointer<QMainWindow> window_;
   QPointer<QStackedWidget> stack_;
   QPointer<QWidget> original_central_;

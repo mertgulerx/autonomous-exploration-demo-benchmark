@@ -42,22 +42,64 @@
  "junctions": 9,
  "regions": 6,
  "robots": {
-  "mogi": {
-   "radius_m": 0.29,
-   "r_eff_m": 10.0,
+  "tb3_waffle_pi": {
+   "radius_m": 0.2561,
+   "r_eff_m": 8.0,
    "visible_area_m2": {
-    "mean": 50.25,
+    "mean": 44.33,
     "n": 400,
-    "mc_se": 1.15
+    "mc_se": 0.96
    },
-   "visible_fraction": 0.4059,
-   "area_over_pi_r2": 0.3941,
+   "visible_fraction": 0.3581,
+   "area_over_pi_r2": 0.6157,
    "spawn_visible_fraction": {
-    "default-corridor": 0.3701,
-    "S2": 0.1776,
+    "default-corridor": 0.3021,
+    "S2": 0.1571,
     "S3": 0.1789
    }
+  },
+  "tb4_standard": {
+   "radius_m": 0.2537,
+   "r_eff_m": 12.0,
+   "visible_area_m2": {
+    "mean": 57.18,
+    "n": 400,
+    "mc_se": 1.22
+   },
+   "visible_fraction": 0.4619,
+   "area_over_pi_r2": 0.2737,
+   "spawn_visible_fraction": {
+    "default-corridor": 0.4333,
+    "S2": 0.1914,
+    "S3": 0.1789
+   }
+  },
+  "rosbot_pro": {
+   "radius_m": 0.1577,
+   "r_eff_m": 30.0,
+   "visible_area_m2": {
+    "mean": 60.08,
+    "n": 400,
+    "mc_se": 1.34
+   },
+   "visible_fraction": 0.4853,
+   "area_over_pi_r2": 0.0438,
+   "spawn_visible_fraction": {
+    "default-corridor": 0.5987,
+    "S2": 0.1919,
+    "S3": 0.1798
+   }
   }
+ },
+ "robots_definition": {
+  "version": "reference-robot-visibility-v1",
+  "catalog": "exploration_benchmark_robots/config/robots.yaml",
+  "inputs_sha256": "767b219f72c87e29e7311577bcc25fb6c82878bc3c2deb2a8d42786932e70030",
+  "inputs": "canonical JSON [[id, footprint, lidar range_max], ...] in catalog order",
+  "radius": "footprint circumradius, no padding",
+  "range": "catalog lidar range_max",
+  "seed": 2026,
+  "rng_key": "bytes of the robot ID"
  },
  "regions_worldgen_watershed": 4,
  "region_growth": "geodesic-nearest-core",
@@ -140,6 +182,6 @@
   },
   "numpy": "2.2.6",
   "scipy": "1.15.3",
-  "adapter_sha256": "358d4da244bd096d2a1d262a970276c511605fd367c003e99dc3706b6937eb50"
+  "adapter_sha256": "ef1ead780c7821c16e07ec9b20519c2fdf79d3266f28beaf5274df26d5eca246"
  }
 }

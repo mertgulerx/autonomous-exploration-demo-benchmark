@@ -178,21 +178,21 @@
       https://fuel.gazebosim.org/1.0/OpenRobotics/models/Jersey Barrier/6
       </uri>
       <name>barrier_0</name>
-      <pose>-10.4 14.75 0 0 0 1.57</pose>
+      <pose>-10.4 14.6552 0 0 0 1.57</pose>
     </include>
     <include>
       <uri>
       https://fuel.gazebosim.org/1.0/OpenRobotics/models/Jersey Barrier/6
       </uri>
       <name>barrier_1</name>
-      <pose>-10.4 10.5 0 0 0 1.57</pose>
+      <pose>-10.4 10.5948 0 0 0 1.57</pose>
     </include>
     <include>
       <uri>
       https://fuel.gazebosim.org/1.0/OpenRobotics/models/Jersey Barrier/6
       </uri>
       <name>barrier_2</name>
-      <pose>-10.4 6.5 0 0 0 1.57</pose>
+      <pose>-10.4 6.5948 0 0 0 1.57</pose>
     </include>
     <include>
       <uri>

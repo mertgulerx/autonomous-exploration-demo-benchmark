@@ -107,7 +107,7 @@ RULE_UNAVAILABLE = (
     "reference)."
 )
 
-DEFAULT_WORLD = "bookstore"  # ticked when a new campaign starts (as MOGI on step 1)
+DEFAULT_WORLD = "bookstore"  # ticked when a new campaign starts (as the default robot on step 1)
 # The campaign key's value is contracts.TIME_LIMIT_RULE (plan I4); the engine computes the limits.
 # The rule's formula as the tooltip writes it: it belongs to TIME_LIMIT_RULE (I4 §3.1: factor 30, floor 600 s,
 # cap 14,400 s; exploration_benchmark_runner.time_limits); change both together. The GUI only shows it; the
@@ -284,7 +284,6 @@ def rule_limit(world: Mapping[str, Any], robots: Sequence[tuple[str, str]]) -> R
     lines: list[str] = []
     found: set[float] = set()
     missing: list[str] = []
-    capped_robots: list[str] = []
     for robot, label in robots:
         entry = values.get(robot)
         entry = entry if isinstance(entry, dict) else {}
@@ -322,16 +321,11 @@ def rule_limit(world: Mapping[str, Any], robots: Sequence[tuple[str, str]]) -> R
             else "not capped"
         )
         lines.append(f"{RULE_FORMULA}: {result}")
-        if capped:
-            capped_robots.append(label)
     if missing:
         return RuleLimit(
             None,
             f"{name}: the catalog has no rule limit for {', '.join(missing)} in this world.",
         )
-    if capped_robots:  # the engine refuses capped pairs (I4 open point 2 (a))
-        lines += ["", f"Capped: exclude {', '.join(capped_robots)} from {name}."]
-        return RuleLimit(None, "\n".join(lines))
     if len(found) > 1:
         lines += ["", "The robots' limits differ: split the campaign by robot."]
         return RuleLimit(None, "\n".join(lines))

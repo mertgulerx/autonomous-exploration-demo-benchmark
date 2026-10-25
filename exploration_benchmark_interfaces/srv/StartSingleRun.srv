@@ -13,7 +13,9 @@
 # limitations under the License.
 
 RunSpec spec
-string robot_id mogi
+# Robot catalog ID; empty: the catalog default robot.
+string robot_id
+# Retired 25 October 2026 (no per-run robot settings): must be empty; the coordinator refuses others.
 rcl_interfaces/Parameter[] robot_overrides
 string world
 float64 simulation_time_limit 1800.0

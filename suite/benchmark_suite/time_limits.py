@@ -14,7 +14,7 @@
 
 """Read-only tool: ``kinematic-time-limit-v1`` limits of one robot per world.
 
-``python -m benchmark_suite.time_limits --robot mogi [--world ID ...]`` (run from
+``python -m benchmark_suite.time_limits --robot tb4_standard [--world ID ...]`` (run from
 ``suite/``) prints the inputs and values as YAML comments, then a ``world_time_limits:``
 block for a campaign YAML and a ``horizons_s:`` block for a study plan's ``analysis``
 block. The whole output parses as YAML. The rule is defined in docs/MEASUREMENTS.md
@@ -25,9 +25,8 @@ The rule itself lives in ``exploration_benchmark_runner.time_limits``, with the 
 area A (``target_area_m2``) and the reference metric version it reads
 (``RULE_METRIC_VERSION``). Worlds and their pinned version-2 coverage references come
 from the checkout's world registry (``exploration_benchmark_runner.worlds``,
-``world_inputs``); R and v come from the robot catalog's Default physical settings
-(``catalog.resolve_physical_settings``), the world fit from the registry
-(``catalog.fill_robot_profiles``). The engine's catalog reply (``rule_time_limits``)
+``world_inputs``); R and v come from the robot catalog profile, the world fit from the
+registry (``catalog.fill_robot_profiles``). The engine's catalog reply (``rule_time_limits``)
 computes the same values.
 """
 
@@ -268,7 +267,7 @@ def world_inputs(
 
 
 def robot_input(root: Path, robot: str, loaded: object) -> RobotInput:
-    """R and v of the robot's Default physical settings (no overrides); the world fit from
+    """R and v of the robot's catalog profile; the world fit from
     the registry ``loaded`` (``registry``)."""
     path = root / CATALOG
     try:
@@ -285,17 +284,13 @@ def robot_input(root: Path, robot: str, loaded: object) -> RobotInput:
     profile = robots.get(robot)
     if not isinstance(profile, dict):
         raise ContractError("robot", f"Unknown robot {robot}; use {', '.join(robots)}")
-    try:
-        settings = _callable(catalog, "resolve_physical_settings")(profile)
-    except (KeyError, TypeError) as exc:
-        raise ContractError(f"robots.{robot}", f"Incomplete profile: {exc}") from exc
-    lidar = settings.get("lidar") if isinstance(settings, dict) else None
-    if not isinstance(settings, dict) or not isinstance(lidar, dict):
+    lidar = profile.get("lidar")
+    if not isinstance(lidar, dict):
         raise ContractError(f"robots.{robot}", "Incomplete profile")
     range_m, speed, worlds = (
         lidar.get("range_max"),
-        settings.get("max_linear_speed"),
-        settings.get("worlds"),
+        profile.get("max_linear_speed"),
+        profile.get("worlds"),
     )
     if not isinstance(worlds, list) or not all(isinstance(w, str) for w in worlds):
         raise ContractError(f"robots.{robot}.worlds", "Expected a list of world IDs")
@@ -326,7 +321,7 @@ def render(rule: Rule, robot: RobotInput, rows: Sequence[Row]) -> str:
     lines = [
         f"# Rule {rule.identifier}: L = min({rule.cap_s}, max({rule.floor_s}, "
         f"ceil({rule.factor} * A / (2 * R * v)))) s",
-        f"# Robot {robot.robot} (catalog Default settings): R = {robot.range_m:g} m, "
+        f"# Robot {robot.robot} (catalog profile): R = {robot.range_m:g} m, "
         f"v = {robot.speed_mps:g} m/s",
         "# A = target cells x resolution^2 of the registry-pinned version-2 coverage reference",
         "#",
@@ -365,7 +360,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         prog="python -m benchmark_suite.time_limits",
         description="Print kinematic-time-limit-v1 limits and horizons (read-only).",
     )
-    parser.add_argument("--robot", required=True, help="catalog robot ID, for example mogi")
+    parser.add_argument("--robot", required=True, help="catalog robot ID, for example tb4_standard")
     parser.add_argument(
         "--world", action="append", default=[], help="world ID (repeatable; default: all)"
     )

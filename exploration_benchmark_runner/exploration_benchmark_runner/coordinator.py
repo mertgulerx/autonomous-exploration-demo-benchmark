@@ -198,7 +198,7 @@ class Coordinator(Node):
             )
         )
         parameter_catalog = self.catalog.schema_for_robot(
-            self.robots.profile()
+            self.robots.profile(self.robots.default)
         ).message()
         parameter_catalog.robot_id = self.robots.default
         self.parameter_pub.publish(parameter_catalog)
@@ -266,7 +266,7 @@ class Coordinator(Node):
     def resolve_parameters_request(self, request, response):
         try:
             schema = self.catalog.schema_for_robot(
-                self.robots.profile(request.robot_id or "mogi")
+                self.robots.profile(request.robot_id or self.robots.default)
             )
             values = schema.resolve(request.yaml, parameter_values(request.overrides))
             response.parameters = ros_parameters(values)
@@ -293,10 +293,13 @@ class Coordinator(Node):
                 selected = attach_reference(
                     self.root, scenario(self.root, request.world, registry=self.worlds)
                 )
+                if request.robot_overrides:
+                    raise ValueError(
+                        "Robot settings were removed; robots run with their catalog "
+                        "limits (leave robot_overrides empty)"
+                    )
                 robot = self.robots.require(
-                    request.robot_id or "mogi",
-                    request.world,
-                    parameter_values(request.robot_overrides),
+                    request.robot_id or self.robots.default, request.world
                 )
                 from exploration_benchmark_robots.preflight import validate_spawn
                 from .coverage import Reference

@@ -104,8 +104,7 @@ def robot_family(robot_id: str) -> str:
     catalog does not list the robot."""
     catalog = load_mapping((ROOT / "exploration_benchmark_robots/config/robots.yaml").read_text())
     robot = (catalog.get("robots") or {}).get(robot_id) or {}
-    family = str(robot.get("family") or "")
-    return {"husarion_ugv": "ugv"}.get(family, family)
+    return str(robot.get("family") or "")
 
 
 def gazebo_resources(directory: str) -> tuple[str, ...]:

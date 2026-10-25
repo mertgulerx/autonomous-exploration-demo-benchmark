@@ -71,13 +71,6 @@ class ParameterDifference:
 # belongs to the name.
 UNIT_WORDS = frozenset({"cells", "m", "s", "hz", "deg"})
 NAMES_WITH_UNIT_WORDS = frozenset({"Sigma s", "Sigma r"})
-# MOGI's physical settings (``robot_overrides``): key, name, unit; the defaults are the catalog robot's.
-PHYSICAL_SETTINGS = (
-    ("movement_speed", "Movement speed", "m/s"),
-    ("turning_speed", "Turning speed", "rad/s"),
-    ("lidar_range", "Lidar range", "m"),
-)
-PHYSICAL_GROUP = "MOGI physical"
 # The parameter schema's group order (``parameters.yaml``). Engine replies are canonical JSON with sorted keys, so
 # the metadata arrives in key order and cannot give the groups their order.
 GROUP_ORDER = ("Behavior", "MRTSP Scoring", "Navigation Safety", "Map Optimization", "Preemption")
@@ -118,32 +111,12 @@ def profile_differences(
                 description += "\n" + information["description"]
             name, unit = parameter_label(key)
             differences.append(ParameterDifference(key, name, unit, before, after, description))
-    if robot["id"] == "mogi":
-        for key, name, unit in PHYSICAL_SETTINGS:
-            before, after = robot[key], physical_value(profile, key, robot[key])
-            if before != after:
-                differences.append(
-                    ParameterDifference(
-                        key,
-                        "Robot · " + name,
-                        unit,
-                        before,
-                        after,
-                        "MOGI physical settings · " + key,
-                    )
-                )
     return differences
 
 
-def physical_value(profile: dict[str, Any], key: str, default: Any) -> Any:
-    """A MOGI physical setting of a profile: the resolved value, else the override, else ``default``."""
-    physical = profile.get("robot", {}).get("benchmark_settings", {}).get("effective", {})
-    return physical.get(key, profile.get("robot_overrides", {}).get(key, default))
-
-
-def editor_groups(metadata: dict[str, Any], robot_id: str) -> list[str]:
+def editor_groups(metadata: dict[str, Any]) -> list[str]:
     """The parameter groups the profile editor shows, in the schema's order (no managed parameters, no hidden
-    groups); MOGI adds its physical settings last."""
+    groups)."""
     groups: list[str] = []
     for information in metadata.values():
         group = information.get("group", "")
@@ -152,8 +125,6 @@ def editor_groups(metadata: dict[str, Any], robot_id: str) -> list[str]:
         groups.append(group)
     known = {group: index for index, group in enumerate(GROUP_ORDER)}
     groups.sort(key=lambda group: known.get(group, len(known)))  # unknown groups after, as found
-    if robot_id == "mogi":
-        groups.append(PHYSICAL_GROUP)
     return groups
 
 
@@ -183,7 +154,7 @@ def compared_parameters(
     ``profile_differences``'."""
     defaults = robot["defaults"]
     effective = profile["effective"] if profile is not None else defaults
-    groups = editor_groups(metadata, robot["id"])
+    groups = editor_groups(metadata)
     rows: list[ComparedParameter] = []
     for key in dict.fromkeys([*defaults, *effective]):
         information = metadata.get(key, {})
@@ -196,10 +167,6 @@ def compared_parameters(
         name, unit = parameter_label(key)
         description = str(information.get("description", ""))
         rows.append(ComparedParameter(key, name, unit, group, before, after, description))
-    if robot["id"] == "mogi":
-        for key, name, unit in PHYSICAL_SETTINGS:
-            after = robot[key] if profile is None else physical_value(profile, key, robot[key])
-            rows.append(ComparedParameter(key, name, unit, PHYSICAL_GROUP, robot[key], after, ""))
     order = {group: index for index, group in enumerate(groups)}
     return sorted(rows, key=lambda row: order.get(row.group, len(order)))
 
@@ -368,7 +335,7 @@ class ProfilePreview(Themed):
             self.timer.start()
 
     def summary(self) -> tuple[str, str]:
-        """The header's bold count and the rest ("3 changes", " from MOGI Default")."""
+        """The header's bold count and the rest ("3 changes", " from <robot> Default")."""
         count = len(self.differences)
         if not count:
             return "", f"No changes from {self.robot['label']} Default"

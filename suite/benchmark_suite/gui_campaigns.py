@@ -1034,8 +1034,8 @@ def map_box(world: WorldMap | None, maximum: tuple[float, float]) -> tuple[int, 
 
 
 class WorkerTile(Themed, CssBox):
-    """``.wk``: the mini-map (up to 132×124 in the world's aspect) and three labelled values, then "W1 MOGI ·
-    rep. 3" with the attempt badge and the profile and spawn. ``narrow`` (three or four workers): a map of up
+    """``.wk``: the mini-map (up to 132×124 in the world's aspect) and three labelled values, then "W1
+    TurtleBot4 Standard · rep. 3" with the attempt badge and the profile and spawn. ``narrow`` (three or four workers): a map of up
     to 96×90 with the values that fit below it (D10). The widget extends 1 px around the column for the map's
     ring; ``css_width`` includes that pixel on both sides."""
 

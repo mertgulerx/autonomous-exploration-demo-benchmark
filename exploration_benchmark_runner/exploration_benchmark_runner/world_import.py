@@ -366,10 +366,11 @@ def compare_base(
 
 
 def entry_text(
-    world, label, reference_metadata_sha256, descriptors_file, descriptors_sha
+    world, label, reference_metadata_sha256, descriptors_file, descriptors_sha, robots
 ):
-    """The registry entry in worlds.yaml's style (every field, I1). The text is
-    assembled here; the registry loader in ``_write`` is its check."""
+    """The registry entry in worlds.yaml's style (every field, I1); ``robots`` are the
+    catalog robot IDs, each fit with its catalog spawn height. The text is assembled
+    here; the registry loader in ``_write`` is its check."""
     doc = world.document
     first = world.spawns[0]
     coverage = REFERENCE_DIRECTORY
@@ -403,7 +404,7 @@ def entry_text(
             for s in world.spawns
         ),
         "    robots:",
-        "      mogi: {}",
+        *(f"      {robot}: {{}}" for robot in robots),
         "    fuel_models: []",
         "    resource_paths: []",
     ]
@@ -538,9 +539,7 @@ def import_world(
         catalog = yaml.load(
             (root / ROBOT_CATALOG_FILE).read_bytes(), Loader=UniqueKeyLoader
         )
-        spawn_rows = validate_spawns(
-            reference_path, world.spawns, {"mogi": catalog["robots"]["mogi"]}
-        )
+        spawn_rows = validate_spawns(reference_path, world.spawns, catalog["robots"])
         with tempfile.TemporaryDirectory(dir=staging, prefix=".descriptors-") as output:
             descriptors, regions = run_descriptors(
                 root, python, reference_path, world.spawns, Path(output)
@@ -580,6 +579,7 @@ def import_world(
             file_sha256(reference_path),
             pin.file,
             descriptors_sha,
+            list(catalog["robots"]),
         )
         if write:
             _write(root, coverage, staging, names, entry, world.id)

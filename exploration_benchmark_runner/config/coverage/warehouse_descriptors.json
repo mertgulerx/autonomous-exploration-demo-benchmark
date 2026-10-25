@@ -3,15 +3,15 @@
  "grid": {
   "source": "coverage_reference",
   "reference_id": "warehouse_coverage_v2",
-  "metadata_sha256": "900c40cf83d22f7f54b8f58318e550cfac6d615194a59ed2fe4dd2157afcdbbf",
-  "grid_sha256": "0aa8252354033b10718cf1ae5eb841315d02a141ddc96880c0fcff45b8ac1f5a",
+  "metadata_sha256": "5e2b902b9bb084c16f9eafe92356c539ec6501a79b247b0cf25b1cf35cfb2368",
+  "grid_sha256": "e633f2b92e75c81bedc1f7ccd53f92d0dfb55a340ff8584727ea17a325c34acc",
   "resolution_m": 0.05,
   "seed": 2026,
   "free_space": "inclusion & ~collision",
   "padding_cells": 2,
   "free_floor_touches_grid_edge": true
  },
- "area_m2": 1269.49,
+ "area_m2": 1269.53,
  "clearance_m": {
   "median": 1.3,
   "p10": 0.3,
@@ -21,16 +21,16 @@
  "char_dim_m": {
   "median": 5.925,
   "n": 400,
-  "mc_halfwidth": 0.187
+  "mc_halfwidth": 0.112
  },
  "dispersion": {
-  "mean": 2.005,
+  "mean": 2.01,
   "n": 400,
-  "mc_se": 0.062
+  "mc_se": 0.061
  },
  "nav_complexity": {
-  "median": 1.0609,
-  "p90": 1.336,
+  "median": 1.0804,
+  "p90": 1.305,
   "n": 400,
   "grid_m": 0.05
  },
@@ -39,24 +39,64 @@
  "loops": 5,
  "loops_unsized": 13,
  "dead_ends": 0,
- "junctions": 61,
+ "junctions": 60,
  "regions": 1,
  "robots": {
-  "mogi": {
-   "radius_m": 0.29,
-   "r_eff_m": 10.0,
+  "tb3_waffle_pi": {
+   "radius_m": 0.2561,
+   "r_eff_m": 8.0,
    "visible_area_m2": {
-    "mean": 126.01,
+    "mean": 97.03,
     "n": 400,
-    "mc_se": 2.42
+    "mc_se": 1.52
    },
-   "visible_fraction": 0.0993,
-   "area_over_pi_r2": 4.0409,
+   "visible_fraction": 0.0764,
+   "area_over_pi_r2": 6.3141,
    "spawn_visible_fraction": {
-    "default-warehouse": 0.0381,
-    "S2": 0.0371
+    "default-warehouse": 0.033,
+    "S2": 0.031
+   }
+  },
+  "tb4_standard": {
+   "radius_m": 0.2537,
+   "r_eff_m": 12.0,
+   "visible_area_m2": {
+    "mean": 147.93,
+    "n": 400,
+    "mc_se": 2.94
+   },
+   "visible_fraction": 0.1165,
+   "area_over_pi_r2": 2.8063,
+   "spawn_visible_fraction": {
+    "default-warehouse": 0.0433,
+    "S2": 0.0424
+   }
+  },
+  "rosbot_pro": {
+   "radius_m": 0.1577,
+   "r_eff_m": 30.0,
+   "visible_area_m2": {
+    "mean": 249.33,
+    "n": 400,
+    "mc_se": 5.93
+   },
+   "visible_fraction": 0.1964,
+   "area_over_pi_r2": 0.449,
+   "spawn_visible_fraction": {
+    "default-warehouse": 0.0556,
+    "S2": 0.0813
    }
   }
+ },
+ "robots_definition": {
+  "version": "reference-robot-visibility-v1",
+  "catalog": "exploration_benchmark_robots/config/robots.yaml",
+  "inputs_sha256": "767b219f72c87e29e7311577bcc25fb6c82878bc3c2deb2a8d42786932e70030",
+  "inputs": "canonical JSON [[id, footprint, lidar range_max], ...] in catalog order",
+  "radius": "footprint circumradius, no padding",
+  "range": "catalog lidar range_max",
+  "seed": 2026,
+  "rng_key": "bytes of the robot ID"
  },
  "regions_worldgen_watershed": 1,
  "region_growth": "geodesic-nearest-core",
@@ -75,13 +115,13 @@
  ],
  "region_raster": {
   "file": "regions.png",
-  "sha256": "c9b9cdfe8c20344fa1c3429b05083bd9c0355e197512329d862cf69de55a5a7c",
+  "sha256": "de18f9cb0f4f5410a3d5c7545004512b22ce8fd1f06fddca580d50a3dc54850f",
   "encoding": "16-bit greyscale PNG; row 0 = largest y; 0 outside F; 1 … n grown regions",
   "labels": [
    {
     "label": 1,
-    "cells": 507794,
-    "area_m2": 1269.485,
+    "cells": 507810,
+    "area_m2": 1269.525,
     "counted": true
    }
   ]
@@ -99,6 +139,6 @@
   },
   "numpy": "2.2.6",
   "scipy": "1.15.3",
-  "adapter_sha256": "358d4da244bd096d2a1d262a970276c511605fd367c003e99dc3706b6937eb50"
+  "adapter_sha256": "ef1ead780c7821c16e07ec9b20519c2fdf79d3266f28beaf5274df26d5eca246"
  }
 }

@@ -263,7 +263,7 @@ class ChangeBlock:
     """One robot's changed parameters, one column per non-Default profile (D14)."""
 
     robot: str
-    columns: tuple[str, ...]  # "MOGI Default", then the profiles ("Low Threshold r2")
+    columns: tuple[str, ...]  # "<robot> Default", then the profiles ("Low Threshold r2")
     rows: tuple[ChangeRow, ...]
 
 

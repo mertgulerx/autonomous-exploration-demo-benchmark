@@ -25,7 +25,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 # Remove obsolete vendor SDKs and prior Python installations before copying
 # the current sources; Docker COPY alone would keep deleted adapter files.
-RUN rm -rf /opt/vendor/go2 \
+RUN rm -rf /opt/vendor/go2 /opt/vendor/ugv \
     /opt/benchmark_ws/exploration_benchmark_robots \
     /opt/benchmark_ws/exploration_benchmark_runner \
     /opt/benchmark_ws/build/exploration_benchmark_robots \
@@ -57,8 +57,10 @@ COPY simulation/Week-7-8-ROS2-Navigation/bme_ros2_navigation/package.xml /opt/be
 COPY simulation/Week-7-8-ROS2-Navigation/bme_ros2_navigation_py/setup.py simulation/Week-7-8-ROS2-Navigation/bme_ros2_navigation_py/package.xml /opt/benchmark_ws/simulation/Week-7-8-ROS2-Navigation/bme_ros2_navigation_py/
 COPY simulation/Week-7-8-ROS2-Navigation/bme_ros2_navigation/launch /opt/benchmark_ws/simulation/Week-7-8-ROS2-Navigation/bme_ros2_navigation/launch
 COPY simulation/Week-7-8-ROS2-Navigation/bme_ros2_navigation/rviz /opt/benchmark_ws/simulation/Week-7-8-ROS2-Navigation/bme_ros2_navigation/rviz
-# Registry worlds kept under simulation/worlds that bases built before them lack (the FIT-SLAM corridor).
+# Registry worlds kept under simulation/worlds that bases built before them lack (the FIT-SLAM corridor), and
+# the Warehouse world changed after the base (barrier row closed, 25 October 2026).
 COPY simulation/worlds/fitslam_corridor /opt/benchmark_ws/simulation/worlds/fitslam_corridor
+COPY simulation/worlds/warehouse /opt/benchmark_ws/simulation/worlds/warehouse
 COPY launch.sh docker.sh /opt/benchmark_ws/
 COPY docker/entrypoint.sh /opt/benchmark_ws/docker/entrypoint.sh
 COPY docker/Dockerfile docker/Dockerfile.runtime docker/build_robot_dependencies.sh docker/fetch_slam_toolbox.sh /opt/benchmark_ws/docker/

@@ -35,11 +35,7 @@ from exploration_benchmark_runner.time_limits import (
     target_area_m2,
 )
 from exploration_benchmark_runner.worlds import WorldRegistry
-from exploration_benchmark_robots.catalog import (
-    RobotCatalog,
-    fill_robot_profiles,
-    resolve_physical_settings,
-)
+from exploration_benchmark_robots.catalog import RobotCatalog, fill_robot_profiles
 from exploration_benchmark_robots.preflight import validate_spawn
 
 from .analysis_block import WorldFacts, plan_parts, validate
@@ -71,7 +67,6 @@ PROFILE_FIELDS = {
     "robot_id",
     "requested",
     "overrides",
-    "robot_overrides",
     "yaml_text",
     "description",
     "effective",
@@ -83,8 +78,9 @@ PROFILE_FIELDS = {
     "created_ns",
 }
 # Retired keys accepted from recorded snapshots and earlier YAML, then ignored (tags, 16 October 2026;
-# library revision numbers, 18 October 2026).
-LEGACY_PROFILE_FIELDS = frozenset({"tags", "revision"})
+# library revision numbers, 18 October 2026; robot settings, 25 October 2026, whose non-empty
+# ``robot_overrides`` ``resolve_profile`` refuses before the drop).
+LEGACY_PROFILE_FIELDS = frozenset({"tags", "revision", "robot_overrides"})
 # Full coverage references (grids and target cells) kept in memory; the catalog needs only their
 # metadata, and a large world's reference holds millions of cells (I1 §3.6).
 REFERENCE_CACHE = 4
@@ -202,13 +198,18 @@ class Library:
         resource = self.root / "exploration_benchmark_robots"
         self.robot_catalog = RobotCatalog(resource, worlds=self.registry) if native else None
         # Robot profiles with world fit from the registry, as RobotCatalog fills them.
+        catalog = yaml.safe_load((resource / "config/robots.yaml").read_text())
         self.robots: dict[str, dict[str, Any]] = (
             self.robot_catalog.profiles
             if self.robot_catalog
-            else fill_robot_profiles(
-                yaml.safe_load((resource / "config/robots.yaml").read_text()), self.registry
-            )
+            else fill_robot_profiles(catalog, self.registry)
         )
+        # The catalog's default robot: the robot of requests that name none.
+        self.default_robot = text(catalog.get("default_robot"), "default_robot")
+        if self.default_robot not in self.robots:
+            raise ContractError(
+                "default_robot", "The catalog's default robot is not a catalog robot"
+            )
         self.accepted_robots: dict[str, dict[str, Any]] = {}
         self.worlds = {world.id: world for world in self.registry.runnable()}
         self.headers = {
@@ -255,15 +256,14 @@ class Library:
     def rule_value(self, world_id: str, robot_id: str) -> RuleValue | None:
         """``kinematic-time-limit-v1`` for one world and robot: A from the world's pinned reference
         (the rule module's ``target_area_m2``, as the tool computes it), R and v from the robot's Default
-        physical settings (``resolve_physical_settings`` without overrides: ``lidar.range_max``,
-        ``max_linear_speed``). None without a reference of the rule's metric version
-        (``RULE_METRIC_VERSION``)."""
+        catalog profile (``lidar.range_max``, ``max_linear_speed``). None without a reference of the
+        rule's metric version (``RULE_METRIC_VERSION``)."""
         header = self.headers[world_id]
         if self.worlds[world_id].reference.metric_version != RULE_METRIC_VERSION:
             return None
-        settings = resolve_physical_settings(self.robots[robot_id])
+        profile = self.robots[robot_id]
         cells, resolution = header.metadata["target_cells"], header.metadata["resolution"]
-        range_m, speed = settings["lidar"]["range_max"], settings["max_linear_speed"]
+        range_m, speed = profile["lidar"]["range_max"], profile["max_linear_speed"]
         try:
             limit = kinematic_time_limit(cells, resolution, range_m, speed)
             area = float(target_area_m2(cells, resolution))
@@ -307,7 +307,7 @@ class Library:
     def bind(self, store: Store) -> None:
         self.store = store
 
-    def robot(self, identity: str, overrides: dict[str, Any] | None = None) -> dict[str, Any]:
+    def robot(self, identity: str) -> dict[str, Any]:
         if identity not in self.robots:
             raise ContractError("robot_id", "Unknown robot: " + identity)
         try:
@@ -320,14 +320,16 @@ class Library:
                     if self.robot_catalog
                     else deepcopy(self.robots[identity])
                 )
-            base = deepcopy(self.accepted_robots[identity])
-            base.pop("benchmark_overrides", None)
-            base.pop("benchmark_settings", None)
-            return mapping(resolve_physical_settings(base, overrides), "physical_settings")
+            return mapping(deepcopy(self.accepted_robots[identity]), "robot")
         except ValueError as exc:
             raise ContractError("robot_id", str(exc), "dependency_or_configuration") from exc
 
     def resolve_profile(self, robot_id: str, value: dict[str, Any]) -> dict[str, Any]:
+        if mapping(value.get("robot_overrides", {}), "robot_overrides"):
+            raise ContractError(
+                "robot_overrides",
+                "Robot settings were removed; robots run with their catalog limits",
+            )
         value = {k: v for k, v in value.items() if k not in LEGACY_PROFILE_FIELDS}
         known_keys(value, PROFILE_FIELDS, "profile")
         if value.get("robot_id", robot_id) != robot_id:
@@ -341,8 +343,7 @@ class Library:
                 "Stored profile uses different defaults or metadata; import its explorer YAML to save it as a new profile",
             )
         requested = mapping(value.get("requested", value.get("overrides", {})), "overrides")
-        physical = mapping(value.get("robot_overrides", {}), "robot_overrides")
-        robot = self.robot(robot_id, physical)
+        robot = self.robot(robot_id)
         schema = robot_parameter_schema(self.schema, robot)
         imported = value.get("yaml_text", "")
         if not isinstance(imported, str):
@@ -360,7 +361,6 @@ class Library:
             "robot_id": robot_id,
             "requested": deepcopy(requested),
             "effective": effective,
-            "robot_overrides": deepcopy(physical),
             "robot": robot,
             "baseline_hash": self.baseline_hash,
             "metadata_hash": self.metadata_hash,
@@ -377,9 +377,7 @@ class Library:
             result["created_ns"] = integer(value["created_ns"], "created_ns", 1, 2**63 - 1)
         result["hash"] = content_hash(result)
         result["id"] = text(
-            value.get(
-                "id", "default-" + robot_id if not requested and not physical else result["hash"]
-            ),
+            value.get("id", "default-" + robot_id if not requested else result["hash"]),
             "profile.id",
         )
         return result
@@ -448,6 +446,8 @@ class Library:
             )
         return {
             "robots": robots,
+            # The catalog's default robot (robots.yaml ``default_robot``), preselected by the GUI.
+            "default_robot": self.default_robot,
             "worlds": worlds,
             "parameters": self.schema.metadata,
             "baseline_hash": self.baseline_hash,
@@ -808,7 +808,7 @@ class Library:
     def handle(self, method: str, params: dict[str, Any], store: Store) -> Any:
         self.bind(store)
         if method == "parameters.resolve":
-            robot = text(params.get("robot_id", "mogi"), "robot_id")
+            robot = text(params.get("robot_id", self.default_robot), "robot_id")
             return self.resolve_profile(robot, params)
         if method in ("profiles.get", "spawns.get"):
             return self._saved(
@@ -895,7 +895,6 @@ class Library:
                                 "description",
                                 "robot_id",
                                 "requested",
-                                "robot_overrides",
                                 "baseline_hash",
                                 "metadata_hash",
                             )
@@ -934,7 +933,7 @@ class Library:
                 raise ContractError("suite_spawn_version", "Unsupported suite spawn version")
             value = mapping(document.get("spawn"), "spawn")
             known_keys(value, {"name", "world_id", "x", "y", "yaw"}, "spawn")
-            value["robot_ids"] = params.get("robot_ids", ["mogi"])
+            value["robot_ids"] = params.get("robot_ids", list(self.robots))
             return self.handle("spawns.save", value, store)
         if method == "spawns.save":
             world = text(params.get("world_id"), "world_id")
@@ -952,7 +951,7 @@ class Library:
                 "y": number(params.get("y"), "y"),
                 "yaw": number(params.get("yaw"), "yaw"),
             }
-            robot_ids = params.get("robot_ids", ["mogi"])
+            robot_ids = params.get("robot_ids", list(self.robots))
             if not isinstance(robot_ids, list) or not robot_ids:
                 raise ContractError("robot_ids", "Select robots to validate the placement")
             reference = self.reference(world)

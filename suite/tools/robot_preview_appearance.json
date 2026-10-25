@@ -1,19 +1,4 @@
 {
-  "mogi": {
-    "references": ["https://github.com/MOGI-ROS/Week-7-8-ROS2-Navigation"],
-    "notes": "Custom benchmark example; preserve the original course model."
-  },
-  "tb3_burger": {
-    "references": ["https://emanual.robotis.com/docs/en/platform/turtlebot3/features/"],
-    "reference_images": ["https://en.robotis.com/img/sub/pruduct_img_TB301_pi.png"],
-    "materials": {
-      "base_link": [0.07, 0.07, 0.07, 1.0],
-      "wheel_left_link": [0.035, 0.035, 0.035, 1.0],
-      "wheel_right_link": [0.035, 0.035, 0.035, 1.0],
-      "base_scan": [0.07, 0.07, 0.07, 1.0]
-    },
-    "notes": "Black chassis and rubber finish matched to ROBOTIS photos. Native combined STL simplifies perforations, electronics and wiring."
-  },
   "tb3_waffle_pi": {
     "references": ["https://emanual.robotis.com/docs/en/platform/turtlebot3/features/"],
     "reference_images": ["https://en.robotis.com/img/sub/pruduct_img_TB301_pi.png"],
@@ -40,10 +25,5 @@
       }
     },
     "notes": "ROSbot 3 PRO body, red fenders, standard wheels and S2 lidar match Husarion photos. Replace the uncoloured OAK-D Pro STL with the same camera's coloured vendor COLLADA visual."
-  },
-  "lynx": {
-    "references": ["https://husarion.com/manuals/lynx/"],
-    "reference_images": ["https://husarion.com/assets/images/Lynx_0.2_shop_combine-dc3dc668049bdd2144d2d47a183eac7d.png"],
-    "notes": "Red fenders, black mounting rails and four off-road wheels match the manufacturer model. The benchmark adds its selected lidar."
   }
 }

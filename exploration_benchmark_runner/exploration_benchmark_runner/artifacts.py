@@ -133,7 +133,7 @@ class Recorder:
         self.writer.writeheader()
         self.manifest = dict(
             schema_version=6,  # 6: unmeasured resources are empty (null), not 0
-            robot=configuration.get("robot", {"id": "mogi", "metadata": "legacy"}),
+            robot=configuration["robot"],
             configuration=configuration,
             profile=profile,
             source=revision(root),

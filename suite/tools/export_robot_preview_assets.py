@@ -95,8 +95,6 @@ def export_robot(root: Path, output: Path, robot_id: str) -> None:
             for ancestor in [package_root, source_root, *source_root.parents[:3]]:
                 for filename in ("LICENSE", "LICENSE.txt", "COPYING", "NOTICE"):
                     candidates.append(ancestor / filename)
-            if package == "bme_ros2_navigation":
-                candidates.append(root / "simulation/Week-7-8-ROS2-Navigation/LICENSE")
             for notice in candidates:
                 if notice.is_file():
                     target = output / "notices" / (key + "-" + notice.name)

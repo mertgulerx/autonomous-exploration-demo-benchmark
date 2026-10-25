@@ -26,18 +26,15 @@ worlds:
       - {id: S2, name: S2, x: -6.625, y: -5.925, yaw: 0.0}
       - {id: S3, name: S3, x: 6.475, y: -5.975, yaw: 3.141593}
     robots:
-      mogi: {}
-      tb3_burger: {spawn_z: 0.04}
       tb3_waffle_pi: {spawn_z: 0.04}
       tb4_standard: {}
       rosbot_pro: {}
-      lynx: {}
     fuel_models: []
     resource_paths: []
     moving_objects: null
     descriptors:
       file: exploration_benchmark_runner/config/coverage/bookstore_descriptors.json
-      sha256: 8954682c64265928ebe2105391cdbb9855cc0e28cb589e8dca808b77d69387a1
+      sha256: 00817564310d8a5f0033393443c351a0ae53dfb19dcfd78eed39ce0451f44f5c
   fitslam_corridor:
     label: FIT-SLAM corridor
     tier: A
@@ -58,13 +55,15 @@ worlds:
     default_spawn: {id: default-fitslam_corridor, name: Default, x: 0.0, y: 0.0, z: 0.11, yaw: 0.0}
     spawns: []
     robots:
-      mogi: {}
+      tb3_waffle_pi: {}
+      tb4_standard: {}
+      rosbot_pro: {}
     fuel_models: []
     resource_paths: []
     moving_objects: null
     descriptors:
       file: exploration_benchmark_runner/config/coverage/fitslam_corridor_descriptors.json
-      sha256: 97f272166a837ea834ad7da672637e6d57832f741d642b7ae5b2bf9d801d31d4
+      sha256: 6a87494f75f34e41e882941c41239f7cf72221891750f3c70d023f59de5a8342
   corridor:
     label: Corridor
     tier: A
@@ -85,18 +84,15 @@ worlds:
       - {id: S2, name: S2, x: 4.575, y: -5.475, yaw: 1.570796}
       - {id: S3, name: S3, x: 4.425, y: 5.475, yaw: -1.570796}
     robots:
-      mogi: {}
-      tb3_burger: {}
       tb3_waffle_pi: {}
       tb4_standard: {}
       rosbot_pro: {}
-      lynx: {}
     fuel_models: []
     resource_paths: []
     moving_objects: null
     descriptors:
       file: exploration_benchmark_runner/config/coverage/corridor_descriptors.json
-      sha256: d8473087058e6d8a1a823f192fbdd07eaaf5869055cae81fa4ade824b1631b7e
+      sha256: 2f3449e916078350bb6ef19dd65da5a280cc390748dfcf57b4692c4bebfb0801
   warehouse:
     label: Warehouse
     tier: A
@@ -110,18 +106,15 @@ worlds:
     reference:
       metric_version: 2
       id: warehouse_coverage_v2
-      metadata_sha256: 900c40cf83d22f7f54b8f58318e550cfac6d615194a59ed2fe4dd2157afcdbbf
+      metadata_sha256: 5e2b902b9bb084c16f9eafe92356c539ec6501a79b247b0cf25b1cf35cfb2368
     default_spawn: {id: default-warehouse, name: Default, x: -12.97, y: 8.23, z: 0.10, yaw: 1.58}
     # S2: the maintainer's decision 60 (24 October 2026), farthest-point rule with 1.0 m clearance; no S3.
     spawns:
       - {id: S2, name: S2, x: 13.975, y: -24.025, yaw: 3.141593}
     robots:
-      mogi: {}
-      tb3_burger: {}
       tb3_waffle_pi: {}
       tb4_standard: {}
       rosbot_pro: {}
-      lynx: {}
     # The pinned Fuel models of warehouse_v2.json (its fuel: keys, compared case-insensitively).
     fuel_models:
       - https://fuel.gazebosim.org/1.0/MovAi/models/shelf/1
@@ -137,7 +130,7 @@ worlds:
     moving_objects: null
     descriptors:
       file: exploration_benchmark_runner/config/coverage/warehouse_descriptors.json
-      sha256: bb321f6f90af5b9d0e30be7cfd541a59a0697a1768ac47f0fabcb6314afdee41
+      sha256: a2c15a4e82fdf4494cf138daf3ff24fd5d3a20ba177720f1366870d16a77b939
   # World collection worlds (docs/WORLDS.md), added by `benchmark_reference import` in group order SC, P, F, RP,
   # MO (plans/worlds/I2). role evaluation for all (P1/P2 too, decision 57); family for tier F only (R-2).
   sc1_square_loop:
@@ -164,13 +157,15 @@ worlds:
       - {id: S2, name: S2, x: -13.5, y: 0.0, yaw: 1.570796}
       - {id: S3, name: S3, x: 13.5, y: 13.5, yaw: 3.141593}
     robots:
-      mogi: {}
+      tb3_waffle_pi: {}
+      tb4_standard: {}
+      rosbot_pro: {}
     fuel_models: []
     resource_paths: []
     moving_objects: null
     descriptors:
       file: exploration_benchmark_runner/config/coverage/sc1_square_loop_descriptors.json
-      sha256: 8c54f9ce8a833c2903e65125c7c1a01ed73b05f15f8923ec471a12ef99d92f5c
+      sha256: d789767153f6fdc09669301be188da78d0307a1e1c6c251a70f29e4f33556f6a
   sc2a_narrow_passage_1m2:
     label: "Narrow passage · 1.2 m corridor"
     tier: SC
@@ -195,13 +190,15 @@ worlds:
       - {id: S2, name: S2, x: -15.5, y: -5.0, yaw: 1.570796}
       - {id: S3, name: S3, x: 11.0, y: 4.0, yaw: 3.141593}
     robots:
-      mogi: {}
+      tb3_waffle_pi: {}
+      tb4_standard: {}
+      rosbot_pro: {}
     fuel_models: []
     resource_paths: []
     moving_objects: null
     descriptors:
       file: exploration_benchmark_runner/config/coverage/sc2a_narrow_passage_1m2_descriptors.json
-      sha256: 66ae233046aaf4b787b1e7fa54fb9b1709eeb133f915315d270b230940bfe241
+      sha256: 7959aad432fd55c99fe4f4c46f0c287ace6feae1578f622de048776bad6ae452
   sc2b_narrow_passage_2m0:
     label: "Narrow passage · 2.0 m corridor"
     tier: SC
@@ -226,13 +223,15 @@ worlds:
       - {id: S2, name: S2, x: -15.5, y: -5.0, yaw: 1.570796}
       - {id: S3, name: S3, x: 11.0, y: 4.0, yaw: 3.141593}
     robots:
-      mogi: {}
+      tb3_waffle_pi: {}
+      tb4_standard: {}
+      rosbot_pro: {}
     fuel_models: []
     resource_paths: []
     moving_objects: null
     descriptors:
       file: exploration_benchmark_runner/config/coverage/sc2b_narrow_passage_2m0_descriptors.json
-      sha256: 8bdbb1863ae173992f21a324a761ab2b2559003466d821cb245bf6340c88e26a
+      sha256: cc2b636f75e4d5094b90e2a802d0e59d6e2bc8dfe1deed751a950afb7d0a9d2a
   sc3_dead_end_comb:
     label: "Dead-end comb"
     tier: SC
@@ -257,13 +256,15 @@ worlds:
       - {id: S2, name: S2, x: 3.5, y: 0.0, yaw: 3.141593}
       - {id: S3, name: S3, x: 1.0, y: 8.0, yaw: -1.570796}
     robots:
-      mogi: {}
+      tb3_waffle_pi: {}
+      tb4_standard: {}
+      rosbot_pro: {}
     fuel_models: []
     resource_paths: []
     moving_objects: null
     descriptors:
       file: exploration_benchmark_runner/config/coverage/sc3_dead_end_comb_descriptors.json
-      sha256: 43479299ffa947588a88d70f007b906c9435905e9228c85bb2750d456f0072cd
+      sha256: 388e82acb4c8514680709f2834ed34d5c4c5d130c396c13835a9837b0e2af23a
   sc4_office_strip:
     label: "Office strip"
     tier: SC
@@ -288,13 +289,15 @@ worlds:
       - {id: S2, name: S2, x: -1.0, y: 0.0, yaw: 0.0}
       - {id: S3, name: S3, x: 5.2, y: 4.2, yaw: -1.570796}
     robots:
-      mogi: {}
+      tb3_waffle_pi: {}
+      tb4_standard: {}
+      rosbot_pro: {}
     fuel_models: []
     resource_paths: []
     moving_objects: null
     descriptors:
       file: exploration_benchmark_runner/config/coverage/sc4_office_strip_descriptors.json
-      sha256: 6b88fc867b576233725620d50ffae4f01d9a3811ecbddf32f412ae63a07e1850
+      sha256: e68a84eed70719c5e57b75e1abc49470e2a0dead8884ebeba42d16e774e84b7b
   sc5_nested_pockets:
     label: "Nested pockets"
     tier: SC
@@ -319,13 +322,15 @@ worlds:
       - {id: S2, name: S2, x: 5.5, y: 3.5, yaw: 3.141593}
       - {id: S3, name: S3, x: -5.5, y: -3.5, yaw: 0.0}
     robots:
-      mogi: {}
+      tb3_waffle_pi: {}
+      tb4_standard: {}
+      rosbot_pro: {}
     fuel_models: []
     resource_paths: []
     moving_objects: null
     descriptors:
       file: exploration_benchmark_runner/config/coverage/sc5_nested_pockets_descriptors.json
-      sha256: 9fdf44f56c83fb6b58a6c81e313794205e04c287cdeb8951e4acd43e43b28103
+      sha256: 508505dfb577d5a0ec3c94eeae90cdf0a7f5d4d57babd0f6b909b4475433423d
   sc6_open_hall:
     label: "Open hall"
     tier: SC
@@ -350,13 +355,15 @@ worlds:
       - {id: S2, name: S2, x: -17.0, y: -17.0, yaw: 0.785398}
       - {id: S3, name: S3, x: 17.0, y: -6.0, yaw: 3.141593}
     robots:
-      mogi: {}
+      tb3_waffle_pi: {}
+      tb4_standard: {}
+      rosbot_pro: {}
     fuel_models: []
     resource_paths: []
     moving_objects: null
     descriptors:
       file: exploration_benchmark_runner/config/coverage/sc6_open_hall_descriptors.json
-      sha256: 0d392528371ed72724512820a70f5c1d7aa0259e909f62873c0eaf2bf3463e91
+      sha256: a131877facb51e937d7b1b91577731569bfbd204a20bfa7f7d8b38f2f1c7c4a6
   sc7a_clutter_field_low:
     label: "Clutter field · 45 blocks"
     tier: SC
@@ -381,13 +388,15 @@ worlds:
       - {id: S2, name: S2, x: -13.0, y: -13.0, yaw: 0.785398}
       - {id: S3, name: S3, x: 13.0, y: 6.0, yaw: 3.141593}
     robots:
-      mogi: {}
+      tb3_waffle_pi: {}
+      tb4_standard: {}
+      rosbot_pro: {}
     fuel_models: []
     resource_paths: []
     moving_objects: null
     descriptors:
       file: exploration_benchmark_runner/config/coverage/sc7a_clutter_field_low_descriptors.json
-      sha256: f42e2e4204205360c1d0c33837e2d77959d54e80d2719fc4b5f5d1965ff3a002
+      sha256: 89263e377c9861872b89f32f748fd5cdc6d547eff664db46645d3f603b8e69d3
   sc7b_clutter_field_high:
     label: "Clutter field · 90 blocks"
     tier: SC
@@ -412,13 +421,15 @@ worlds:
       - {id: S2, name: S2, x: -13.0, y: -13.0, yaw: 0.785398}
       - {id: S3, name: S3, x: 13.0, y: 6.0, yaw: 3.141593}
     robots:
-      mogi: {}
+      tb3_waffle_pi: {}
+      tb4_standard: {}
+      rosbot_pro: {}
     fuel_models: []
     resource_paths: []
     moving_objects: null
     descriptors:
       file: exploration_benchmark_runner/config/coverage/sc7b_clutter_field_high_descriptors.json
-      sha256: eb279dda78e8f60a870c99dc38edcec92990eac48405a38d3a4d3d2d3f812294
+      sha256: 416e5c425e2f2c6a4795627571b88d5edf7623eb1cfebb43f4817a8580d797c2
   sc8_zigzag:
     label: "Zigzag"
     tier: SC
@@ -443,13 +454,15 @@ worlds:
       - {id: S2, name: S2, x: 0.0, y: 0.0, yaw: 0.0}
       - {id: S3, name: S3, x: 13.5, y: 8.4, yaw: 3.141593}
     robots:
-      mogi: {}
+      tb3_waffle_pi: {}
+      tb4_standard: {}
+      rosbot_pro: {}
     fuel_models: []
     resource_paths: []
     moving_objects: null
     descriptors:
       file: exploration_benchmark_runner/config/coverage/sc8_zigzag_descriptors.json
-      sha256: 71518b46cd23bc72b612a230640ca2740ca934562c8c36ba45ead7f726770db9
+      sha256: 68a207f3392dec1ee66fd6d7c0942062b376fa0a5d45595c38a4522515121e9a
   p1_racetrack_office:
     label: "Racetrack office"
     tier: P
@@ -474,13 +487,15 @@ worlds:
       - {id: S2, name: S2, x: -13.8, y: -4.0, yaw: 1.570796}
       - {id: S3, name: S3, x: -6.25, y: -2.55, yaw: -1.570796}
     robots:
-      mogi: {}
+      tb3_waffle_pi: {}
+      tb4_standard: {}
+      rosbot_pro: {}
     fuel_models: []
     resource_paths: []
     moving_objects: null
     descriptors:
       file: exploration_benchmark_runner/config/coverage/p1_racetrack_office_descriptors.json
-      sha256: e0885b42b7431f9d05ee5591fce0d15d0233961e180e1d9208623a93c8d707fe
+      sha256: 0c3f205a9d2b90d407fc0e97cd6aad5f6ef839b4c91f166c27ae2421f838c141
   p2_lobby_wing:
     label: "Lobby and wing"
     tier: P
@@ -505,13 +520,15 @@ worlds:
       - {id: S2, name: S2, x: 13.6, y: 5.2, yaw: -1.570796}
       - {id: S3, name: S3, x: 11.0, y: 0.0, yaw: 3.141593}
     robots:
-      mogi: {}
+      tb3_waffle_pi: {}
+      tb4_standard: {}
+      rosbot_pro: {}
     fuel_models: []
     resource_paths: []
     moving_objects: null
     descriptors:
       file: exploration_benchmark_runner/config/coverage/p2_lobby_wing_descriptors.json
-      sha256: d4e265b13ce13902dc62b400945b6a7ee2d1f0d93f18d15f80cbe80ee36e2caf
+      sha256: 3dfe3e24d4b45464e8546c8e6be2e1ec384c8b6475825668101873d67a70f10d
   f1_maze_s08_perfect_rb:
     label: "Maze 8×8 · perfect · backtracker"
     tier: F
@@ -534,13 +551,15 @@ worlds:
     spawns:
       - {id: S1, name: S1, x: 8.75, y: -3.75, yaw: 4.712389}
     robots:
-      mogi: {}
+      tb3_waffle_pi: {}
+      tb4_standard: {}
+      rosbot_pro: {}
     fuel_models: []
     resource_paths: []
     moving_objects: null
     descriptors:
       file: exploration_benchmark_runner/config/coverage/f1_maze_s08_perfect_rb_descriptors.json
-      sha256: 5ebab70b179d85924cf1655a5607df8fac37f367df937ebe0d6f878c38818d33
+      sha256: f2af3ed6893f50e9db628e75fa0e5b64c829d8d2b6641d8c84aebd5f5bb93f53
   f1_maze_s08_perfect_kr:
     label: "Maze 8×8 · perfect · Kruskal"
     tier: F
@@ -563,13 +582,15 @@ worlds:
     spawns:
       - {id: S1, name: S1, x: -1.25, y: -1.25, yaw: 3.141593}
     robots:
-      mogi: {}
+      tb3_waffle_pi: {}
+      tb4_standard: {}
+      rosbot_pro: {}
     fuel_models: []
     resource_paths: []
     moving_objects: null
     descriptors:
       file: exploration_benchmark_runner/config/coverage/f1_maze_s08_perfect_kr_descriptors.json
-      sha256: a1044cfcade5ce300e81cfe82cccd9fdf74a2ddfb63f2a1ad663d3f053ceddf1
+      sha256: 5f63d844814b6289524f0d9cdbb7749ec4c941312caa97cd018350ed4d67749f
   f1_maze_s08_braid50_rb:
     label: "Maze 8×8 · braid 0.5 · backtracker"
     tier: F
@@ -592,13 +613,15 @@ worlds:
     spawns:
       - {id: S1, name: S1, x: -1.25, y: 3.75, yaw: 1.570796}
     robots:
-      mogi: {}
+      tb3_waffle_pi: {}
+      tb4_standard: {}
+      rosbot_pro: {}
     fuel_models: []
     resource_paths: []
     moving_objects: null
     descriptors:
       file: exploration_benchmark_runner/config/coverage/f1_maze_s08_braid50_rb_descriptors.json
-      sha256: f6bdaae337280db413504d6961d275c397af29f142b5ce57e82b07029a1ca1e5
+      sha256: 1feabdf3ef8a6b7a9ccab3cfc846f67f7325f1bd0a3c934b2252c99763077937
   f1_maze_s08_braid50_kr:
     label: "Maze 8×8 · braid 0.5 · Kruskal"
     tier: F
@@ -621,13 +644,15 @@ worlds:
     spawns:
       - {id: S1, name: S1, x: -6.25, y: -8.75, yaw: 0.0}
     robots:
-      mogi: {}
+      tb3_waffle_pi: {}
+      tb4_standard: {}
+      rosbot_pro: {}
     fuel_models: []
     resource_paths: []
     moving_objects: null
     descriptors:
       file: exploration_benchmark_runner/config/coverage/f1_maze_s08_braid50_kr_descriptors.json
-      sha256: 6c13e4f1552b36490fbff3369981897c29300a3cb36a66f3a69a8372f8b74532
+      sha256: d894874d43a0d62ed59ef1682f4d3c435757dc4785e26f60e41aa03040e7f12b
   f1_maze_s14_perfect_rb:
     label: "Maze 14×14 · perfect · backtracker"
     tier: F
@@ -650,13 +675,15 @@ worlds:
     spawns:
       - {id: S1, name: S1, x: 11.25, y: -3.75, yaw: 0.0}
     robots:
-      mogi: {}
+      tb3_waffle_pi: {}
+      tb4_standard: {}
+      rosbot_pro: {}
     fuel_models: []
     resource_paths: []
     moving_objects: null
     descriptors:
       file: exploration_benchmark_runner/config/coverage/f1_maze_s14_perfect_rb_descriptors.json
-      sha256: fbc6ee8c42c0f677d75a3f44183c213877eea4baccbeef959b73c9e467cc6043
+      sha256: 5b31d9241030917f8c1ac0b2ef205208fc54c89468fdb5861572eae24e5b0335
   f1_maze_s14_perfect_kr:
     label: "Maze 14×14 · perfect · Kruskal"
     tier: F
@@ -679,13 +706,15 @@ worlds:
     spawns:
       - {id: S1, name: S1, x: 16.25, y: -11.25, yaw: 1.570796}
     robots:
-      mogi: {}
+      tb3_waffle_pi: {}
+      tb4_standard: {}
+      rosbot_pro: {}
     fuel_models: []
     resource_paths: []
     moving_objects: null
     descriptors:
       file: exploration_benchmark_runner/config/coverage/f1_maze_s14_perfect_kr_descriptors.json
-      sha256: 8e0137a9edfccb39437121c891f4bcb6b917eaf6fe45e49f417f93b6869edb99
+      sha256: f44936e56c53a9069d684f5bb6929c5b79da24afea95c642baf29f8b191e9f2b
   f1_maze_s14_braid50_rb:
     label: "Maze 14×14 · braid 0.5 · backtracker"
     tier: F
@@ -708,13 +737,15 @@ worlds:
     spawns:
       - {id: S1, name: S1, x: -16.25, y: 8.75, yaw: 1.570796}
     robots:
-      mogi: {}
+      tb3_waffle_pi: {}
+      tb4_standard: {}
+      rosbot_pro: {}
     fuel_models: []
     resource_paths: []
     moving_objects: null
     descriptors:
       file: exploration_benchmark_runner/config/coverage/f1_maze_s14_braid50_rb_descriptors.json
-      sha256: 9c7f45f28b246ee27e6daae11226156b6d031e3b88da3310105443aab689e30a
+      sha256: 4b9b55539af0a06155063e3312582c3df81a68f3fe69330a229e54c94244dbff
   f1_maze_s14_braid50_kr:
     label: "Maze 14×14 · braid 0.5 · Kruskal"
     tier: F
@@ -737,13 +768,15 @@ worlds:
     spawns:
       - {id: S1, name: S1, x: -3.75, y: 13.75, yaw: 3.141593}
     robots:
-      mogi: {}
+      tb3_waffle_pi: {}
+      tb4_standard: {}
+      rosbot_pro: {}
     fuel_models: []
     resource_paths: []
     moving_objects: null
     descriptors:
       file: exploration_benchmark_runner/config/coverage/f1_maze_s14_braid50_kr_descriptors.json
-      sha256: 562d2fc08844fb889a8127fb5d8cb84b654d49c645affd180483a1afdd1e12a7
+      sha256: 1dad410503c5da4cc40c63a4880b574c4f887fedd948121742379d55e0c8a142
   f2_office_f30x20_r08_d1:
     label: "Office 30×20 m · 8 rooms · 1 door"
     tier: F
@@ -766,13 +799,15 @@ worlds:
     spawns:
       - {id: S1, name: S1, x: 9.925, y: 2.175, yaw: 1.570796}
     robots:
-      mogi: {}
+      tb3_waffle_pi: {}
+      tb4_standard: {}
+      rosbot_pro: {}
     fuel_models: []
     resource_paths: []
     moving_objects: null
     descriptors:
       file: exploration_benchmark_runner/config/coverage/f2_office_f30x20_r08_d1_descriptors.json
-      sha256: f05fa0c2fb04ae523b5bed761ca5c19f8bbb6555bc7ada75137a11506fdd2ed1
+      sha256: d3a7531f868da03e6f782db4ac0c5c34ea9eab01884e3a652a3e10e478f3345d
   f2_office_f30x20_r08_d2:
     label: "Office 30×20 m · 8 rooms · 2 doors"
     tier: F
@@ -795,13 +830,15 @@ worlds:
     spawns:
       - {id: S1, name: S1, x: -0.825, y: -8.475, yaw: 1.570796}
     robots:
-      mogi: {}
+      tb3_waffle_pi: {}
+      tb4_standard: {}
+      rosbot_pro: {}
     fuel_models: []
     resource_paths: []
     moving_objects: null
     descriptors:
       file: exploration_benchmark_runner/config/coverage/f2_office_f30x20_r08_d2_descriptors.json
-      sha256: a1c262c84811b25f72e0115d7a8e29d559d16f76db7ff7df7e0046b78c7ebe56
+      sha256: 6aeee6916930e164b9a7c5a37d5605d7a8fd8345708c3d6959fc9f68e9ae271f
   f2_office_f30x20_r20_d1:
     label: "Office 30×20 m · 20 rooms · 1 door"
     tier: F
@@ -824,13 +861,15 @@ worlds:
     spawns:
       - {id: S1, name: S1, x: -11.325, y: 3.175, yaw: 1.570796}
     robots:
-      mogi: {}
+      tb3_waffle_pi: {}
+      tb4_standard: {}
+      rosbot_pro: {}
     fuel_models: []
     resource_paths: []
     moving_objects: null
     descriptors:
       file: exploration_benchmark_runner/config/coverage/f2_office_f30x20_r20_d1_descriptors.json
-      sha256: 96d89e1ae20151422070713d741d0b6b7aa5253877c2aa78a5c43a913b0b6fb2
+      sha256: 8c1f8529c924e95afe4fd7c1a2846984da37b95674e44711fbd1a8097b55e762
   f2_office_f30x20_r20_d2:
     label: "Office 30×20 m · 20 rooms · 2 doors"
     tier: F
@@ -853,13 +892,15 @@ worlds:
     spawns:
       - {id: S1, name: S1, x: -11.175, y: -2.475, yaw: 1.570796}
     robots:
-      mogi: {}
+      tb3_waffle_pi: {}
+      tb4_standard: {}
+      rosbot_pro: {}
     fuel_models: []
     resource_paths: []
     moving_objects: null
     descriptors:
       file: exploration_benchmark_runner/config/coverage/f2_office_f30x20_r20_d2_descriptors.json
-      sha256: ce52834dff3bf4b1a2758414a2f61eb96d25a4607f83d5a7c3d942b95015f7b8
+      sha256: a8a9ac719e46c70af1d1eea1b7b214138d60de5509ea8dd364b741c69dfc7dbe
   f2_office_f50x30_r08_d1:
     label: "Office 50×30 m · 8 rooms · 1 door"
     tier: F
@@ -882,13 +923,15 @@ worlds:
     spawns:
       - {id: S1, name: S1, x: -16.375, y: -7.225, yaw: 3.141593}
     robots:
-      mogi: {}
+      tb3_waffle_pi: {}
+      tb4_standard: {}
+      rosbot_pro: {}
     fuel_models: []
     resource_paths: []
     moving_objects: null
     descriptors:
       file: exploration_benchmark_runner/config/coverage/f2_office_f50x30_r08_d1_descriptors.json
-      sha256: 07ee72ea53101f19df46e786936a93e38e93ef7f2a17b6d88083abde5402cba7
+      sha256: 88266709a4986155fe7adc366ca37b7aa4e7a7d14bbc839bf0d8407a3e9db552
   f2_office_f50x30_r08_d2:
     label: "Office 50×30 m · 8 rooms · 2 doors"
     tier: F
@@ -911,13 +954,15 @@ worlds:
     spawns:
       - {id: S1, name: S1, x: 11.025, y: -3.825, yaw: 0.0}
     robots:
-      mogi: {}
+      tb3_waffle_pi: {}
+      tb4_standard: {}
+      rosbot_pro: {}
     fuel_models: []
     resource_paths: []
     moving_objects: null
     descriptors:
       file: exploration_benchmark_runner/config/coverage/f2_office_f50x30_r08_d2_descriptors.json
-      sha256: 76d4a479155180f37333e7c8601c5bd326fc98d64b003bd7cd44d4aec64937cc
+      sha256: 3d655ac2d1abfae8734cf8bf1548ca8bf8f6573c5ec3d8eb45b109aac7922667
   f2_office_f50x30_r20_d1:
     label: "Office 50×30 m · 20 rooms · 1 door"
     tier: F
@@ -940,13 +985,15 @@ worlds:
     spawns:
       - {id: S1, name: S1, x: -11.725, y: 12.575, yaw: 3.141593}
     robots:
-      mogi: {}
+      tb3_waffle_pi: {}
+      tb4_standard: {}
+      rosbot_pro: {}
     fuel_models: []
     resource_paths: []
     moving_objects: null
     descriptors:
       file: exploration_benchmark_runner/config/coverage/f2_office_f50x30_r20_d1_descriptors.json
-      sha256: 9e1efa9d64241ad8b7772a89322b1f1deb972685fac1fb54d2a72f7a1786e19a
+      sha256: ef14e4830ac609385c8e66eaa3fc7ae9f70daad4251bc584e754187f07842331
   f2_office_f50x30_r20_d2:
     label: "Office 50×30 m · 20 rooms · 2 doors"
     tier: F
@@ -969,13 +1016,15 @@ worlds:
     spawns:
       - {id: S1, name: S1, x: 11.175, y: 5.475, yaw: 4.712389}
     robots:
-      mogi: {}
+      tb3_waffle_pi: {}
+      tb4_standard: {}
+      rosbot_pro: {}
     fuel_models: []
     resource_paths: []
     moving_objects: null
     descriptors:
       file: exploration_benchmark_runner/config/coverage/f2_office_f50x30_r20_d2_descriptors.json
-      sha256: 10828f6c44ddec67a094c3e8874d806e0e627911ad0b7c79d73cc573d6861f1a
+      sha256: f2f557b22ba1fa16d29fea407f1be04cf67a2a38f81126b58f354cf3e5c9176a
   f3_aisles_h30x20_a150_x1:
     label: "Aisles 30×20 m · 1.5 m aisles · 1 cross-aisle"
     tier: F
@@ -998,13 +1047,15 @@ worlds:
     spawns:
       - {id: S1, name: S1, x: 7.725, y: 5.475, yaw: 3.141593}
     robots:
-      mogi: {}
+      tb3_waffle_pi: {}
+      tb4_standard: {}
+      rosbot_pro: {}
     fuel_models: []
     resource_paths: []
     moving_objects: null
     descriptors:
       file: exploration_benchmark_runner/config/coverage/f3_aisles_h30x20_a150_x1_descriptors.json
-      sha256: 358e301010edaf748ce7933e6b50207c46cd729a18cfe8fbe7a1be457daa3ec7
+      sha256: 450a05ba0138868595d2383fa7db46c84defbf7654a7195f1f9c0fa6ffd9d4be
   f3_aisles_h30x20_a150_x3:
     label: "Aisles 30×20 m · 1.5 m aisles · 3 cross-aisles"
     tier: F
@@ -1027,13 +1078,15 @@ worlds:
     spawns:
       - {id: S1, name: S1, x: -7.525, y: 2.175, yaw: 0.0}
     robots:
-      mogi: {}
+      tb3_waffle_pi: {}
+      tb4_standard: {}
+      rosbot_pro: {}
     fuel_models: []
     resource_paths: []
     moving_objects: null
     descriptors:
       file: exploration_benchmark_runner/config/coverage/f3_aisles_h30x20_a150_x3_descriptors.json
-      sha256: b8d341adfe84afe3c15fc781a60a2adccce745ccffbc5167e10a3effb2f9d6ed
+      sha256: 942ee8acc5fb0f0f20881170284448d748e7bbbf3e7ff4155a71c5d6de6da739
   f3_aisles_h30x20_a300_x1:
     label: "Aisles 30×20 m · 3.0 m aisles · 1 cross-aisle"
     tier: F
@@ -1056,13 +1109,15 @@ worlds:
     spawns:
       - {id: S1, name: S1, x: 7.425, y: -6.525, yaw: 3.141593}
     robots:
-      mogi: {}
+      tb3_waffle_pi: {}
+      tb4_standard: {}
+      rosbot_pro: {}
     fuel_models: []
     resource_paths: []
     moving_objects: null
     descriptors:
       file: exploration_benchmark_runner/config/coverage/f3_aisles_h30x20_a300_x1_descriptors.json
-      sha256: 4962630f88739190b69efaee22d980e2cdc569485a124a1cbfd5e0b43f1e2acb
+      sha256: 3e1eca539ab0a3315d05fa574cb2007cd7cca2fc0db2967816bb822e193a7c6b
   f3_aisles_h30x20_a300_x3:
     label: "Aisles 30×20 m · 3.0 m aisles · 3 cross-aisles"
     tier: F
@@ -1085,13 +1140,15 @@ worlds:
     spawns:
       - {id: S1, name: S1, x: 12.625, y: 8.625, yaw: 3.141593}
     robots:
-      mogi: {}
+      tb3_waffle_pi: {}
+      tb4_standard: {}
+      rosbot_pro: {}
     fuel_models: []
     resource_paths: []
     moving_objects: null
     descriptors:
       file: exploration_benchmark_runner/config/coverage/f3_aisles_h30x20_a300_x3_descriptors.json
-      sha256: 4afa66296a1443cfb6a69f18c01b56d387cfc61e9e788d4ef51707d542d92db6
+      sha256: ddf42e6eb5402922509c0d0374104a734ec7a89bb4322bdb46eebf9890cd222e
   f3_aisles_h60x40_a300_x1:
     label: "Aisles 60×40 m · 3.0 m aisles · 1 cross-aisle"
     tier: F
@@ -1114,13 +1171,15 @@ worlds:
     spawns:
       - {id: S1, name: S1, x: 23.675, y: -7.175, yaw: 3.141593}
     robots:
-      mogi: {}
+      tb3_waffle_pi: {}
+      tb4_standard: {}
+      rosbot_pro: {}
     fuel_models: []
     resource_paths: []
     moving_objects: null
     descriptors:
       file: exploration_benchmark_runner/config/coverage/f3_aisles_h60x40_a300_x1_descriptors.json
-      sha256: aa80eedf7cdd28100341f770ec9d84d6f6a4708d5e15931bd86c5006a60528c0
+      sha256: 54638cc3ab01f2b88785d9c46db6b910c10a32b58f97e7a6200b54603f3d1305
   f4_forest_s40_d003:
     label: "Forest 40×40 m · 0.03 trunks/m²"
     tier: F
@@ -1143,13 +1202,15 @@ worlds:
     spawns:
       - {id: S1, name: S1, x: 18.575, y: -8.175, yaw: 1.570796}
     robots:
-      mogi: {}
+      tb3_waffle_pi: {}
+      tb4_standard: {}
+      rosbot_pro: {}
     fuel_models: []
     resource_paths: []
     moving_objects: null
     descriptors:
       file: exploration_benchmark_runner/config/coverage/f4_forest_s40_d003_descriptors.json
-      sha256: cc46af69de297fef2cb7b9829348e079e3aff27c0b1b0b287448627ce1acb92e
+      sha256: 9a29733e5eae5043a9eabf61c2be2aabd9cde0830dbb724530036dc3c45727bb
   f4_forest_s80_d001:
     label: "Forest 80×80 m · 0.01 trunks/m²"
     tier: F
@@ -1172,13 +1233,15 @@ worlds:
     spawns:
       - {id: S1, name: S1, x: 11.175, y: -12.775, yaw: 0.0}
     robots:
-      mogi: {}
+      tb3_waffle_pi: {}
+      tb4_standard: {}
+      rosbot_pro: {}
     fuel_models: []
     resource_paths: []
     moving_objects: null
     descriptors:
       file: exploration_benchmark_runner/config/coverage/f4_forest_s80_d001_descriptors.json
-      sha256: a5cf5bf2c5e2d345b9a231c1dab281cc0d59ae64096d57a52293f9591300d05a
+      sha256: b07cabcf6b3043a455f3ca110b5bb590c4ed05801ecf4c297a6316d08062012a
   f4_forest_s80_d003:
     label: "Forest 80×80 m · 0.03 trunks/m²"
     tier: F
@@ -1201,13 +1264,15 @@ worlds:
     spawns:
       - {id: S1, name: S1, x: -25.975, y: -25.125, yaw: 0.0}
     robots:
-      mogi: {}
+      tb3_waffle_pi: {}
+      tb4_standard: {}
+      rosbot_pro: {}
     fuel_models: []
     resource_paths: []
     moving_objects: null
     descriptors:
       file: exploration_benchmark_runner/config/coverage/f4_forest_s80_d003_descriptors.json
-      sha256: a97f946e628534f326de9c9148e817742f49f576663582acc4af307ec5179e9d
+      sha256: 84749688180da87985d6dfe7395c86413a2c1613b93d4bfe8fcb0114ad89c3b4
   f5_urban_w06_b15:
     label: "Urban blocks · 6 m streets · 15 m blocks"
     tier: F
@@ -1230,13 +1295,15 @@ worlds:
     spawns:
       - {id: S1, name: S1, x: 9.625, y: 14.475, yaw: 0.0}
     robots:
-      mogi: {}
+      tb3_waffle_pi: {}
+      tb4_standard: {}
+      rosbot_pro: {}
     fuel_models: []
     resource_paths: []
     moving_objects: null
     descriptors:
       file: exploration_benchmark_runner/config/coverage/f5_urban_w06_b15_descriptors.json
-      sha256: abbdbae039548c368543fa694d8ce8f65cd4f23a84d2bcc0398947df1393408c
+      sha256: 080365d97efd1e7f148989c84e1e6234eb6ca646cfc6dc3bfcf3695461edc0b0
   rp1_aces3_austin:
     label: "ACES3 Austin"
     tier: RP
@@ -1261,13 +1328,15 @@ worlds:
       - {id: S2, name: S2, x: 24.23, y: -20.82, yaw: 1.570796}
       - {id: S3, name: S3, x: 24.0, y: -0.2, yaw: 3.141593}
     robots:
-      mogi: {}
+      tb3_waffle_pi: {}
+      tb4_standard: {}
+      rosbot_pro: {}
     fuel_models: []
     resource_paths: []
     moving_objects: null
     descriptors:
       file: exploration_benchmark_runner/config/coverage/rp1_aces3_austin_descriptors.json
-      sha256: 23b36b85692e9e2adac52308e6d05c80e198dd6add30500adcea37a689442de6
+      sha256: e72c629809082c0e30ec8d205774bdcdbdfee921ada3724a127faa1332b6afd1
   rp2_industrial_warehouse:
     label: "Industrial warehouse"
     tier: RP
@@ -1292,13 +1361,15 @@ worlds:
       - {id: S2, name: S2, x: 15.5, y: 11.0, yaw: 3.141593}
       - {id: S3, name: S3, x: 25.5, y: -11.0, yaw: 1.570796}
     robots:
-      mogi: {}
+      tb3_waffle_pi: {}
+      tb4_standard: {}
+      rosbot_pro: {}
     fuel_models: []
     resource_paths: []
     moving_objects: null
     descriptors:
       file: exploration_benchmark_runner/config/coverage/rp2_industrial_warehouse_descriptors.json
-      sha256: 89cf0f56650dba588b6f5aaa33b3ea5460740058a6c83c1e77d3a4e4825a9dbf
+      sha256: 87974dbd3a4165ffb878a954ea017589fe68cacbe875f182256b29907881af5d
   rp3_santa_maria_del_mar:
     label: "Santa Maria del Mar"
     tier: RP
@@ -1323,13 +1394,15 @@ worlds:
       - {id: S2, name: S2, x: -121.35, y: -48.55, yaw: 0.0}
       - {id: S3, name: S3, x: 78.35, y: -87.05, yaw: 0.0}
     robots:
-      mogi: {}
+      tb3_waffle_pi: {}
+      tb4_standard: {}
+      rosbot_pro: {}
     fuel_models: []
     resource_paths: []
     moving_objects: null
     descriptors:
       file: exploration_benchmark_runner/config/coverage/rp3_santa_maria_del_mar_descriptors.json
-      sha256: 884e31f491f295778f34ed42d30e22365e240362c874f3528db809345d2c86a9
+      sha256: bbb806d68c5640d65ad957657e2be918280ea3366cfe813a3543cc668fd708b9
   mo1_office_strip_moving:
     label: "Office strip · moving objects"
     tier: MO
@@ -1354,13 +1427,15 @@ worlds:
       - {id: S2, name: S2, x: -1.0, y: 0.0, yaw: 0.0}
       - {id: S3, name: S3, x: 5.2, y: 4.2, yaw: -1.570796}
     robots:
-      mogi: {}
+      tb3_waffle_pi: {}
+      tb4_standard: {}
+      rosbot_pro: {}
     fuel_models: []
     resource_paths: []
     moving_objects: {system: benchmark::MovingObjects, format_version: 1, velocity_mode: pose_and_velocity, topic: /benchmark/moving_objects/pose, count: 5}
     descriptors:
       file: exploration_benchmark_runner/config/coverage/mo1_office_strip_moving_descriptors.json
-      sha256: 29f30fbc88aee7da319ef11fd617d0b78ad860a5a81e92545970acac7d8fda78
+      sha256: 2b7defc6ae61d729ac1180c2a959708ef4e71b59a9cafdcfabdc64460bd79e6a
   mo2_warehouse_moving:
     label: "Industrial warehouse · moving objects"
     tier: MO
@@ -1385,10 +1460,12 @@ worlds:
       - {id: S2, name: S2, x: 15.5, y: 11.0, yaw: 3.141593}
       - {id: S3, name: S3, x: 25.5, y: -11.0, yaw: 1.570796}
     robots:
-      mogi: {}
+      tb3_waffle_pi: {}
+      tb4_standard: {}
+      rosbot_pro: {}
     fuel_models: []
     resource_paths: []
     moving_objects: {system: benchmark::MovingObjects, format_version: 1, velocity_mode: pose_and_velocity, topic: /benchmark/moving_objects/pose, count: 28}
     descriptors:
       file: exploration_benchmark_runner/config/coverage/mo2_warehouse_moving_descriptors.json
-      sha256: c41c7e404ec78a16f9810e38b90e80e2052bdf22c4a16e21f1848264e900e88a
+      sha256: bf850aca8aa23244cc57ff44251bd25aeb03cd70ea12abc6909810362f34f0ce

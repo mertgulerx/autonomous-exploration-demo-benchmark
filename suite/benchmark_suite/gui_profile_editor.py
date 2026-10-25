@@ -15,7 +15,7 @@
 """The profile editor (14): an overlay modal on the window's ``ModalHost``.
 
 It keeps the rules of the earlier dialog: managed parameters and hidden groups are not shown (their requested
-values are kept), integer and float fields validate as before, MOGI adds its physical settings, an edit
+values are kept), integer and float fields validate as before, an edit
 replaces the saved profile (the engine gives it a new ID under the same ``family_id``) while New saves another
 one, explorer YAML imports through
 ``parameters.resolve`` and exports the resolved values, and errors stay in the editor.
@@ -34,15 +34,12 @@ from .gui_cells import OverlayScrollBar
 from .gui_controls import KeySelect, Switch, UnderlineTabs
 from .gui_menus import show_tooltip
 from .gui_profile_preview import (
-    PHYSICAL_GROUP,
-    PHYSICAL_SETTINGS,
     editor_groups,
     parameter_label,
-    physical_value,
     value_text,
 )
 from .gui_review import first_sentence
-from .gui_support import FloatEdit, Transport
+from .gui_support import Transport
 from .gui_theme import ThemeManager, font
 from .gui_widgets import (
     BODY,
@@ -105,7 +102,7 @@ class LockedField(Themed):
 
 
 class ChangeSummary(Themed, CssBox):
-    """``.efoot .sum``: "<b>3 changes</b> from MOGI Default"."""
+    """``.efoot .sum``: "<b>3 changes</b> from <robot> Default"."""
 
     def __init__(self, themes: ThemeManager, robot: str) -> None:
         super().__init__(themes)
@@ -323,7 +320,7 @@ class ProfileEditor(ModalCard):
         self.description = QtWidgets.QLineEdit(profile.get("description", ""), self)
         self.description.setAccessibleName("Profile description")
 
-        self.groups = editor_groups(catalog["parameters"], robot_id)
+        self.groups = editor_groups(catalog["parameters"])
         self.tabs = UnderlineTabs(
             themes, [(g, None) for g in self.groups], self, gap=22, rule=False
         )
@@ -341,18 +338,6 @@ class ProfileEditor(ModalCard):
             if metadata["managed"] or metadata["group"] in HIDDEN_GROUPS:
                 continue
             self._add_row(key, metadata)
-        self.physical: dict[str, FloatEdit] = {}
-        if robot_id == "mogi":
-            for key, name, unit in PHYSICAL_SETTINGS:
-                field = FloatEdit(physical_value(profile, key, robot[key]))
-                self._style_field(field)
-                field.textChanged.connect(self.changed)
-                self.physical[key] = field
-                row = ParameterRow(
-                    themes, key, name, unit, "", robot[key], field, self.view.content
-                )
-                row.reset.clicked.connect(lambda _=False, k=key: self.reset_value(k))
-                self.rows[key], self.group_of[key] = row, PHYSICAL_GROUP
 
         self.footer = FlexRow(self, gap=8, left=24, right=24)
         self.import_button = Button(themes, "Import YAML", icon="upload")
@@ -478,8 +463,6 @@ class ProfileEditor(ModalCard):
 
     def is_changed(self, key: str) -> bool:
         try:
-            if key in self.physical:
-                return bool(self.physical[key].value() != self.robot[key])
             return bool(self.value(key) != self.defaults[key])
         except ValueError:
             return True
@@ -489,7 +472,7 @@ class ProfileEditor(ModalCard):
         for key, row in self.rows.items():
             changed = self.is_changed(key)
             row.set_changed(changed)
-            field = self.fields.get(key) or self.physical.get(key)
+            field = self.fields.get(key)
             if isinstance(field, QtWidgets.QLineEdit) and field.property("bold") != changed:
                 field.setProperty("bold", changed)  # ``.er.chg .input``: 600
                 field.setFont(font(13, 600 if changed else 400, tabular=True))
@@ -519,9 +502,6 @@ class ProfileEditor(ModalCard):
 
     def reset_value(self, key: str) -> None:
         """A row's reset button: the field shows its Default again (saving drops the key)."""
-        if key in self.physical:
-            self.physical[key].setValue(self.robot[key])
-            return
         field, default = self.fields[key], self.defaults[key]
         if isinstance(field, KeySelect):
             field.setCurrentText(
@@ -543,14 +523,11 @@ class ProfileEditor(ModalCard):
             "name": self.name.text(),
             "description": self.description.text(),
             "requested": requested,
-            "robot_overrides": {k: w.value() for k, w in self.physical.items()},
         }
 
     def reset(self) -> None:
         self.profile["requested"] = {}
         self.apply_values(self.defaults)
-        for key, field in self.physical.items():
-            field.setValue(self.robot[key])
 
     # engine
 

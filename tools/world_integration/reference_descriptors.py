@@ -16,8 +16,9 @@
 
 Runs worldgen's descriptor functions (`worldgen.descriptors.VERSION`, defined in docs/WORLDS.md "Descriptors")
 unchanged on a coverage reference grid instead of the T0 raster. Free space F is the reference's free floor
-`inclusion & ~collision` (the builder has already cut it to the spawn's 4-connected component). The robots are
-`worldgen.descriptors.ROBOTS` (MOGI); adding robots is a descriptor-version decision, not an option here.
+`inclusion & ~collision` (the builder has already cut it to the spawn's 4-connected component). worldgen's own
+per-robot block (MOGI) is replaced by ``robot_visibility`` (`ROBOT_VISIBILITY_VERSION`): one block per robot of
+the benchmark's robot catalog, so worldgen and every robot-independent value stay unchanged.
 
 Writes two files into the output directory (format: docs/plans/worlds/EXECUTION.md "Shared contracts"):
 
@@ -55,6 +56,8 @@ from zipfile import BadZipFile
 ROOT = Path(__file__).resolve().parents[2]
 WORLDGEN_DIR = ROOT / "world_collection" / "worldgen"
 sys.path.insert(0, str(WORLDGEN_DIR.parent))
+for package in ("exploration_benchmark_robots", "exploration_benchmark_runner"):
+    sys.path.insert(0, str(ROOT / package))
 
 import numpy as np  # noqa: E402
 import numpy.typing as npt  # noqa: E402
@@ -63,9 +66,14 @@ from PIL import Image  # noqa: E402
 from scipy import ndimage, sparse  # noqa: E402
 from scipy.sparse import csgraph  # noqa: E402
 
+import yaml  # noqa: E402
+from exploration_benchmark_robots.catalog import footprint_circumradius  # noqa: E402
+from exploration_benchmark_runner.parameters import UniqueKeyLoader  # noqa: E402
+
 import worldgen  # noqa: E402
 from worldgen import descriptors, raster  # noqa: E402
 from worldgen.checks import Analysis, count_loops  # noqa: E402
+from worldgen.rng import generator  # noqa: E402
 from worldgen.world import BoolArray, Expected, Spawn, World  # noqa: E402
 
 DESCRIPTION = "Official world descriptors and region raster of a coverage reference."
@@ -79,6 +87,12 @@ DEFAULT_SPAWN_ID = "Default"
 FREE_SPACE = "inclusion & ~collision"
 # worldgen sources whose content decides the values (WORLDGEN_VERSION alone misses a modified checkout)
 WORLDGEN_SOURCES = ("descriptors.py", "raster.py", "checks.py", "rng.py")
+# Per-robot visibility (robot set, decision R6, 25 October 2026): worldgen's robot fields for each catalog robot,
+# radius the robot's footprint circumradius (no padding), range its catalog lidar range_max, and points drawn
+# from a generator of its own (seed SEED, key the bytes of the robot ID), so a robot's values do not depend on
+# the catalog's order or size.
+ROBOT_VISIBILITY_VERSION = "reference-robot-visibility-v1"
+ROBOT_CATALOG = ROOT / "exploration_benchmark_robots" / "config" / "robots.yaml"
 
 
 class AdapterError(ValueError):
@@ -313,6 +327,84 @@ def grow_regions(
     return int(np.count_nonzero(areas >= descriptors.REGION_MIN_M2)), grown_grid
 
 
+@dataclass(frozen=True, slots=True)
+class Robot:
+    id: str
+    radius_m: float
+    range_m: float
+
+
+def catalog_robots(path: Path = ROBOT_CATALOG) -> tuple[tuple[Robot, ...], str]:
+    """The robot catalog's robots (catalog order) and the SHA-256 of the inputs used (canonical JSON of
+    each robot's ID, footprint and lidar range_max), so other catalog edits leave it unchanged."""
+    catalog = yaml.load(path.read_bytes(), Loader=UniqueKeyLoader)
+    robots, inputs = [], []
+    for robot_id, profile in catalog["robots"].items():
+        radius = footprint_circumradius(profile["footprint"])
+        robots.append(Robot(robot_id, round(radius, 4), float(profile["lidar"]["range_max"])))
+        inputs.append([robot_id, profile["footprint"], profile["lidar"]["range_max"]])
+    if not robots:
+        raise AdapterError(f"{path} lists no robots")
+    return tuple(robots), _sha256(json.dumps(inputs, separators=(",", ":")).encode())
+
+
+def robot_visibility(
+    a: Analysis, spawns: tuple[Spawn, ...], robots: tuple[Robot, ...]
+) -> dict[str, Any]:
+    """worldgen's per-robot fields (`descriptors.compute`) for each robot, `ROBOT_VISIBILITY_VERSION`."""
+    h = a.grid.h
+    free = a.reachable
+    area = float(np.count_nonzero(free)) * h * h
+    result: dict[str, Any] = {}
+    for rb in robots:
+        rng = generator(descriptors.SEED, tuple(rb.id.encode()))
+        points = descriptors._sample_cells(
+            rng, free & (a.clearance >= rb.radius_m), descriptors.N_POINTS
+        )
+        vis = np.asarray(
+            [
+                descriptors._visible_cells(free, cell, rb.range_m, h) * h * h
+                for cell in descriptors._cells(points)
+            ]
+        )
+        spawn_vis = {
+            s.id: round(
+                descriptors._visible_cells(free, a.grid.cell(s.x, s.y), rb.range_m, h)
+                * h
+                * h
+                / area,
+                4,
+            )
+            for s in spawns
+        }
+        result[rb.id] = {
+            "radius_m": rb.radius_m,
+            "r_eff_m": rb.range_m,
+            "visible_area_m2": {
+                "mean": round(float(vis.mean()), 2),
+                "n": int(len(vis)),
+                "mc_se": round(float(vis.std(ddof=1) / math.sqrt(len(vis))), 2),
+            },
+            "visible_fraction": round(float(vis.mean()) / area, 4),
+            "area_over_pi_r2": round(area / (math.pi * rb.range_m**2), 4),
+            "spawn_visible_fraction": spawn_vis,
+        }
+    return result
+
+
+def robots_definition(catalog_sha256: str) -> dict[str, Any]:
+    return {
+        "version": ROBOT_VISIBILITY_VERSION,
+        "catalog": str(ROBOT_CATALOG.relative_to(ROOT)),
+        "inputs_sha256": catalog_sha256,
+        "inputs": "canonical JSON [[id, footprint, lidar range_max], ...] in catalog order",
+        "radius": "footprint circumradius, no padding",
+        "range": "catalog lidar range_max",
+        "seed": descriptors.SEED,
+        "rng_key": "bytes of the robot ID",
+    }
+
+
 def _check_spawns(spawns: tuple[Spawn, ...], a: Analysis) -> None:
     ids = [s.id for s in spawns]
     if not spawns or len(ids) != len(set(ids)):
@@ -363,7 +455,12 @@ def compute(
         spawns=spawns,
         expected=Expected(free_area_m2=a.free_area_m2, narrowest_passage_m=0.0),
     )
+    # worldgen still computes its MOGI block: those draws come before nav_complexity's in its one random
+    # stream, so skipping them would change robot-independent values. The block is then replaced.
     values = descriptors.compute(world, a)
+    robots, catalog_sha256 = catalog_robots()
+    values["robots"] = robot_visibility(a, spawns, robots)
+    values["robots_definition"] = robots_definition(catalog_sha256)
     h = a.grid.h
     # `compute` counts regions with worldgen's watershed growth; the official raster and count use the
     # geodesic growth (`grow_regions`), and worldgen's count is kept beside it for comparison with previews.

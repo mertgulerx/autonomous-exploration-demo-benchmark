@@ -34,7 +34,6 @@ from .configuration import (
 )
 from .coordinator import Coordinator
 from .coverage import attach_reference
-from .parameters import ros_parameters
 from exploration_benchmark_robots.catalog import RobotCatalog
 
 
@@ -46,7 +45,8 @@ def main():
     )
     parser.add_argument("--results")
     parser.add_argument(
-        "--robot", help="Robot catalog ID; defaults to YAML robot_id or mogi"
+        "--robot",
+        help="Robot catalog ID; defaults to YAML robot_id or the catalog default",
     )
     parser.add_argument("--startup-timeout", type=float, default=180)
     args = parser.parse_args()
@@ -90,11 +90,13 @@ def main():
             for s in specs
         ]
         single = len(specs) == 1
-        robot_id = args.robot or data.get("robot_id", "mogi")
-        robot_overrides = data.get("robot_overrides", {})
-        robot = RobotCatalog(worlds=worlds).require(
-            robot_id, data["world"], robot_overrides
-        )
+        if data.get("robot_overrides"):
+            raise ValueError(
+                "robot_overrides was removed; robots run with their catalog limits"
+            )
+        robots = RobotCatalog(worlds=worlds)
+        robot_id = args.robot or data.get("robot_id", robots.default)
+        robot = robots.require(robot_id, data["world"])
         specs = Catalog(root=args.project_root).validate(
             specs, limit, comparison=not single, robot=robot
         )
@@ -129,7 +131,6 @@ def main():
         world=data["world"],
         robot_id=robot_id,
         simulation_time_limit=limit,
-        robot_overrides=ros_parameters(robot_overrides),
     )
     if single:
         request = StartSingleRun.Request(

@@ -23,6 +23,7 @@ from pathlib import Path
 import xml.etree.ElementTree as ET
 import yaml
 
+from .catalog import footprint_circumradius
 from .known_pose import (
     BASE_FRAME,
     GROUND_TRUTH_RATE_HZ,
@@ -85,63 +86,51 @@ def visualization_description(description, lookup):
     return ET.tostring(root, encoding="unicode")
 
 
+# The benchmark's controller (maintainer, 25 October 2026): Nav2's Regulated Pure Pursuit with the reference
+# parameters of its Jazzy README (nav2_regulated_pure_pursuit_controller 1.3.13); every run replaces the shared
+# file's MPPI FollowPath with it, and the robot's limits set the speed, turning speed and angular acceleration.
+RPP_FOLLOW_PATH = {
+    "plugin": "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController",
+    "desired_linear_vel": 0.5,
+    "lookahead_dist": 0.6,
+    "min_lookahead_dist": 0.3,
+    "max_lookahead_dist": 0.9,
+    "lookahead_time": 1.5,
+    "rotate_to_heading_angular_vel": 1.8,
+    "transform_tolerance": 0.1,
+    "use_velocity_scaled_lookahead_dist": False,
+    "min_approach_linear_velocity": 0.05,
+    "approach_velocity_scaling_dist": 1.0,
+    "use_collision_detection": True,
+    "max_allowed_time_to_collision_up_to_carrot": 1.0,
+    "use_regulated_linear_velocity_scaling": True,
+    "use_cost_regulated_linear_velocity_scaling": False,
+    "regulated_linear_scaling_min_radius": 0.9,
+    "regulated_linear_scaling_min_speed": 0.25,
+    "use_fixed_curvature_lookahead": False,
+    "curvature_lookahead_dist": 1.0,
+    "use_rotate_to_heading": True,
+    "rotate_to_heading_min_angle": 0.785,
+    "max_angular_accel": 3.2,
+    "max_robot_pose_search_dist": 10.0,
+    "interpolate_curvature_after_goal": False,
+    "cost_scaling_dist": 0.3,
+    "cost_scaling_gain": 1.0,
+    "inflation_cost_scaling_factor": 3.0,
+}
+
+
+# Anchor of the inflation scaling (maintainer, 25 October 2026): the padded circumradius r0 of the
+# shared navigation.yaml footprint (0.44 x 0.38 m, padding 0.01 m), for which its inflation radii
+# and cost scaling factors were tuned. Fixed here; prepare refuses a shared file that differs.
+INFLATION_REFERENCE_RADIUS_M = math.hypot(0.22 + 0.01, 0.19 + 0.01)  # 0.3048 m
+
+
 def navigation_parameters(baseline, profile):
     parameters = deepcopy(baseline)
-    if profile.get("adapter") == "mogi":
-        settings = profile.get("benchmark_overrides", {})
-        server = parameters["controller_server"]["ros__parameters"]
-        follow = server["FollowPath"]
-        smoother = parameters["velocity_smoother"]["ros__parameters"]
-        for name, axis, mppi, dwb, threshold in (
-            ("movement_speed", 0, "vx_max", "max_vel_x", "min_x_velocity_threshold"),
-            (
-                "turning_speed",
-                2,
-                "wz_max",
-                "max_vel_theta",
-                "min_theta_velocity_threshold",
-            ),
-        ):
-            if name not in settings:
-                continue
-            speed = settings[name]
-            if "MPPIController" in follow["plugin"]:
-                follow[mppi] = speed
-                if axis == 0:
-                    follow["vx_min"] = max(-speed, min(follow["vx_min"], speed))
-            elif "DWBLocalPlanner" in follow["plugin"]:
-                follow[dwb] = speed
-                if axis == 0:
-                    follow["max_speed_xy"] = speed
-            else:
-                raise ValueError(
-                    "MOGI speed settings require the shared MPPI or DWB controller"
-                )
-            smoother["max_velocity"][axis] = speed
-            smoother["min_velocity"][axis] = -speed
-            smoother["deadband_velocity"][axis] = min(
-                smoother["deadband_velocity"][axis], speed / 10
-            )
-            server[threshold] = min(server[threshold], speed / 10)
-        if "turning_speed" in settings:
-            behavior = parameters["behavior_server"]["ros__parameters"]
-            behavior["max_rotational_vel"] = settings["turning_speed"]
-            behavior["min_rotational_vel"] = min(
-                behavior["min_rotational_vel"], settings["turning_speed"]
-            )
-        if "lidar_range" in settings:
-            for costmap in ("local_costmap", "global_costmap"):
-                values = parameters[costmap][costmap]["ros__parameters"]
-                for layer in values.values():
-                    if not isinstance(layer, dict):
-                        continue
-                    for source in layer.get("observation_sources", "").split():
-                        for key in ("raytrace_max_range", "obstacle_max_range"):
-                            if key in layer[source]:
-                                layer[source][key] = min(
-                                    layer[source][key], settings["lidar_range"]
-                                )
-        return parameters
+    parameters["controller_server"]["ros__parameters"]["FollowPath"] = deepcopy(
+        RPP_FOLLOW_PATH
+    )
     vx, vy, wz = (
         profile[k]
         for k in ("max_linear_speed", "max_lateral_speed", "max_angular_speed")
@@ -152,53 +141,43 @@ def navigation_parameters(baseline, profile):
     dy = profile.get("lateral_deceleration", ay) if vy else 0.0
     dw = profile.get("angular_deceleration", aw)
     server = parameters["controller_server"]["ros__parameters"]
-    follow = server["FollowPath"]
-    if "MPPIController" in follow["plugin"]:
-        follow.update(
-            vx_max=vx,
-            vy_max=vy,
-            wz_max=wz,
-            ax_max=ax,
-            ax_min=-dx,
-            ay_max=ay,
-            az_max=min(aw, dw),
-            motion_model="Omni" if vy else "DiffDrive",
-        )
-    elif "DWBLocalPlanner" in follow["plugin"]:
-        follow.update(
-            max_vel_x=vx,
-            max_vel_y=vy,
-            max_vel_theta=wz,
-            max_speed_xy=vx,
-            acc_lim_x=ax,
-            acc_lim_y=ay,
-            acc_lim_theta=aw,
-            decel_lim_x=-dx,
-            decel_lim_y=-dy,
-            decel_lim_theta=-dw,
-        )
-        if vy:
-            follow["vy_samples"] = max(5, follow.get("vy_samples", 1))
-    else:
-        raise ValueError(
-            "Robot limit adaptation requires the shared MPPI or DWB controller"
-        )
+    # RPP drives forward along the path (no lateral motion), also on holonomic bases.
+    server["FollowPath"].update(
+        desired_linear_vel=vx,
+        rotate_to_heading_angular_vel=wz,
+        max_angular_accel=min(aw, dw),
+    )
     if vy:
         server["min_y_velocity_threshold"] = min(
             server["min_y_velocity_threshold"], 0.03
         )
     for costmap in ("local_costmap", "global_costmap"):
         values = parameters[costmap][costmap]["ros__parameters"]
+        padding = values.get("footprint_padding", 0.01)
+        reference = footprint_circumradius(json.loads(values["footprint"]), padding)
+        if abs(reference - INFLATION_REFERENCE_RADIUS_M) > 1e-9:
+            raise ValueError(
+                f"{costmap}: shared footprint circumradius {reference:.4f} m differs from "
+                f"the inflation anchor {INFLATION_REFERENCE_RADIUS_M:.4f} m"
+            )
+        # Inflation scales with body size (R7): radius times and cost scaling factor over
+        # r / r0, r the robot's padded circumradius, so margins keep the file's proportions.
+        ratio = (
+            footprint_circumradius(profile["footprint"], padding)
+            / INFLATION_REFERENCE_RADIUS_M
+        )
+        inflation = values["inflation_layer"]
+        inflation["inflation_radius"] = round(inflation["inflation_radius"] * ratio, 3)
+        if inflation["inflation_radius"] <= ratio * INFLATION_REFERENCE_RADIUS_M:
+            raise ValueError(
+                f"{costmap}: inflation radius {inflation['inflation_radius']} m does not "
+                "exceed the robot's padded circumradius"
+            )
+        inflation["cost_scaling_factor"] = round(
+            inflation["cost_scaling_factor"] / ratio, 3
+        )
         values.pop("robot_radius", None)
         values["footprint"] = json.dumps(profile["footprint"])
-        padding = values.get("footprint_padding", 0.01)
-        radius = max(
-            math.hypot(abs(x) + padding, abs(y) + padding)
-            for x, y in profile["footprint"]
-        )
-        values["inflation_layer"]["inflation_radius"] = max(
-            values["inflation_layer"]["inflation_radius"], radius + 0.01
-        )
     smoother = parameters["velocity_smoother"]["ros__parameters"]
     smoother.update(
         max_velocity=[vx, vy, wz],
@@ -214,30 +193,15 @@ def navigation_parameters(baseline, profile):
 
 def enforce_drive_limits(root, profile):
     """Constrain the native Gazebo diff-drive actuator using platform settings."""
-    if profile.get("adapter") == "mogi":
-        settings = profile.get("benchmark_overrides", {})
-        values = {
-            tag: settings[name]
-            for name, tag in (
-                ("movement_speed", "max_linear_velocity"),
-                ("turning_speed", "max_angular_velocity"),
-            )
-            if name in settings
-        }
-    else:
-        values = dict(
-            max_linear_velocity=profile["max_linear_speed"],
-            max_angular_velocity=profile["max_angular_speed"],
-            max_linear_acceleration=profile["linear_acceleration"],
-            max_angular_acceleration=profile["angular_acceleration"],
-        )
+    values = dict(
+        max_linear_velocity=profile["max_linear_speed"],
+        max_angular_velocity=profile["max_angular_speed"],
+        max_linear_acceleration=profile["linear_acceleration"],
+        max_angular_acceleration=profile["angular_acceleration"],
+    )
     for plugin in root.iter("plugin"):
         if not plugin.get("name", "").endswith("::DiffDrive"):
             continue
-        if profile.get("adapter") == "mogi" and values:
-            generic = plugin.find("max_velocity")
-            if generic is not None:
-                generic.text = str(max(float(generic.text), *values.values()))
         for key, value in values.items():
             for tag, limit in ((key, value), (key.replace("max_", "min_", 1), -value)):
                 element = plugin.find(tag)
@@ -247,10 +211,11 @@ def enforce_drive_limits(root, profile):
 
 
 def turtlebot3_lidar(root, profile):
-    """Apply the catalog's LDS-02 range to the pinned legacy LDS model.
+    """Make the pinned legacy LDS model the catalog's LDS-02 (ROBOTIS datasheet).
 
-    The upstream scan sampling, update rate and Gaussian noise remain unchanged.
-    Retain the native sensor pose, frames and physical robot geometry.
+    Range, update rate and sample count come from the catalog; the upstream scan
+    angles and Gaussian noise (0.01 m, no range-proportional model in Gazebo)
+    remain. Retain the native sensor pose, frames and physical robot geometry.
     """
     lidar = profile["lidar"]
     if lidar.get("model") != "LDS-02":
@@ -261,15 +226,19 @@ def turtlebot3_lidar(root, profile):
     if len(sensors) != 1:
         raise ValueError("TurtleBot3 model must contain exactly one GPU lidar")
     sensor = sensors[0]
-    # The pinned Waffle Pi uses SDF's legacy <ray> spelling, Burger <lidar>.
-    limits = sensor.find("lidar/range")
-    if limits is None:
-        limits = sensor.find("ray/range")
+    # The pinned Waffle Pi uses SDF's legacy <ray> spelling.
+    limits = sensor.find("ray/range")
+    samples = sensor.find("ray/scan/horizontal/samples")
+    rate = sensor.find("update_rate")
     if limits is None or limits.find("min") is None or limits.find("max") is None:
         raise ValueError("TurtleBot3 lidar model is missing its range limits")
+    if samples is None or rate is None:
+        raise ValueError("TurtleBot3 lidar model is missing its samples or update rate")
     sensor.set("name", "lds_02")
     limits.find("min").text = str(lidar["range_min"])
     limits.find("max").text = str(lidar["range_max"])
+    samples.text = str(lidar["samples"])
+    rate.text = str(lidar["update_rate"])
 
 
 def turtlebot3_sensor_frames(root):
@@ -396,12 +365,11 @@ def moving_objects(scenario, world_root, search_path=None):
 
 
 def spawn_pose(profile, scenario):
-    """Resolve only height; benchmark XY/yaw and MOGI's pose stay unchanged."""
+    """Resolve only height; the benchmark XY and yaw stay unchanged."""
     pose = list(scenario["spawn"])
-    if profile.get("spawn_z_policy") != "scenario":
-        pose[2] = profile.get("spawn_z_by_world", {}).get(
-            scenario["world"], profile["spawn_z"]
-        )
+    pose[2] = profile.get("spawn_z_by_world", {}).get(
+        scenario["world"], profile["spawn_z"]
+    )
     return pose
 
 
@@ -508,7 +476,6 @@ def prepare_mapping(profile, directory, generated, shared):
 
 def prepare(profile, scenario, directory, lookup=None):
     from ament_index_python.packages import get_package_share_directory
-    import xacro
 
     lookup = lookup or get_package_share_directory
     directory = Path(directory) / "robot_configuration"
@@ -553,34 +520,7 @@ def prepare(profile, scenario, directory, lookup=None):
         generated["moving_objects"] = movers
         bridge.append(mover_bridge)
     family = profile["adapter"]
-    if family == "mogi":
-        description = xacro.process_file(str(baseline / "urdf/mogi_bot.urdf")).toxml()
-        plant = ET.fromstring(description)
-        enforce_drive_limits(plant, profile)
-        if "lidar_range" in profile.get("benchmark_overrides", {}):
-            sensors = [s for s in plant.iter("sensor") if s.get("type") == "gpu_lidar"]
-            if len(sensors) != 1 or sensors[0].find("lidar/range/max") is None:
-                raise ValueError(
-                    "MOGI description must contain one GPU lidar with range limits"
-                )
-            sensors[0].find("lidar/range/max").text = str(profile["lidar"]["range_max"])
-        generated["disabled_sensors"] = remove_unused_sensors(plant)
-        description = ET.tostring(plant, encoding="unicode")
-        generated["robot_description"] = description
-        generated["spawn_file"] = str(directory / "robot.urdf")
-        Path(generated["spawn_file"]).write_text(description)
-        for entry in yaml.safe_load((baseline / "config/gz_bridge.yaml").read_text()):
-            if entry["ros_type_name"] not in (
-                "rosgraph_msgs/msg/Clock",
-                "sensor_msgs/msg/CameraInfo",
-            ):
-                bridge.append(entry)
-        # Known pose (I10): the EKF keeps odometry/filtered but no longer owns the TF.
-        ekf = yaml.safe_load((baseline / "config/ekf.yaml").read_text())
-        ekf["ekf_filter_node"]["ros__parameters"]["publish_tf"] = False
-        generated["ekf"] = str(directory / "ekf.yaml")
-        Path(generated["ekf"]).write_text(yaml.safe_dump(ekf, sort_keys=False))
-    elif family == "turtlebot3":
+    if family == "turtlebot3":
         share = Path(lookup("turtlebot3_gazebo"))
         generated["resource_paths"] = [str(share / "models")]
         generated["robot_description"] = (

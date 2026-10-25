@@ -1023,7 +1023,7 @@ class ProfilesPage(QtWidgets.QWidget):
         robot = self.robot_info()
         if robot is None or not robot.get("defaults"):
             return
-        groups = editor_groups(self.catalog["parameters"], robot["id"])
+        groups = editor_groups(self.catalog["parameters"])
         row = self.profiles.current_row()
         if row is None:
             parameters = compared_parameters(robot, self.catalog["parameters"], None)

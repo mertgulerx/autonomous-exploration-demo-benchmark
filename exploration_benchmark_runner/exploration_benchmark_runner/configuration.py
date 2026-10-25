@@ -27,9 +27,8 @@ def robot_parameter_schema(schema, robot):
     from copy import deepcopy
 
     schema = deepcopy(schema)
-    if robot.get("adapter") != "mogi":
-        schema.defaults.update(max_linear_speed_vmax=float(robot["max_linear_speed"]),
-                               max_angular_speed_wmax=float(robot["max_angular_speed"]))
+    schema.defaults.update(max_linear_speed_vmax=float(robot["max_linear_speed"]),
+                           max_angular_speed_wmax=float(robot["max_angular_speed"]))
     return schema
 
 

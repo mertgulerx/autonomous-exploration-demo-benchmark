@@ -56,8 +56,7 @@ from nav2_msgs.srv import ManageLifecycleNodes
 from nav_msgs.msg import OccupancyGrid, Odometry, Path
 from rosgraph_msgs.msg import Clock
 from sensor_msgs.msg import LaserScan, Imu
-from std_msgs.msg import String, Empty, Bool
-from std_srvs.srv import Trigger
+from std_msgs.msg import String, Empty
 from controller_manager_msgs.srv import ListControllers
 from tf2_msgs.msg import TFMessage
 from visualization_msgs.msg import MarkerArray, Marker
@@ -416,10 +415,6 @@ class Worker:
             )
         )
         self.thread = threading.Thread(target=self.spin_worker, daemon=True)
-        self.robot_ready_boolean = None
-        self.robot_start_future = None
-        self.robot_start_requested = None
-        self.robot_start_client = None
         self.native_controller_names = []
         self.native_controller_states = {}
         self.native_controller_future = None
@@ -427,19 +422,6 @@ class Worker:
         self.native_controller_client = self.worker.create_client(
             ListControllers, "/controller_manager/list_controllers"
         )
-        robot = config["robot"]
-        if robot.get("startup_trigger_service"):
-            self.robot_start_client = self.worker.create_client(
-                Trigger, robot["startup_trigger_service"]
-            )
-            self.subscriptions.append(
-                self.worker.create_subscription(
-                    Bool,
-                    robot["readiness_boolean_topic"],
-                    self.receive_robot_ready_boolean,
-                    LATCHED,
-                )
-            )
         self.robot_diagnostics = {}
         for topic in ("/cmd_vel", "/cmd_vel_smoothed", "/cmd_vel_nav"):
             self.subscriptions.append(
@@ -745,16 +727,6 @@ class Worker:
             self.recorder.flush()
         return None
 
-    def receive_robot_ready_boolean(self, message):
-        self.robot_ready_boolean = message.data
-        if (
-            self.phase == "RUNNING"
-            and message.data != self.config["robot"]["readiness_boolean_expected"]
-        ):
-            self.terminal.put(
-                ("runtime_failure", "Native simulated emergency stop engaged", -1)
-            )
-
     def receive_mapping_status(self, message):
         try:
             status = json.loads(message.data)
@@ -810,37 +782,6 @@ class Worker:
                 "max_laser_range; see robot.log"
             )
         return None
-
-    def initialize_robot(self, wall):
-        """Release a native simulation latch once; retain its runtime mechanism."""
-        if self.robot_start_client is None:
-            return
-        if self.robot_start_future:
-            if self.robot_start_future.done():
-                response = self.robot_start_future.result()
-                if not response or not response.success:
-                    raise RuntimeError(
-                        "Native robot initialization rejected; see robot.log"
-                    )
-                if self.recorder:
-                    self.recorder.event(
-                        "native_robot_initialized",
-                        service=self.config["robot"]["startup_trigger_service"],
-                    )
-                self.robot_start_future = None
-            elif wall - self.robot_start_requested > 5:
-                raise RuntimeError(
-                    "Native robot initialization timed out; see robot.log"
-                )
-        elif (
-            self.robot_start_requested is None
-            and self.clock_value > 0
-            and self.robot_start_client.service_is_ready()
-        ):
-            self.robot_start_requested = wall
-            self.robot_start_future = self.robot_start_client.call_async(
-                Trigger.Request()
-            )
 
     def check_native_controllers(self, wall):
         """Gate readiness and report deactivation; temporary DDS gaps remain diagnostic."""
@@ -1029,7 +970,6 @@ class Worker:
             return False
 
     def readiness(self, wall):
-        self.initialize_robot(wall)
         self.check_native_controllers(wall)
         missing = [
             name
@@ -1049,13 +989,6 @@ class Worker:
             for name in self.native_controller_names
             if self.native_controller_states.get(name) != "active"
         )
-        robot = self.config["robot"]
-        if self.robot_start_client is not None and (
-            self.robot_start_requested is None
-            or self.robot_start_future is not None
-            or self.robot_ready_boolean != robot["readiness_boolean_expected"]
-        ):
-            missing.append("native simulated emergency-stop release")
         if not self.nav.server_is_ready() or not self.nav_through.server_is_ready():
             missing.append("navigation actions")
         if wall - self.last_nav_query >= 1.0:

@@ -476,7 +476,12 @@ class Window(QtWidgets.QMainWindow):
     def fill_catalog(self) -> None:
         self.builder.catalog = self.catalog
         self.results_page.set_names(self.catalog)
-        self.builder.robot_selector.set_catalog(self.catalog["robots"], self.catalog["parameters"])
+        default_robot = self.catalog.get("default_robot")
+        self.builder.robot_selector.set_catalog(
+            self.catalog["robots"],
+            self.catalog["parameters"],
+            default_robot if isinstance(default_robot, str) else None,
+        )
         self.builder.world_selector.set_catalog(self.catalog["worlds"])
         self.profiles_page.set_catalog(self.catalog)
         self.worlds_page.set_catalog(self.catalog)
