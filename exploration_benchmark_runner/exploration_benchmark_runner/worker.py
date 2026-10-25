@@ -70,7 +70,14 @@ from .configuration import Specification
 from .processes import ProcessScope
 from .artifacts import Recorder
 from .measurements import Measurements
-from .coverage import Reference, Calculator, Coverage
+from .coverage import (
+    COVERAGE_STOP_DETAIL,
+    COVERAGE_STOP_PERCENT,
+    COVERAGE_STOP_RULE,
+    Calculator,
+    Coverage,
+    Reference,
+)
 from .relay import prefix_frames
 from . import adapters
 from exploration_benchmark_robots.adapters import (
@@ -188,6 +195,9 @@ class Worker:
         self.spec = Specification(**config["spec"])
         self.profile = config["profile"]
         self.phase, self.outcome, self.detail = "STARTING", "", ""
+        # The triggering sample of coverage-stop-v1, once reached (check_coverage_stop).
+        self.coverage_stop = None
+        self.stopped_by_coverage = False
         self.native_code = -1
         self.explorer_identity = None
         self.start_sim = self.start_unix = 0.0
@@ -928,15 +938,32 @@ class Worker:
             row = self.coverage.start_motion(*origins, *(motion or (None, None, None)))
             if row and self.recorder:
                 self.recorder.coverage_sample(row)
+            self.check_coverage_stop(row)
         row = self.coverage.update(
             simulation, wall, grid, received_wall, received_unix, force=force
         )
         if row and self.recorder:
             self.recorder.coverage_sample(row)
+        self.check_coverage_stop(row)
         if self.campaign:
             self.runtime.explored_snapshot(self.coverage, grid, simulation, final=force)
         if self.recorder:
             self.recorder.coverage_checkpoint(self.coverage)
+
+    def check_coverage_stop(self, row):
+        """The coverage stop (COVERAGE_STOP_RULE): the sample that reaches the stop milestone ends the run."""
+        if not row or self.phase != "RUNNING" or self.coverage_stop is not None:
+            return
+        for milestone in row["milestones_crossed"]:
+            if milestone["percent"] == COVERAGE_STOP_PERCENT:
+                self.coverage_stop = dict(
+                    rule=COVERAGE_STOP_RULE,
+                    threshold_percent=COVERAGE_STOP_PERCENT,
+                    simulation=row["simulation"],
+                    simulation_elapsed=row["simulation_elapsed"],
+                    coverage_percent=row["coverage_percent"],
+                )
+                self.terminal.put(("completed", COVERAGE_STOP_DETAIL, -1))
 
     def publish_metrics(self, snapshot):
         if self.runtime:
@@ -1341,7 +1368,8 @@ class Worker:
                     # Monotonic wall origin of the run-level RTF (dataset schema 10).
                     monotonic_ns=round(self.measurements.movement_wall_start * 1e9),
                 )
-                self.detail = "Exploration active"
+                if self.phase == "RUNNING":  # never overwrite a terminal reason's detail
+                    self.detail = "Exploration active"
                 if self.recorder:
                     self.recorder.manifest["first_motion"] = first_motion
                     self.recorder.event("first_motion", **first_motion)
@@ -1377,6 +1405,11 @@ class Worker:
                 outcome,
                 detail,
                 native_code,
+            )
+            # Decided at the accepted terminal reason, before any later sample or failure.
+            self.stopped_by_coverage = (outcome, detail) == (
+                "completed",
+                COVERAGE_STOP_DETAIL,
             )
             terminal_wall = time.monotonic()
             if self.campaign and self.recorder:
@@ -1424,6 +1457,16 @@ class Worker:
         self.close_source()
         if recorder:
             recorder.manifest["robot_diagnostics"] = self.robot_diagnostics
+            # What ended a completed run: the explorer's completion event or coverage-stop-v1.
+            stopped_by_rule = self.outcome == "completed" and self.stopped_by_coverage
+            recorder.manifest["completion_source"] = (
+                ("coverage_stop" if stopped_by_rule else "explorer")
+                if self.outcome == "completed"
+                else None
+            )
+            recorder.manifest["coverage_stop"] = (
+                self.coverage_stop if stopped_by_rule else None
+            )
             with self.lock:
                 recorder.manifest["mapping_status"] = deepcopy(self.mapping_status)
             if self.campaign and "insight" in recorder.manifest:

@@ -48,7 +48,7 @@ from .gui_cells import (
     apply_columns,
     style_table,
 )
-from .gui_controls import KeySelect, badge_look
+from .gui_controls import BadgeLook, KeySelect, badge_look
 from .gui_menus import INSET, ITEM_HEIGHT, ITEM_TEXT, SEPARATOR_HEIGHT
 from .gui_style import duration, fixed, humanize
 from .gui_support import PagedTable, PagedTableModel, Transport
@@ -75,6 +75,9 @@ OUTCOMES = (
     "storage_failure",
     "timing_rejection",
 )
+# The outcome word of a completed run that the coverage stop ended (completion_source "coverage_stop";
+# coverage-stop-v2, 99.9 %).
+COVERAGE_STOP_WORD = "Completed · 99.9 % coverage stop"
 FOOT = TextStyle(12.5, 400, 18)
 FOOT_COUNT = TextStyle(12.5, 600, 18)
 NESTED_HEIGHT = 36
@@ -168,6 +171,15 @@ class Names:
         return table.get(identity) or (
             "Default" if identity.startswith("default-") else humanize(identity)
         )
+
+
+def outcome_look(record: Mapping[str, Any], *, muted: bool = False) -> BadgeLook | None:
+    """The outcome badge of a run record; a completed run that the coverage stop ended
+    (``completion_source``) says so in its word."""
+    outcome = record.get("outcome")
+    stopped = outcome == "completed" and record.get("completion_source") == "coverage_stop"
+    word = COVERAGE_STOP_WORD if stopped else None
+    return badge_look("outcome", outcome, word=word, muted=muted)
 
 
 def excluded(record: Mapping[str, Any]) -> bool:
@@ -296,7 +308,7 @@ def run_cell(record: Mapping[str, Any], key: str, names: Names) -> Cell:
         value = record.get("repetition")
         return Cell(str(value + 1), "number", token=token) if isinstance(value, int) else missing
     if key == "outcome":
-        look = badge_look("outcome", record.get("outcome"), muted=out)
+        look = outcome_look(record, muted=out)
         attempts = record.get("experiment_attempts")
         if look is None:
             return Cell(humanize(str(record.get("outcome") or "—")), token=token)
@@ -724,7 +736,7 @@ class RunsTable(PagedTable):
             and attempts > 1
         ):
             rect = self.view.visualRect(index)
-            look = badge_look("outcome", record.get("outcome"))
+            look = outcome_look(record)
             badge_end = (
                 rect.x() + self.look.column(outcome).padding_left + (look.width if look else 0)
             )

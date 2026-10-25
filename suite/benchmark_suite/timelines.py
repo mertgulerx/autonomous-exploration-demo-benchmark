@@ -49,6 +49,7 @@ MILESTONES = (
     75,
     90,
     95,
+    99.9,
 )  # the first sample at or above each is kept in a thinned coverage series
 # Time columns of the derived tables: movement-relative, or from activation for a run that never moved.
 DERIVED = {

@@ -171,6 +171,8 @@ VARIANT_NAMES = {
     "R_75": "75 %",
     "R_90": "90 %",
     "R_95": "95 %",
+    "R_99": "99 %",  # coverage-stop-v1 analyses (run-record-v3)
+    "R_99_9": "99.9 %",
     "R_completion": "Completion",
     "dA_L": "ΔA_L",
     "dC_L": "ΔC(L)",

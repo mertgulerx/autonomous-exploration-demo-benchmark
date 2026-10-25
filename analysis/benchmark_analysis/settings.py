@@ -21,7 +21,10 @@ The engine validated the block at submission and again at export (``suite/benchm
 whose constants these mirror); this module trusts that validation for value ranges, checks the version, the key
 set and the names the analysis branches on (representative rule and endpoint, sensitivity sets), and records for
 every value whether it came from the plan or the defaults. The family and density-contrast declarations are
-checked against the export's world metadata by ``families``.
+checked against the export's world metadata by ``families``. Milestone 99.9 (``coverage-stop-v2``) exists from
+run record 4 on: an earlier export's defaults leave it out, and a plan naming it there is refused. A milestone is
+named by its key (``milestone_key``: 90 -> ``R_90``, 99.9 -> ``R_99_9``, ``t99_9_s``, ``F2_R_99_9``) and shown by its
+label (``milestone_label``: "99.9 %"); no milestone is ever truncated to an integer.
 """
 
 from collections.abc import Mapping
@@ -35,10 +38,33 @@ from .stats import BOOTSTRAP_MIN_CLUSTERS
 BLOCK_VERSIONS = (1, 2, 3)
 V2_KEYS = ("event_tick", "taxonomy")  # version 2 and later
 V3_KEYS = ("families", "density_contrasts")  # version 3 only
-MILESTONES = (25, 50, 75, 90, 95)
+Milestone = int | float  # a coverage percentage: an integer, or 99.9
+MILESTONES: tuple[Milestone, ...] = (25, 50, 75, 90, 95, 99.9)
+# 99.9 (coverage-stop-v2, T99.9) is recorded from run record 4 on; an earlier export has no T99.9 (run record 3's
+# T99 of coverage-stop-v1 is not read), so its defaults leave 99.9 out and a plan naming it is refused (``settings``).
+STOP_MILESTONE: Milestone = 99.9
+STOP_RECORD_VERSION = 4
+
+
+def milestone_key(m: Milestone) -> str:
+    """A milestone's name key, as the suite writes it: "90", "99_9" (``R_<key>``, ``t<key>_s``)."""
+    return format(m, "g").replace(".", "_")
+
+
+def milestone_label(m: Milestone) -> str:
+    """A milestone's display label: "90 %", "99.9 %"."""
+    return f"{m:g} %"
+
+
+def milestone_endpoint(m: Milestone) -> str:
+    """A milestone's restricted-time endpoint: "R_90", "R_99_9"."""
+    return f"R_{milestone_key(m)}"
+
+
+MILESTONE_OF_ENDPOINT: dict[str, Milestone] = {milestone_endpoint(m): m for m in MILESTONES}
 SENSITIVITY = ("no_low_rtf", "exclusions_as_failures", "sequential_only", "shorter_horizons")
 REPRESENTATIVE_RULES = ("SEL-1", "SEL-2", "SEL-3")
-TIME_ENDPOINTS = ("R_completion", *(f"R_{m}" for m in MILESTONES))
+TIME_ENDPOINTS = ("R_completion", *MILESTONE_OF_ENDPOINT)
 DEFAULTS: dict[str, Any] = dict(
     horizons_s={},
     milestones=list(MILESTONES),
@@ -118,7 +144,7 @@ class Settings:
     evidence_level: str
     plan_registered_utc: str | None
     horizons_s: Mapping[str, tuple[float, ...]]  # declared horizons per world; L is always added
-    milestones: tuple[int, ...]
+    milestones: tuple[Milestone, ...]  # members of MILESTONES, ascending
     hypotheses: tuple[Hypothesis, ...]
     alpha: float
     resamples: int
@@ -216,6 +242,11 @@ def settings(study: dict[str, Any]) -> Settings:
         raise Refused("study.yaml: unknown analysis keys " + ", ".join(sorted(unknown)))
     sources = {key: "plan" if key in block else "default" for key in DEFAULTS}
     value = {**DEFAULTS, **block}
+    if not _has_stop_milestone(study):
+        if "milestones" not in block:
+            value["milestones"] = [m for m in MILESTONES if m != STOP_MILESTONE]
+        _refuse_stop_milestone(study, value)
+    milestones = _milestones(value["milestones"])
     bootstrap = {**DEFAULTS["bootstrap"], **value["bootstrap"]}
     stall = {**DEFAULTS["stall"], **value["stall"]}
     representative = {**DEFAULTS["representative"], **value["representative"]}
@@ -250,7 +281,7 @@ def settings(study: dict[str, Any]) -> Settings:
                 for world, values in value["horizons_s"].items()
             }
         ),
-        milestones=tuple(sorted(int(m) for m in value["milestones"])),
+        milestones=milestones,
         hypotheses=tuple(
             Hypothesis(
                 id=str(h["id"]),
@@ -280,6 +311,40 @@ def settings(study: dict[str, Any]) -> Settings:
         density_contrasts=contrasts,
         sources=MappingProxyType(sources),
     )
+
+
+def _has_stop_milestone(study: Mapping[str, Any]) -> bool:
+    """Whether the export's runs carry T99.9 (run record 4 and later)."""
+    version = study.get("run_record_version")
+    return type(version) is int and version >= STOP_RECORD_VERSION
+
+
+def _refuse_stop_milestone(study: Mapping[str, Any], value: Mapping[str, Any]) -> None:
+    """Refuse a plan that names milestone 99.9 or R_99_9 on an export recorded before T99.9."""
+    endpoint = milestone_endpoint(STOP_MILESTONE)
+    named = [f"milestone {m}" for m in value["milestones"] if m == STOP_MILESTONE]
+    if value["representative"].get("endpoint") == endpoint:
+        named.append(f"representative endpoint {endpoint}")
+    named += [f"hypothesis {h['id']}" for h in value["hypotheses"] if h.get("endpoint") == endpoint]
+    if named:
+        raise Refused(
+            f"study.yaml: {', '.join(named)} needs T{STOP_MILESTONE:g} (run record {STOP_RECORD_VERSION}, "
+            f"coverage-stop-v2); this export holds run record {study.get('run_record_version')!r}"
+        )
+
+
+def _milestones(values: Any) -> tuple[Milestone, ...]:
+    """The plan's milestones as members of MILESTONES (so 99.9 keeps its key), ascending; others are refused."""
+    found = []
+    for m in values:
+        known = next((k for k in MILESTONES if m == k), None)  # 99.9 == 99.9, never "99.9"
+        if known is None:
+            raise Refused(
+                f"study.yaml: milestone {m!r} is not one of "
+                + ", ".join(f"{k:g}" for k in MILESTONES)
+            )
+        found.append(known)
+    return tuple(sorted(set(found)))
 
 
 def _level(value: Any) -> Level:

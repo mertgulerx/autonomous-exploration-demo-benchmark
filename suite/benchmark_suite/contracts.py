@@ -49,6 +49,13 @@ STOPPED_OUTCOMES = frozenset({"manual_stop"})
 GAP_S = 2.0
 
 
+def milestone_key(percent: float) -> str:
+    """A coverage milestone's name key (coverage-stop-v2): "25" … "95", "99_9". Record fields are
+    ``t{key}_s``, ``t{key}_event`` and ``t{key}_censor_s``, the export endpoint ``t{key}`` and the analysis
+    endpoint ``R_{key}``."""
+    return format(percent, "g").replace(".", "_")
+
+
 def average_speed(distance_m: Any, elapsed_seconds: Any) -> float | None:
     """Average speed in m/s (``docs/MEASUREMENTS.md``): the raw-odometry distance over the simulation time since
     the first movement. None when either is unavailable or not finite, the distance is negative or no

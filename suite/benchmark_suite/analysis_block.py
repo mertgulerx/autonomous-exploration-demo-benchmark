@@ -36,18 +36,20 @@ from typing import Any
 
 import yaml
 
-from .contracts import ContractError
+from .contracts import ContractError, milestone_key
 from .yaml_io import load_mapping
 
 # The versions, keys, names and defaults below are mirrored in analysis/benchmark_analysis/settings.py (a separate
 # environment that cannot import the suite): change both.
 ANALYSIS_BLOCK_VERSIONS = (1, 2, 3)
 DEVIATIONS_HEADING = re.compile(r"^#{1,3}\s+Deviations\b", re.IGNORECASE)
-MILESTONES = (25, 50, 75, 90, 95)
+MILESTONES = (25, 50, 75, 90, 95, 99.9)  # 99.9 since run-record-v4 (coverage-stop-v2)
+# R_25 … R_95 and R_99_9 (contracts.milestone_key), each with its milestone.
+ENDPOINT_MILESTONES = {f"R_{milestone_key(m)}": m for m in MILESTONES}
 # One estimator and test per endpoint (RESULTS_RESEARCH RD-3, RD-13, RD-52): restricted times use the mean
 # paired ΔR with the sign-flip test; C(h), A_h, D(h) and CPU the Hodges–Lehmann estimate with the Wilcoxon
 # test; success the exact McNemar test with the n10 : n01 interval.
-TIME_ENDPOINTS = ("R_completion", *(f"R_{m}" for m in MILESTONES))
+TIME_ENDPOINTS = ("R_completion", *ENDPOINT_MILESTONES)
 HORIZON_ENDPOINTS = ("C_h", "A_h", "D_h")
 ENDPOINTS = (*TIME_ENDPOINTS, *HORIZON_ENDPOINTS, "success", "cpu")
 SENSITIVITY = ("no_low_rtf", "exclusions_as_failures", "sequential_only", "shorter_horizons")
@@ -259,8 +261,8 @@ def validate(
                 )
         elif "horizon_s" in hypothesis:
             raise ContractError(field + ".horizon_s", "Only C_h, A_h and D_h take a horizon")
-        if hypothesis["endpoint"].startswith("R_") and hypothesis["endpoint"] != "R_completion":
-            if int(hypothesis["endpoint"][2:]) not in milestones:
+        if hypothesis["endpoint"] in ENDPOINT_MILESTONES:
+            if ENDPOINT_MILESTONES[hypothesis["endpoint"]] not in milestones:
                 raise ContractError(
                     field + ".endpoint", "Test only a milestone listed in milestones"
                 )

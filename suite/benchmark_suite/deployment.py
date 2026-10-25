@@ -32,6 +32,7 @@ from .protocol import Client
 from .provenance import (
     CHECKOUT_ROLE,
     HOST_FACTS,
+    REPOSITORY_ROLES,
     RUNTIME_IMAGE_LABEL,
     RUNTIME_LABEL_PREFIX,
     SUITE_LABEL_PREFIX,
@@ -49,6 +50,11 @@ BUSY_STATES = frozenset({"RUNNING", "RETRYING", "PAUSING", "STOPPING", "REPORTIN
 # Suite CLI commands that only read: they never build or replace the engine.
 READ_ONLY_COMMANDS = frozenset({"status", "catalog", "query", "validate", "verify-export"})
 BASE_IMAGE = "autonomous-exploration-benchmark:jazzy-harmonic"
+# The runtime image's version (docker/RUNTIME_VERSION) and the flattened base its refresh builds on: each
+# refresh adds about 20 layers, and Docker refuses images deeper than 127.
+RUNTIME_VERSION_LABEL = "org.benchmark.runtime.version"
+RUNTIME_FLAT_IMAGE = "autonomous-exploration-benchmark:runtime-flat"
+FLATTEN_LAYERS = {"suite": 115, "runtime": 60}
 DEFAULT_WORKSPACE = (Path(__file__).resolve().parents[2] / "results/campaigns/default").resolve()
 
 
@@ -166,9 +172,18 @@ def required_version(root: Path) -> int:
     return int(values[0])
 
 
-def image_version(image: dict[str, Any] | None) -> int:
+def runtime_required_version(root: Path) -> int:
+    """The runtime image version this checkout needs (``docker/RUNTIME_VERSION``, the same format)."""
+    lines = (root / "docker/RUNTIME_VERSION").read_text().splitlines()
+    values = [line.strip() for line in lines if line.strip() and not line.strip().startswith("#")]
+    if len(values) != 1 or not values[0].isdigit():
+        raise ContractError("image", "docker/RUNTIME_VERSION must hold one whole number")
+    return int(values[0])
+
+
+def image_version(image: dict[str, Any] | None, label_name: str = VERSION_LABEL) -> int:
     """The version an installed image was built for (0: missing, or built before versioning)."""
-    label = ((image or {}).get("Config", {}).get("Labels") or {}).get(VERSION_LABEL, "")
+    label = ((image or {}).get("Config", {}).get("Labels") or {}).get(label_name, "")
     return int(label) if str(label).isdigit() else 0
 
 
@@ -180,6 +195,104 @@ def engine_busy(socket: Path) -> bool:
         return True
     rows = (status.get("campaigns") or {}).get("rows") or []
     return bool(status.get("active")) or any(row.get("state") in BUSY_STATES for row in rows)
+
+
+def flatten(
+    original: dict[str, Any],
+    flattened: str,
+    purpose: str,
+    *,
+    cancelled: Callable[[], bool] | None = None,
+) -> str:
+    """``flattened``: one layer with ``original``'s files, labels, environment, working directory, entrypoint and
+    command, rebuilt only when ``original`` changed (its ID in ``org.benchmark.base-source``)."""
+    command = partial(docker, cancelled=cancelled)
+    saved = inspect("image", flattened, cancelled=cancelled)
+    if (
+        saved is not None
+        and (saved["Config"].get("Labels") or {}).get("org.benchmark.base-source") == original["Id"]
+    ):
+        return flattened
+    print(f"Preparing {purpose}…", flush=True)
+    container = command("create", original["Id"])
+    try:
+        config = original["Config"]
+        changes = ["--change", "LABEL org.benchmark.base-source=" + original["Id"]]
+        # Keep the original's labels (its repository states, provenance.py).
+        for label, value in sorted((config.get("Labels") or {}).items()):
+            changes.extend(("--change", f"LABEL {label}={json.dumps(value)}"))
+        for entry in config.get("Env") or []:
+            name, _, value = entry.partition("=")
+            changes.extend(("--change", "ENV " + name + "=" + json.dumps(value)))
+        if config.get("WorkingDir"):
+            changes.extend(("--change", "WORKDIR " + config["WorkingDir"]))
+        for key in ("Entrypoint", "Cmd"):
+            if config.get(key):
+                changes.extend(("--change", f"{key.upper()} {json.dumps(config[key])}"))
+        with subprocess.Popen(
+            ["docker", "export", container],
+            stdout=subprocess.PIPE,
+            start_new_session=True,
+        ) as export:
+            try:
+                imported = command(
+                    "import",
+                    *changes,
+                    "-",
+                    flattened,
+                    input_stream=export.stdout,
+                    timeout=3600,
+                )
+                if export.stdout:
+                    export.stdout.close()
+                if export.wait(timeout=5) != 0:
+                    raise OSError("Docker could not export " + flattened)
+                if not imported:
+                    raise OSError("Docker did not return an identity for " + flattened)
+            finally:
+                stop_command(export)
+    finally:
+        docker("rm", container, timeout=5)
+    return flattened
+
+
+def refresh_runtime(
+    root: Path, *, cancelled: Callable[[], bool] | None = None, version: int = 0
+) -> None:
+    """Refresh the runtime image in place (``docker/Dockerfile.runtime``: runner, robots, interfaces, RViz,
+    explorer, worlds, SLAM Toolbox) on a flattened copy of itself, labelled with ``version`` and its repository
+    states. The full build with the vendor SDKs (``./docker.sh``, ``docker/Dockerfile``) stays manual."""
+    original = inspect("image", BASE_IMAGE, cancelled=cancelled)
+    if original is None:
+        raise ContractError(
+            "image", f"Build the robotics image with ./docker.sh first ({BASE_IMAGE} is missing)"
+        )
+    base = BASE_IMAGE
+    if len(original["RootFS"]["Layers"]) > FLATTEN_LAYERS["runtime"]:
+        base = flatten(
+            original, RUNTIME_FLAT_IMAGE, "a flat runtime base for the refresh", cancelled=cancelled
+        )
+    labels = image_labels(root, RUNTIME_LABEL_PREFIX, REPOSITORY_ROLES)
+    docker(
+        "build",
+        "-f",
+        str(root / "docker/Dockerfile.runtime"),
+        "--build-arg",
+        "BENCHMARK_BASE=" + base,
+        "--label",
+        f"{RUNTIME_VERSION_LABEL}={version}",
+        *(
+            argument
+            for name, value in labels.items()
+            for argument in ("--label", f"{name}={value}")
+        ),
+        "-t",
+        BASE_IMAGE,
+        str(root),
+        capture=False,
+        timeout=7200,
+        cancelled=cancelled,
+    )
 
 
 def build_image(
@@ -194,52 +307,13 @@ def build_image(
             "image",
             f"Build the existing robotics image with ./docker.sh before building the suite ({base} is missing)",
         )
-    if len(original["RootFS"]["Layers"]) > 115:
-        flattened = "autonomous-exploration-benchmark:suite-base"
-        saved = lookup("image", flattened)
-        if (
-            saved is None
-            or (saved["Config"].get("Labels") or {}).get("org.benchmark.base-source")
-            != original["Id"]
-        ):
-            print("Preparing the robotics base for the suite image…", flush=True)
-            container = command("create", base)
-            try:
-                changes = ["--change", "LABEL org.benchmark.base-source=" + original["Id"]]
-                # Keep the runtime image's labels (its repository states, provenance.py).
-                for label, value in sorted((original["Config"].get("Labels") or {}).items()):
-                    changes.extend(("--change", f"LABEL {label}={json.dumps(value)}"))
-                for entry in original["Config"].get("Env", []):
-                    name, _, value = entry.partition("=")
-                    changes.extend(("--change", "ENV " + name + "=" + json.dumps(value)))
-                working = original["Config"].get("WorkingDir")
-                if working:
-                    changes.extend(("--change", "WORKDIR " + working))
-                with subprocess.Popen(
-                    ["docker", "export", container],
-                    stdout=subprocess.PIPE,
-                    start_new_session=True,
-                ) as export:
-                    try:
-                        imported = command(
-                            "import",
-                            *changes,
-                            "-",
-                            flattened,
-                            input_stream=export.stdout,
-                            timeout=3600,
-                        )
-                        if export.stdout:
-                            export.stdout.close()
-                        if export.wait(timeout=5) != 0:
-                            raise OSError("Docker could not export the robotics base")
-                        if not imported:
-                            raise OSError("Docker did not return a suite-base image identity")
-                    finally:
-                        stop_command(export)
-            finally:
-                docker("rm", container, timeout=5)
-        base = flattened
+    if len(original["RootFS"]["Layers"]) > FLATTEN_LAYERS["suite"]:
+        base = flatten(
+            original,
+            "autonomous-exploration-benchmark:suite-base",
+            "the robotics base for the suite image",
+            cancelled=cancelled,
+        )
     # The checkout the suite code comes from (provenance; D-08). The explorer's labels are the base's.
     labels = image_labels(root, SUITE_LABEL_PREFIX, (CHECKOUT_ROLE,))
     command(
@@ -343,7 +417,31 @@ def ensure_engine(
     accepted_diagnostics = current_diagnostics if diagnostics is None else diagnostics
     installed = lookup("image", image)
     version = required_version(root)
-    outdated = installed is not None and image_version(installed) != version
+    # The runtime image under the suite image is refreshed by its own version (docker/RUNTIME_VERSION); a custom
+    # base (BENCHMARK_SUITE_BASE) is left alone.
+    runtime = None if os.environ.get("BENCHMARK_SUITE_BASE") else lookup("image", BASE_IMAGE)
+    runtime_version = runtime_required_version(root)
+    runtime_outdated = (
+        runtime is not None and image_version(runtime, RUNTIME_VERSION_LABEL) != runtime_version
+    )
+    reasons = []
+    if installed is not None and image_version(installed) != version:
+        reasons.append(
+            f"the suite image is version {image_version(installed)}, this checkout needs {version}"
+        )
+    if runtime_outdated:
+        reasons.append(
+            f"the runtime image is version {image_version(runtime, RUNTIME_VERSION_LABEL)}, "
+            f"this checkout needs {runtime_version}"
+        )
+    elif (
+        installed is not None
+        and runtime is not None
+        and (installed["Config"].get("Labels") or {}).get(BASE_ID_LABEL) != runtime["Id"]
+    ):
+        reasons.append("the suite image was built on an older runtime image")
+    why = "; ".join(reasons)
+    outdated = installed is not None and bool(reasons)
     build = installed is None or rebuild or (outdated and update)
     # A new engine upgrades a version-1 database and refuses while a campaign needs the old image (store.py):
     # keep the installed image until those campaigns are finished or stopped, rather than replace it.
@@ -359,9 +457,9 @@ def ensure_engine(
             )
         build = False
         print(
-            f"The suite image is version {image_version(installed)}, this checkout needs {version}, which "
-            f"upgrades the operational database; {blockers} campaign(s) are active, so the engine keeps "
-            "its image until they are finished or stopped.",
+            f"Update pending ({why or 'rebuild'}); the new engine upgrades the operational database and "
+            f"{blockers} campaign(s) are active, so the engine keeps its image until they are finished or "
+            "stopped.",
             flush=True,
         )
     if build and running and running["State"]["Running"]:
@@ -373,9 +471,8 @@ def ensure_engine(
         if installed is not None and engine_busy(socket):
             build = False
             print(
-                f"The suite image is version {image_version(installed)}, this checkout needs {version}; "
-                "a campaign is running, so the engine keeps its image and updates at the next start "
-                "while it is idle.",
+                f"Update pending ({why}); a campaign is running, so the engine keeps its image and updates "
+                "at the next start while it is idle.",
                 flush=True,
             )
         else:
@@ -384,11 +481,13 @@ def ensure_engine(
             running = lookup("container", name)
     elif outdated and not update:
         print(
-            f"Note: the suite image is version {image_version(installed)}, this checkout needs {version}; "
-            "it is rebuilt at the next start of the engine or GUI.",
+            f"Note: {why}; the images are rebuilt at the next start of the engine or GUI.",
             flush=True,
         )
     if build:
+        if runtime_outdated:
+            print(f"Refreshing runtime image version {runtime_version}…", flush=True)
+            refresh_runtime(root, cancelled=cancelled, version=runtime_version)
         print(f"Building suite image version {version}…", flush=True)
         build_image(root, image, cancelled=cancelled, version=version)
         installed = lookup("image", image)

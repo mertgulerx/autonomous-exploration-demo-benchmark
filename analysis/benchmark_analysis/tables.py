@@ -43,7 +43,16 @@ from pathlib import Path
 import re
 from typing import Any
 
-from .data import EXCLUDED, MISSING, REPORTED, Stratum, Study, mapping_condition
+from .data import (
+    COMPLETION_SOURCE,
+    COMPLETION_SOURCES,
+    EXCLUDED,
+    MISSING,
+    REPORTED,
+    Stratum,
+    Study,
+    mapping_condition,
+)
 from .estimates import EFFECTS, PRIMARY_TIME, UNITS, Entries, EstimateContext, time_endpoints
 from .families import CONTRACT as FAMILY_CONTRACT
 from .settings import Family, Settings
@@ -364,13 +373,16 @@ T1_COLUMNS = [
     "Not done",
     "Completion (Wilson)",
 ]
+# T1's split of Completed by completion_source, after Completed, when the export carries it (run record 3)
+SOURCE_COLUMNS = {"explorer": "Completed (explorer)", "coverage_stop": "Completed (coverage stop)"}
 
 
 def accounting(study: Study) -> dict[tuple[str, str, str, str], dict[str, int]]:
     """Counts per robot, world, spawn and profile of every planned experiment, from ``experiments`` and ``runs``
     (not the export's own accounting table, so that the two can be compared): ``planned``, the experiment states
-    (``done``, ``unresolved``), final runs by report class and reported runs by ``outcome_<outcome>``, attempts
-    replaced (``replaced_<reason>``) and discarded (``discarded_<trigger>`` or ``discarded_other``). T1 and F9."""
+    (``done``, ``unresolved``), final runs by report class and reported runs by ``outcome_<outcome>``, completed
+    reported runs by ``source_<completion_source>`` (run record 3), attempts replaced (``replaced_<reason>``)
+    and discarded (``discarded_<trigger>`` or ``discarded_other``). T1 and F9."""
     experiments = study.export.table(
         "experiments", ["robot_id", "world_id", "spawn_id", "profile_id", "state"]
     ).to_pylist()
@@ -392,6 +404,8 @@ def accounting(study: Study) -> dict[tuple[str, str, str, str], dict[str, int]]:
             group[run["report_class"]] += 1
             if run["report_class"] == REPORTED:
                 group["outcome_" + run["outcome"]] += 1
+                if run["outcome"] == "completed" and run[COMPLETION_SOURCE] in COMPLETION_SOURCES:
+                    group["source_" + run[COMPLETION_SOURCE]] += 1
     return counts
 
 
@@ -399,9 +413,11 @@ def t1(src: Sources) -> Table:
     """Accounting per robot, world, spawn and profile of every planned experiment (``accounting``)."""
     study = src.study
     counts = accounting(study)
-    table = Table(
-        "T1", "Outcome accounting per stratum and profile", list(T1_COLUMNS), sparse_counts=True
-    )
+    sources = list(COMPLETION_SOURCES) if study.has_completion_source else []
+    columns = list(T1_COLUMNS)
+    at = columns.index("Completed") + 1
+    columns[at:at] = [SOURCE_COLUMNS[source] for source in sources]
+    table = Table("T1", "Outcome accounting per stratum and profile", columns, sparse_counts=True)
     stratum_of = {(s.robot_id, s.world_id, s.spawn_id): s for s in study.strata}
     order = {profile: index for index, profile in enumerate(src.order)}
     for key in sorted(counts, key=lambda k: (k[:3], order.get(k[3], len(order)), k[3])):
@@ -415,7 +431,9 @@ def t1(src: Sources) -> Table:
                 src.name(key[3]),
                 str(group["planned"]),
                 str(group["done"]),
-                *(str(group["outcome_" + o]) for o in ("completed", "time_limit", "no_movement")),
+                str(group["outcome_completed"]),
+                *(str(group["source_" + source]) for source in sources),
+                *(str(group["outcome_" + o]) for o in ("time_limit", "no_movement")),
                 *(str(group[c]) for c in (*MISSING, *EXCLUDED)),
                 str(group["replaced_timing_rejection"]),
                 str(group["replaced_engine_interruption"]),
@@ -434,6 +452,12 @@ def t1(src: Sources) -> Table:
         "(reported-outcomes-v2); replaced and discarded attempts are not final. Every planned experiment has "
         "a row, also where no run was reported.",
     ]
+    if sources:
+        table.notes.append(
+            "Completed (explorer): the explorer's completion event ended the run; Completed (coverage stop): "
+            "coverage reached 99.9 % (coverage-stop-v2; coverage-stop-v1 stopped at 99.0 % before 26 October "
+            "2026). Both count as completed; a completed run without a recorded source is in neither column."
+        )
     return table
 
 
@@ -574,6 +598,12 @@ def t3(src: Sources) -> Table:
         "run censored at L reads > L. RMST(L) = mean of min(T, L): t interval below 10 runs, percentile "
         "bootstrap over runs from 10 (RD-5, RD-11).",
     ]
+    if src.study.has_completion_source:
+        table.notes.append(
+            "R_completion counts both completions: the explorer's completion event and the coverage stop at "
+            "99.9 % (coverage-stop-v2; coverage-stop-v1 stopped at 99.0 % before 26 October 2026); T1 counts "
+            "them apart."
+        )
     return table
 
 

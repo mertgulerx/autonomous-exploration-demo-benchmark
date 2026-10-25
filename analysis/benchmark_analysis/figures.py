@@ -106,7 +106,7 @@ from .estimates import (
     time_value,
 )
 from .export import Export
-from .settings import Settings
+from .settings import MILESTONE_OF_ENDPOINT, Settings, milestone_label
 from .style import (
     EDGE,
     MAP_FREE,
@@ -841,8 +841,11 @@ def f1(ctx: FigureContext) -> FigureOut:
 
 
 def endpoint_label(endpoint: str) -> str:
-    """The event a restricted-time endpoint waits for, in words: "completion" or "90 % coverage"."""
-    return "completion" if endpoint == "R_completion" else f"{endpoint[2:]} % coverage"
+    """The event a restricted-time endpoint waits for, in words: "completion", "90 % coverage" or "99.9 %
+    coverage"."""
+    if endpoint == "R_completion":
+        return "completion"
+    return f"{milestone_label(MILESTONE_OF_ENDPOINT[endpoint])} coverage"
 
 
 def attainment_panel(

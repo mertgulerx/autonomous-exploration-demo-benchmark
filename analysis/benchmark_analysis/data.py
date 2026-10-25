@@ -30,6 +30,11 @@
   have no value when valid samples are more than 2 s apart before min(h, T_end), the run has no sample at
   movement onset or is not coverage-eligible. D(h) is odometry distance from the export's 1 s trajectory rows,
   moving runs only, with no value when the last row is more than 2 s old.
+- The coverage stop ends a run at the first valid sample at or above its threshold as ``completed``:
+  99.9 % since run record 4 (``coverage-stop-v2``), 99.0 % in run record 3 (``coverage-stop-v1``, before
+  26 October 2026). ``completion_source`` (run record 3 on) says whether the explorer or that stop ended it; both
+  are a completion here (R_completion, success) and T1 counts them apart. T99.9 joins the milestones from run
+  record 4; run record 3's T99 columns are not read. Earlier records read None for what they lack.
 """
 
 from collections import defaultdict
@@ -43,6 +48,7 @@ import pyarrow as pa
 
 from .errors import Refused
 from .export import Export
+from .settings import MILESTONE_OF_ENDPOINT, STOP_MILESTONE, milestone_key
 
 Row = dict[str, Any]
 Floats = NDArray[np.float64]
@@ -63,14 +69,21 @@ VERSION_COLUMNS = (
 # 1, or recorded before mapping-known-pose-v1) mapped under the earlier stock SLAM condition.
 MAPPING_CONDITION = "mapping_condition"
 BEFORE_MAPPING_CONDITION = "none (before mapping-known-pose-v1)"
+# R_<key> reads the run record's t<key>_s, t<key>_event and t<key>_censor_s (key: settings.milestone_key)
 TIME_ENDPOINTS = {
     "R_completion": "completion",
-    "R_25": "t25",
-    "R_50": "t50",
-    "R_75": "t75",
-    "R_90": "t90",
-    "R_95": "t95",
+    **{endpoint: f"t{milestone_key(m)}" for endpoint, m in MILESTONE_OF_ENDPOINT.items()},
 }
+# Run record 3 on: what ended a completed run, ``explorer`` (its completion event) or ``coverage_stop`` (coverage
+# reached 99.9 %, coverage-stop-v2; coverage-stop-v1 stopped at 99.0 % before 26 October 2026); null for other
+# outcomes. Run record 4 replaced T99 by T99.9. Records without a column read None for it (no value,
+# ``not_recorded``), and the settings leave milestone 99.9 out before run record 4.
+COMPLETION_SOURCE = "completion_source"
+COMPLETION_SOURCES = ("explorer", "coverage_stop")
+OPTIONAL_COLUMNS = (
+    COMPLETION_SOURCE,
+    *(f"t{milestone_key(STOP_MILESTONE)}{suffix}" for suffix in ("_s", "_event", "_censor_s")),
+)
 TIME_EPSILON = 1e-9
 
 
@@ -147,6 +160,7 @@ class Study:
     coverage: Mapping[str, Series] = field(repr=False)
     pre_motion: Mapping[str, float | None] = field(repr=False)
     trajectory: Mapping[str, tuple[Floats, Floats]] = field(repr=False)  # t, odometry distance
+    has_completion_source: bool = False  # the export's runs carry completion_source (run record 3)
 
     @property
     def finals(self) -> list[Row]:
@@ -203,9 +217,12 @@ def mapping_condition(run: Row) -> str | None:
 
 def load(export: Export) -> Study:
     """The study's runs, strata and series, or a refusal naming what does not fit."""
-    runs = _rows(export.table("runs"))
+    table = export.table("runs")
+    runs = _rows(table)
     for run in runs:  # exports of run record 1 have no column: those runs predate the condition
         run.setdefault(MAPPING_CONDITION, None)
+        for column in OPTIONAL_COLUMNS:  # before run record 3: no coverage stop; before 4: no T99.9
+            run.setdefault(column, None)
     finals = [run for run in runs if run["is_final"]]
     if not finals:
         raise Refused("the export holds no final runs")
@@ -316,6 +333,7 @@ def load(export: Export) -> Study:
         coverage=_coverage(export, reported),
         pre_motion={run["attempt_id"]: run["pre_motion_coverage_pct"] for run in finals},
         trajectory=_trajectory(export, reported),
+        has_completion_source=COMPLETION_SOURCE in table.column_names,
     )
 
 

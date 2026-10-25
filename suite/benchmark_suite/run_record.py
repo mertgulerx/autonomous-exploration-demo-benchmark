@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The run record ``run-record-v2``: its field registry and the facts measured from an attempt's files.
+"""The run record ``run-record-v4``: its field registry and the facts measured from an attempt's files.
 
-Contract: docs/MEASUREMENTS.md, "Run record run-record-v2". ``measure`` runs in a spawned job (``jobs.py``)
+Contract: docs/MEASUREMENTS.md, "Run record run-record-v4". ``measure`` runs in a spawned job (``jobs.py``)
 and reads the manifest, the streams and the explorer log; ``run_records.RunRecords`` adds the engine's
 facts and stores the record once. Read-time fields (finality, report class) are derived from the store
 by ``read_time_fields``. Null never means zero.
@@ -32,7 +32,7 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from .contracts import REPORTED_OUTCOMES, average_speed, content_hash
+from .contracts import REPORTED_OUTCOMES, average_speed, content_hash, milestone_key
 from .datasets import files, iter_rows, materialize_manifest, recorded_version
 from .explorer_log import (
     ClockMap,
@@ -51,18 +51,20 @@ from .run_map import GROUND_TRUTH_OFFSET, finite, triple
 from .storage import file_hash, load_object, sync_directory
 from .strata import COMPARISON_KEY_VERSION, comparison_key
 
-# 2 (I10): adds mapping_condition. Version 1 records stay beside the rebuilt ones (run_records.py).
-RUN_RECORD_VERSION = 2
+# 2 (I10): adds mapping_condition. 3 (coverage-stop-v1, 25 October 2026): adds completion_source and
+# the T99 fields. 4 (coverage-stop-v2, 26 October 2026): the T99 fields replaced by the T99.9 fields
+# (t99_9_s, t99_9_event, t99_9_censor_s). Older records stay beside the rebuilt ones (run_records.py).
+RUN_RECORD_VERSION = 4
 ELIGIBILITY_VERSION = "eligibility-v2"
 DERIVED_VERSION = 1
 # Goal statuses the explorer itself causes (a cancel request or a replacement goal).
 ENDED_BY_EXPLORER = frozenset({"canceled", "preempted"})
-MILESTONES = (25, 50, 75, 90, 95)
+MILESTONES = (25, 50, 75, 90, 95, 99.9)  # 99.9: the coverage stop's milestone (run-record-v4)
 STALL_DELTA_PP = 0.1  # stall-v1 (RESULTS_RESEARCH RD-18)
 MOTION_GAP_NS = 500_000_000  # eligibility-v2: largest interval between valid trajectory rows
 RESOURCE_CHAIN_NS = 2_500_000_000  # RD-20: valid resource samples at most 2.5 s apart
 # Where every field is defined; the study export's codebook cites it (R4).
-DEFINITION = "docs/MEASUREMENTS.md, Results overhaul contracts, Run record run-record-v2"
+DEFINITION = "docs/MEASUREMENTS.md, Results overhaul contracts, Run record run-record-v4"
 Kind = Literal["text", "int", "float", "bool", "list"]
 
 
@@ -113,6 +115,11 @@ FIELDS: tuple[Field, ...] = (
     *_fields("text", "", "never", "outcome"),
     *_fields("text", "", "never", "outcome_detail"),
     *_fields("text", "", "outcome not a failure", "outcome_detail_code"),
+    # What ended a completed run (coverage-stop-v1): "explorer" or "coverage_stop". A manifest written
+    # before the rule has no completion_source; its completed runs are "explorer" (no other source existed).
+    *_fields(
+        "text", "", "outcome not completed, or the manifest names no source", "completion_source"
+    ),
     *_fields("float", "sim s", "limit disabled", "time_limit_s"),
     *_fields("float", "sim s", "never moved or stub", "elapsed_s", "restricted_elapsed_s"),
     *_fields("bool", "", "stub", "motion_started"),
@@ -123,12 +130,15 @@ FIELDS: tuple[Field, ...] = (
     *_fields("float", "sim s", "not an observed completion", "completion_s"),
     *_fields("bool", "", "competing outcome", "completion_event"),
     *_fields("float", "sim s", "not censored", "completion_censor_s"),
-    *(Field(f"t{m}_s", "float", "sim s", "not an observed event") for m in MILESTONES),
     *(
-        Field(f"t{m}_event", "bool", "", "not recorded, not eligible, or competing")
+        Field(f"t{milestone_key(m)}_s", "float", "sim s", "not an observed event")
         for m in MILESTONES
     ),
-    *(Field(f"t{m}_censor_s", "float", "sim s", "not censored") for m in MILESTONES),
+    *(
+        Field(f"t{milestone_key(m)}_event", "bool", "", "not recorded, not eligible, or competing")
+        for m in MILESTONES
+    ),
+    *(Field(f"t{milestone_key(m)}_censor_s", "float", "sim s", "not censored") for m in MILESTONES),
     *_fields("float", "%", "coverage not valid", "coverage_final_pct"),
     *_fields("float", "m²", "coverage not valid", "covered_m2", "reference_free_m2"),
     *_fields("bool", "", "stub", "coverage_valid"),
@@ -360,6 +370,20 @@ def completion(outcome: str, elapsed: float | None, limit: float | None) -> Cens
     if outcome in ("completed", "time_limit"):
         return Censored(None, False, limit)
     return NOT_APPLICABLE
+
+
+COMPLETION_SOURCES = frozenset({"explorer", "coverage_stop"})
+
+
+def completion_source(outcome: str, manifest: dict[str, Any]) -> str | None:
+    """What ended a completed run: the manifest's ``completion_source``; ``explorer`` when the manifest
+    predates coverage-stop-v1 (no key); null for other outcomes or an unknown or null recorded value."""
+    if outcome != "completed":
+        return None
+    if "completion_source" not in manifest:
+        return "explorer"
+    source = manifest["completion_source"]
+    return source if isinstance(source, str) and source in COMPLETION_SOURCES else None
 
 
 def milestone(
@@ -877,18 +901,23 @@ def measure(payload: dict[str, Any]) -> dict[str, Any]:
         completion_s=finished.time_s,
         completion_event=finished.event,
         completion_censor_s=finished.censor_s,
+        completion_source=completion_source(outcome, manifest),
     )
+    # Matched by numeric value: the runner writes percent as a float (99.9; 25.0 … 95.0).
     milestones = {
-        int(item["percent"]): item
+        float(item["percent"]): item
         for item in (manifest.get("coverage") or {}).get("milestones", [])
     }
     for percent in MILESTONES:
-        value = milestone(milestones.get(percent), outcome, coverage_eligible, limit, elapsed)
+        value = milestone(
+            milestones.get(float(percent)), outcome, coverage_eligible, limit, elapsed
+        )
+        key = milestone_key(percent)
         record.update(
             {
-                f"t{percent}_s": value.time_s,
-                f"t{percent}_event": value.event,
-                f"t{percent}_censor_s": value.censor_s,
+                f"t{key}_s": value.time_s,
+                f"t{key}_event": value.event,
+                f"t{key}_censor_s": value.censor_s,
             }
         )
     final_pct = finite(metrics.get("coverage_percent")) if coverage_valid else None

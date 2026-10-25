@@ -71,7 +71,7 @@ frontier_explorer:
 
     # Allow a farther frontier fallback until the first successful frontier.
     # Useful if you have a very low range LiDAR or Depth sensor.
-    escape_enabled: true
+    escape_enabled: false
 
     # Return to the recorded start pose once no frontiers remain.
     return_to_start_on_complete: false
@@ -82,7 +82,7 @@ frontier_explorer:
     # Maximum number of scored frontier candidates passed into the bounded-horizon dp solver.
     dp_solver_candidate_limit: 12
     # Number of distinct frontier visits evaluated in the candidate pool.
-    dp_planning_horizon: 8
+    dp_planning_horizon: 10
 
     # Enable decision-map preprocessing for frontier extraction. 
     # Disable only if you are having performance issues. Not a problem for most CPUs.
@@ -108,7 +108,7 @@ frontier_explorer:
 
     # Enable temporary suppression for frontiers that repeatedly fail or stall.
     # Use if you are having issues with SLAM or Nav2.
-    frontier_suppression_enabled: false
+    frontier_suppression_enabled: true
 
     # Behavior when frontiers exist but all of them are temporarily suppressed: stay or return_to_start. 
     # Requires `frontier_suppression_enabled: true`

@@ -120,6 +120,33 @@ RPP_FOLLOW_PATH = {
 }
 
 
+# The benchmark's global planner (maintainer, 25 October 2026): Nav2's Smac Planner 2D (nav2_smac_planner 1.3.13,
+# cost-aware 8-connected A* with backtracking) replaces the shared file's NavFn, whose gradient-descent path
+# extraction loops on goals in mixed free/unknown cells (results/diagnostics/2026-10-25-sc4-navfn). Values: the
+# package README's (cost_travel_multiplier 2.0, smoother), the plugin's 2D default max_planning_time 2.0 s, and
+# NavFn's tolerance 0.5 m and allow_unknown true kept; the same for every robot.
+SMAC_2D_GRID_BASED = {
+    "plugin": "nav2_smac_planner::SmacPlanner2D",
+    "tolerance": 0.5,
+    "downsample_costmap": False,
+    "downsampling_factor": 1,
+    "allow_unknown": True,
+    "max_iterations": 1000000,
+    "max_on_approach_iterations": 1000,
+    "terminal_checking_interval": 5000,
+    "max_planning_time": 2.0,
+    "cost_travel_multiplier": 2.0,
+    "use_final_approach_orientation": False,
+    "smoother": {
+        "max_iterations": 1000,
+        "w_smooth": 0.3,
+        "w_data": 0.2,
+        "tolerance": 1.0e-10,
+        "do_refinement": True,
+    },
+}
+
+
 # Anchor of the inflation scaling (maintainer, 25 October 2026): the padded circumradius r0 of the
 # shared navigation.yaml footprint (0.44 x 0.38 m, padding 0.01 m), for which its inflation radii
 # and cost scaling factors were tuned. Fixed here; prepare refuses a shared file that differs.
@@ -130,6 +157,9 @@ def navigation_parameters(baseline, profile):
     parameters = deepcopy(baseline)
     parameters["controller_server"]["ros__parameters"]["FollowPath"] = deepcopy(
         RPP_FOLLOW_PATH
+    )
+    parameters["planner_server"]["ros__parameters"]["GridBased"] = deepcopy(
+        SMAC_2D_GRID_BASED
     )
     vx, vy, wz = (
         profile[k]

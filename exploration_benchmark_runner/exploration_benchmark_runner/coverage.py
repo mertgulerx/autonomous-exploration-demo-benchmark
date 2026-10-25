@@ -34,7 +34,15 @@ SUPPORTED_METRIC_VERSIONS = (1, 2)  # 1 stays readable for recorded runs and the
 # A 0.05 m SLAM grid rarely marks the two cells next to a wall free (the wall hit and its raster neighbour,
 # plus the frozen alignment's few centimetres), so version 2 leaves them out of the target.
 TARGET_MARGIN = 0.10
-MILESTONES = (25.0, 50.0, 75.0, 90.0, 95.0)  # T25 added 17 October 2026
+# T25 added 17 October 2026; T99 on 25 October 2026, replaced by T99.9 on 26 October 2026 (the coverage stop's
+# milestone).
+MILESTONES = (25.0, 50.0, 75.0, 90.0, 95.0, 99.9)
+# Every run stops at the first valid post-motion sample reaching this coverage (maintainer; v1 stopped at 99.0 %
+# from 25 October 2026, v2 at 99.9 % from 26 October 2026); samples after the stop signal may exceed it and are
+# kept. The stop is the outcome "completed".
+COVERAGE_STOP_PERCENT = 99.9
+COVERAGE_STOP_RULE = "coverage-stop-v2"
+COVERAGE_STOP_DETAIL = f"Coverage reached {COVERAGE_STOP_PERCENT:.1f} % ({COVERAGE_STOP_RULE})"
 SAMPLE_INTERVAL = 1.0
 STALE_SECONDS = 5.0
 

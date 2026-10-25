@@ -26,6 +26,8 @@ import subprocess
 import time
 import yaml
 
+from .coverage import COVERAGE_STOP_PERCENT, COVERAGE_STOP_RULE
+
 
 def digest(path):
     return hashlib.sha256(Path(path).read_bytes()).hexdigest()
@@ -144,6 +146,8 @@ class Recorder:
                 "framework": profile.get("random_seed", "unsupported"),
                 "ros2_stack": "No seed override applied; baseline SLAM/Nav2 configuration retained",
             },
+            # The run's stop rule (coverage-stop-v1): a condition of every run since 25 October 2026.
+            coverage_stop_policy=dict(rule=COVERAGE_STOP_RULE, percent=COVERAGE_STOP_PERCENT),
             quality_policy={
                 "rtf_threshold": 0.95,
                 "window_wall_seconds": 5,

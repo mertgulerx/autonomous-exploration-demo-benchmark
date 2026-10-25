@@ -35,13 +35,14 @@ import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import gui_tokens
-from .contracts import GAP_S
+from .contracts import GAP_S, milestone_key
 from .gui_cells import MONO_TEXT, OverlayScrollBar
-from .gui_controls import StatusBadge, badge_look
+from .gui_controls import StatusBadge
 from .gui_maps import LiveLayers, WorldMap, decode_grey
 from .gui_mapview import LiveMap
 from .gui_marks import CHART_LABEL, KeyValue, KeyValueList, tick_step
 from .gui_profile_preview import profile_differences
+from .gui_runs import outcome_look
 from .gui_style import duration, fixed, number
 from .gui_support import POLL_MS, Transport, stale_engine_message
 from .gui_theme import ThemeManager, snap
@@ -77,7 +78,8 @@ KV_STRONG = TextStyle(12.5, 600, 18)
 GROUP_TITLE = TextStyle(12, 600, 18)
 TRACK_TITLE = TextStyle(12.5, 600, 18)
 TRACK_TEXT = TextStyle(12, 400, 18)
-MILESTONES = (50, 75, 90, 95)  # the first-reached times the view shows
+# The first-reached times the view shows (99.9: coverage-stop-v2).
+MILESTONES = (50, 75, 90, 95, 99.9)
 MAP_WIDTH = 520  # the left column (decision 4)
 
 
@@ -345,11 +347,11 @@ class MapLegend(Themed):
 
 
 class FirstReached(Themed):
-    """``.fr``: "First reached" in a 112 px column, then 50, 75, 90 and 95 % with the simulation time each was
-    first reached ("not reached" when censored, "—" when unavailable); 44 px, rules above and below, a rule
-    before each cell."""
+    """``.fr``: "First reached" in an 88 px column, then 50, 75, 90, 95 and 99.9 % with the simulation time each was
+    first reached ("not reached" when censored, "—" when unavailable, both in the share's 11.5 px style so five
+    cells fit the 520 px column); 44 px, rules above and below, a rule before each cell."""
 
-    LABEL_WIDTH = 112
+    LABEL_WIDTH = 88  # 112 with four cells; the fifth (99.9 %, run-record-v4) needs the room
 
     def __init__(self, themes: ThemeManager, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(themes, parent)
@@ -360,7 +362,7 @@ class FirstReached(Themed):
         self.values = list(values)
         self.setAccessibleDescription(
             "First reached: "
-            + ", ".join(f"{share} % {value}" for share, value in zip(MILESTONES, self.values))
+            + ", ".join(f"{share:g} % {value}" for share, value in zip(MILESTONES, self.values))
         )
         self.update()
 
@@ -378,14 +380,14 @@ class FirstReached(Themed):
         for index, (share, value) in enumerate(zip(MILESTONES, self.values, strict=True)):
             left = self.LABEL_WIDTH + index * cell
             painter.fillRect(QtCore.QRectF(snap(left), 1, 1, 42), line)
-            draw_text(painter, left + 13, block, f"{share} %", REACHED_SHARE, secondary)
+            draw_text(painter, left + 13, block, f"{share:g} %", REACHED_SHARE, secondary)
             if value in (
                 "not reached",
                 "—",
             ):  # censored or unavailable: ``.nr``, on the value's baseline
                 baseline = REACHED_VALUE.baseline(block + 14)
-                top = baseline - REACHED_KEY.baseline(0)
-                draw_text(painter, left + 13, top, value, REACHED_KEY, secondary)
+                top = baseline - REACHED_SHARE.baseline(0)
+                draw_text(painter, left + 13, top, value, REACHED_SHARE, secondary)
             else:
                 draw_text(painter, left + 13, block + 14, value, REACHED_VALUE, ink)
 
@@ -962,7 +964,7 @@ class RunCharts(Themed):
             )
         card = self.color("surface.card")
         for share in MILESTONES:
-            seconds = number(self.record.get(f"t{share}_s"))
+            seconds = number(self.record.get(f"t{milestone_key(share)}_s"))
             if seconds is None:
                 continue
             # on the drawn line at the recorded time: the first sample at or above the share, whose value
@@ -1146,7 +1148,8 @@ def first_reached(record: Mapping[str, Any]) -> list[str]:
     """Each milestone's time, "not reached" when right-censored, "—" when the record holds neither."""
     values = []
     for share in MILESTONES:
-        seconds, event = record.get(f"t{share}_s"), record.get(f"t{share}_event")
+        key = milestone_key(share)
+        seconds, event = record.get(f"t{key}_s"), record.get(f"t{key}_event")
         if event is True and number(seconds) is not None:
             values.append(duration(seconds))
         elif event is False:
@@ -1723,7 +1726,7 @@ class RunView(QtWidgets.QScrollArea):
         ]
         self.head.context.setText(" · ".join(part for part in parts if part))
         excluded = record.get("report_class") not in ("reported", None)
-        self.head.badge.set_look(badge_look("outcome", record.get("outcome"), muted=excluded))
+        self.head.badge.set_look(outcome_look(record, muted=excluded))
         self.head.replay.setEnabled(record.get("record_kind") == "full")
         self._partner_button()
         self.head.relayout()

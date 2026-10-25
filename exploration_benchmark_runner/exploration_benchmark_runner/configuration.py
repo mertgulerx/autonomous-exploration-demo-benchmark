@@ -27,8 +27,11 @@ def robot_parameter_schema(schema, robot):
     from copy import deepcopy
 
     schema = deepcopy(schema)
+    # Robot-derived Defaults: the scoring speed estimates and the preemption gate's lidar
+    # range follow the robot's catalog limits and sensor (D-07, 25 October 2026).
     schema.defaults.update(max_linear_speed_vmax=float(robot["max_linear_speed"]),
-                           max_angular_speed_wmax=float(robot["max_angular_speed"]))
+                           max_angular_speed_wmax=float(robot["max_angular_speed"]),
+                           goal_preemption_lidar_range_m=float(robot["lidar"]["range_max"]))
     return schema
 
 

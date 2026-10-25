@@ -412,10 +412,15 @@ void ExplorationControlPanel::robotChanged()
   parameter_catalog_.robot_id = found->id;
   for (auto& definition : parameter_catalog_.parameters)
   {
-    if (definition.name != "max_linear_speed_vmax" && definition.name != "max_angular_speed_wmax")
+    // Robot-derived Defaults, as the coordinator's robot_parameter_schema sets them.
+    if (definition.name == "max_linear_speed_vmax")
+      definition.default_value.double_value = found->max_linear_speed;
+    else if (definition.name == "max_angular_speed_wmax")
+      definition.default_value.double_value = found->max_angular_speed;
+    else if (definition.name == "goal_preemption_lidar_range_m")
+      definition.default_value.double_value = found->lidar_range;
+    else
       continue;
-    definition.default_value.double_value = definition.name == "max_linear_speed_vmax"
-        ? found->max_linear_speed : found->max_angular_speed;
     for (auto& row : rows_)
       for (auto& parameter : row.parameters)
         for (const auto& old : previous.parameters)
@@ -725,7 +730,8 @@ void ExplorationControlPanel::metricsReceived(const interfaces::msg::RunMetrics&
                               ? QString::number(milestone.simulation_elapsed, 'f', 1) + " s"
                               : (!m.motion_started ? (m.frozen ? "not started" : "pending")
                                                    : (m.frozen ? "unreached" : "pending"));
-    milestones << QString("%1%: %2").arg(milestone.percent, 0, 'f', 0).arg(value);
+    // Whole percentages print without decimals, 99.9 % with one.
+    milestones << QString("%1%: %2").arg(QString::number(milestone.percent, 'g', 4)).arg(value);
   }
   QString coverage = "Coverage: ";
   if ((m.coverage_status == "valid" || m.coverage_status == "stale") &&

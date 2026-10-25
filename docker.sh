@@ -66,6 +66,9 @@ build_docker_image() {
     echo "Could not read the repository states for the image labels." >&2
     exit 1
   fi
+  # A full build holds everything a refresh would; label it with the runtime version so ./suite_launch.sh does not
+  # refresh it again (docker/RUNTIME_VERSION).
+  labels+=(--label "org.benchmark.runtime.version=$(grep -v '^#' "${PROJECT_ROOT}/docker/RUNTIME_VERSION" | tr -d '[:space:]')")
 
   echo "Building Docker image '${DOCKER_IMAGE}'..."
   if docker --version 2>/dev/null | grep -qi podman; then

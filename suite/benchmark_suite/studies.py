@@ -32,7 +32,7 @@ import math
 import sqlite3
 from typing import Any, cast
 
-from .contracts import UNASSIGNED, ContractError, canonical
+from .contracts import UNASSIGNED, ContractError, canonical, milestone_key
 from .provenance import REGISTRY_FILES
 from .run_record import (
     FIELDS,
@@ -61,7 +61,7 @@ RUN_ORDER = "c.created_ns,c.id,e.position,r.attempt_number"
 CENSORED_SORT = {
     "activation_to_movement_s": "activation_to_movement_censor_s",
     "completion_s": "completion_censor_s",
-    **{f"t{m}_s": f"t{m}_censor_s" for m in MILESTONES},
+    **{f"t{milestone_key(m)}_s": f"t{milestone_key(m)}_censor_s" for m in MILESTONES},
 }
 # Values whose mixing among full final records the export refuses (``refused_mixes``).
 REFUSED_MIXES = (

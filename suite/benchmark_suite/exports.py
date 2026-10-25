@@ -51,7 +51,7 @@ import pyarrow.parquet as pq
 import yaml
 
 from .analysis_block import WorldFacts, plan_parts, validate
-from .contracts import NO_MOVEMENT_LIMIT, ContractError, canonical, content_hash
+from .contracts import NO_MOVEMENT_LIMIT, ContractError, canonical, content_hash, milestone_key
 from .datasets import files, iter_rows, materialize_manifest, stream_relation
 from .explorer_log import read_text
 from .run_record import (
@@ -60,6 +60,7 @@ from .run_record import (
     FIELDS,
     GATES_SCHEMA,
     GOALS_SCHEMA,
+    MILESTONES,
     READ_TIME_FIELDS,
     RUN_RECORD_VERSION,
     Field,
@@ -87,7 +88,8 @@ ARROW = {
     "bool": pa.bool_(),
     "list": pa.list_(pa.string()),
 }
-MILESTONE_ENDPOINTS = ("t25", "t50", "t75", "t90", "t95")
+# t25 … t95 and t99_9 (run-record-v4; t99 under run-record-v3)
+MILESTONE_ENDPOINTS = tuple(f"t{milestone_key(m)}" for m in MILESTONES)
 # Column descriptions of the tables built here (unit, null meaning, definition); the codebook joins them
 # with the Arrow schemas, so every exported column is described.
 DESCRIPTIONS: dict[str, dict[str, tuple[str, str, str]]] = {
@@ -109,7 +111,7 @@ DESCRIPTIONS: dict[str, dict[str, tuple[str, str, str]]] = {
     },
     "endpoints": {
         "attempt_id": ("", "never", "a final run"),
-        "endpoint": ("", "never", "completion, t25 … t95, movement_onset (RD-27)"),
+        "endpoint": ("", "never", "completion, t25 … t95, t99_9, movement_onset (RD-27)"),
         "time_s": ("sim s", "no observed event", "raw event time; movement onset from activation"),
         "event": ("", "competing or missing outcome", ""),
         "end_reason": (

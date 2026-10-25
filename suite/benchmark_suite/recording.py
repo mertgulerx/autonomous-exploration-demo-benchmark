@@ -27,6 +27,7 @@ import uuid
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
+from exploration_benchmark_runner.coverage import COVERAGE_STOP_PERCENT, COVERAGE_STOP_RULE
 
 from .contracts import DATASET_VERSION
 from .schemas import SCHEMAS
@@ -114,6 +115,8 @@ class Recorder:
                 window_wall_seconds=5,
                 persistence_wall_seconds=10,
                 no_movement_simulation_seconds=180,
+                coverage_stop_rule=COVERAGE_STOP_RULE,
+                coverage_stop_percent=COVERAGE_STOP_PERCENT,
                 stationary_warmup_seconds=0,
                 trajectory_maximum_hz=20,
                 flush_wall_seconds=5,

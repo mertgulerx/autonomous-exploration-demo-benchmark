@@ -70,6 +70,7 @@ from .figures import (
     time_axis_end,
 )
 from .goals import GoalRecord, bar_handles, bar_span, draw_goal_bars, read_goals
+from .settings import milestone_key
 from .streams import Reads, log_formats
 from .style import MM_PER_INCH, OUTCOMES, PRESETS, RTF_LINES, ProfileStyle, figure
 
@@ -233,8 +234,9 @@ def _coverage_lane(
         if final == end:
             last = float(c[-1])
     for m in ctx.settings.milestones:
-        at = run.get(f"t{m}_s")
-        if run.get(f"t{m}_event") and at is not None and at <= end + TIME_EPSILON:
+        key = milestone_key(m)
+        at = run.get(f"t{key}_s")
+        if run.get(f"t{key}_event") and at is not None and at <= end + TIME_EPSILON:
             ax.plot([at], [m], zorder=4, **MARKS["milestone"])
             ax.annotate(
                 f"{m}",

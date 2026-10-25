@@ -35,7 +35,7 @@ import uuid
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import gui_icons
-from .contracts import average_speed
+from .contracts import average_speed, milestone_key
 from .gui_cells import OverlayScrollBar
 from .gui_controls import BadgeLook, StatusBadge, badge_look, paint_badge
 from .gui_dialogs import Consequences, Run, bullet, wrap_text
@@ -94,7 +94,7 @@ from .monitoring import PathCursor
 IDLE_TEXT = "No active workers. Start a queued campaign to begin monitoring."
 CHOOSE_TEXT = "Select a worker above to monitor its run."
 ENDED_STATUS = "Run ended: the last received path and pose stay on the map"
-MILESTONES = (25, 50, 75, 90, 95)
+MILESTONES = (25, 50, 75, 90, 95, 99.9)  # 99.9: the coverage stop (coverage-stop-v2)
 COVERAGE_PAGE = 250
 COVERAGE_REFRESH = 5.0  # s: the recording's checkpoint interval
 
@@ -181,11 +181,11 @@ def record_metrics(record: dict[str, Any]) -> dict[str, Any]:
         "coverage_milestones": [
             {
                 "percent": share,
-                "reached": record.get(f"t{share}_event") is True,
-                "simulation_elapsed": record.get(f"t{share}_s"),
+                "reached": record.get(f"t{milestone_key(share)}_event") is True,
+                "simulation_elapsed": record.get(f"t{milestone_key(share)}_s"),
             }
-            for share in (25, 50, 75, 90, 95)
-            if record.get(f"t{share}_event") is not None
+            for share in MILESTONES
+            if record.get(f"t{milestone_key(share)}_event") is not None
         ],
     }
 
@@ -438,7 +438,7 @@ class Reached:
 
 
 def reached_by_share(metrics: Mapping[str, Any]) -> list[Reached]:
-    """The 50, 75, 90 and 95 % milestones of a run's metrics (``coverage_milestones``)."""
+    """The 25, 50, 75, 90, 95 and 99.9 % milestones of a run's metrics (``coverage_milestones``)."""
     milestones: dict[float, Mapping[str, Any]] = {}
     for entry in metrics.get("coverage_milestones") or []:
         share = number(entry.get("percent")) if isinstance(entry, Mapping) else None
@@ -619,7 +619,7 @@ class MeasurementsContent(Themed):
             draw_text(painter, x, top, note, SECTION_NOTE, color)
 
     def _paint_reached(self, painter: QtGui.QPainter, top: float, right: float) -> None:
-        """A 46 px row with a top rule: one cell per milestone (25 to 95 %) with the simulation time it was
+        """A 46 px row with a top rule: one cell per milestone (25 to 99.9 %) with the simulation time it was
         first reached, rules between the cells."""
         theme = self.theme
         secondary = theme.color("text.secondary")

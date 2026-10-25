@@ -66,7 +66,7 @@ from .data import Study, coverage_grid, load
 from .environment import environment
 from .estimates import EFFECTS, STATS_FORMAT, Entries, estimates
 from .export import Export
-from .settings import MILESTONES, Settings
+from .settings import MILESTONES, Settings, milestone_endpoint, milestone_label
 
 STUDY_FILES = ("study.yaml", "runs.parquet", "profiles.parquet")
 STATS_INPUTS = (*STUDY_FILES, "coverage.parquet", "trajectory_gt.parquet")
@@ -137,7 +137,7 @@ VIEWS: tuple[View, ...] = (
         variants="figures/F2_",
         then=("tables/T3.pdf",),
         variant_labels=(
-            *((f"R_{m}", f"{m} %") for m in MILESTONES),
+            *((milestone_endpoint(m), milestone_label(m)) for m in MILESTONES),
             ("R_completion", "Completion"),
         ),
         grouped=True,

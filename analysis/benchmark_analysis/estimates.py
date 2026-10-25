@@ -52,7 +52,13 @@ from .data import (
     idle_tail,
     restricted_time,
 )
-from .settings import SINGLE_INSTANCE_FAMILIES, Hypothesis, Settings
+from .settings import (
+    MILESTONE_OF_ENDPOINT,
+    SINGLE_INSTANCE_FAMILIES,
+    Hypothesis,
+    Settings,
+    milestone_endpoint,
+)
 from .streams import Reads
 
 STATS_FORMAT = "stats-v1"
@@ -106,8 +112,15 @@ OTHER_ESTIMATOR = {"mean": "hodges_lehmann", "hodges_lehmann": "mean"}
 def time_endpoints(settings: Settings) -> list[str]:
     """The restricted-time endpoints a study reports: completion, the plan's milestones and every milestone an
     effect of EFFECTS needs (ΔR_90 is always shown), in milestone order."""
-    needed = {int(e.endpoint[2:]) for e in EFFECTS if e.endpoint and e.endpoint != "R_completion"}
-    return ["R_completion", *(f"R_{m}" for m in sorted(set(settings.milestones) | needed))]
+    needed = {
+        MILESTONE_OF_ENDPOINT[e.endpoint]
+        for e in EFFECTS
+        if e.endpoint and e.endpoint != "R_completion"
+    }
+    return [
+        "R_completion",
+        *(milestone_endpoint(m) for m in sorted(set(settings.milestones) | needed)),
+    ]
 
 
 @dataclass(frozen=True, slots=True)
