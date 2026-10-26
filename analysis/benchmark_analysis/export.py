@@ -31,11 +31,13 @@ import yaml
 from .errors import Refused
 
 # 2 adds the worlds table and per-reference descriptors and region rasters (plans/worlds/I2 §3.10); optional
-# for readers, so a version-1 export analyses as before.
-EXPORT_VERSIONS = (1, 2)
+# for readers, so a version-1 export analyses as before. 3 (stuck-stop-v1, run record 6) adds the accounting
+# count final_stuck and the endpoint end reason stuck, neither read here (the analysis counts from runs).
+EXPORT_VERSIONS = (1, 2, 3)
 # 5 (external explorers): explorer_source; 2 (I10): mapping_condition; 3 (coverage-stop-v1):
-# completion_source and the T99 fields; 4 (coverage-stop-v2): T99.9 in place of T99
-RUN_RECORD_VERSIONS = (1, 2, 3, 4, 5)
+# completion_source and the T99 fields; 4 (coverage-stop-v2): T99.9 in place of T99; 6 (stuck-stop-v1): the
+# outcome stuck and the completion_source stuck_stop (reported-outcomes-v3)
+RUN_RECORD_VERSIONS = (1, 2, 3, 4, 5, 6)
 CHUNK = 1 << 20
 
 

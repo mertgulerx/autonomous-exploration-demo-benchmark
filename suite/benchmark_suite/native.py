@@ -33,7 +33,7 @@ from exploration_benchmark_runner.coverage import Reference, reference_file
 from exploration_benchmark_runner.launch_spec import WorkerLaunchSpec
 from exploration_benchmark_runner.processes import DomainLease, ProcessScope
 
-from .contracts import ContractError, resolve_world_time_limits
+from .contracts import MEASURED_OUTCOMES, ContractError, resolve_world_time_limits
 from .datasets import finalize_attempt, finalize_partial
 from .monitoring import trim_reply
 from .protocol import Client
@@ -180,7 +180,7 @@ class NativeWorker:
                     if self.last_state == "RUNNING"
                     else "startup_failure"
                 )
-                if outcome in ("completed", "time_limit"):
+                if outcome in MEASURED_OUTCOMES:
                     outcome = "storage_failure"
                 detail = f"Worker exited before artifact commit (exit {self.process.returncode})"
                 if outcome != "manual_discard":

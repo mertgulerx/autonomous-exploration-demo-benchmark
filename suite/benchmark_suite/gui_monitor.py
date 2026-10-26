@@ -27,6 +27,7 @@ request ID ``attempt-stop:<attempt>``.
 
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
+import json
 import math
 import time
 from typing import Any, cast
@@ -64,6 +65,7 @@ from .gui_marks import (
     paint_worker_tag,
 )
 from .gui_menus import show_tooltip
+from .gui_profile_preview import DEFAULT_EXPLORER
 from .gui_style import cell_text, duration, fixed, humanize, number, worker_values
 from .gui_support import Transport, stale_engine_message
 from .gui_theme import ThemeManager, snap
@@ -94,7 +96,7 @@ from .monitoring import PathCursor
 IDLE_TEXT = "No active workers. Start a queued campaign to begin monitoring."
 CHOOSE_TEXT = "Select a worker above to monitor its run."
 ENDED_STATUS = "Run ended: the last received path and pose stay on the map"
-MILESTONES = (25, 50, 75, 90, 95, 99.9)  # 99.9: the coverage stop (coverage-stop-v2)
+MILESTONES = (25, 50, 75, 90, 95, 99.9)  # 99.9: the coverage stop's trigger (coverage-stop-v3)
 COVERAGE_PAGE = 250
 COVERAGE_REFRESH = 5.0  # s: the recording's checkpoint interval
 
@@ -125,10 +127,12 @@ def experiment_text(experiment: Mapping[str, Any]) -> str:
     )
 
 
-def attempt_meta(attempt: Mapping[str, Any]) -> str:
-    """The attempt facts of the run head ("Worker 1 · attempt 1 · started 16 Oct 2026 · 20:56"; the
-    reservation time until the attempt starts)."""
+def attempt_meta(attempt: Mapping[str, Any], explorer: str | None = None) -> str:
+    """The attempt facts of the run head ("Worker 1 · attempt 1 · TDLE · started 16 Oct 2026 · 20:56"; the
+    reservation time until the attempt starts); ``explorer`` names the running exploration package."""
     text = f"Worker {attempt['slot'] + 1} · attempt {attempt['number']}"
+    if explorer:
+        text += " · " + explorer
     if attempt.get("started_ns"):
         return text + " · started " + cell_text("started_ns", attempt["started_ns"])
     if attempt.get("reserved_ns"):
@@ -1180,7 +1184,7 @@ class MonitorPage(QtWidgets.QWidget):
         self.inspect_selected()
 
     def _show_run(self, run: dict[str, Any]) -> None:
-        self.card.set_meta(attempt_meta(run["attempt"]), None)
+        self.card.set_meta(attempt_meta(run["attempt"], self.explorer_name_of(run)), None)
         self.measurements.set_metrics(run.get("metrics") or {}, ended=False)
         self._update_chart(run.get("metrics") or {})
 
@@ -1197,7 +1201,8 @@ class MonitorPage(QtWidgets.QWidget):
             return
         word = "Run stopped" if stopped else "Run ended"
         self.card.set_meta(
-            attempt_meta(self.shown_run["attempt"]), BadgeLook(word, "neutral", None)
+            attempt_meta(self.shown_run["attempt"], self.explorer_name_of(self.shown_run)),
+            BadgeLook(word, "neutral", None),
         )
         self.measurements.set_metrics(self.shown_run.get("metrics") or {}, ended=True)
         self.set_legend_status(ENDED_STATUS, False)
@@ -1298,20 +1303,48 @@ class MonitorPage(QtWidgets.QWidget):
         self.set_legend_status("Waiting for the worker", False)
         self.monitor_timer.start()
 
+    def explorer_entry(self, key: str, value: Any) -> Mapping[str, Any] | None:
+        """The catalog's explorer entry whose ``key`` ("id" or "package") equals ``value``, if any."""
+        return next(
+            (
+                e
+                for e in self.catalog.get("explorers") or []
+                if isinstance(e, dict) and e.get(key) == value
+            ),
+            None,
+        )
+
+    def explorer_name_of(self, run: Mapping[str, Any]) -> str | None:
+        """The run's exploration package as the head names it (the catalog's ``framework``, such as
+        "frontier_exploration_ros2" or "TDLE"): from the engine's ``explorer`` of a live run, the experiment's
+        profile, or a replayed run record's ``explorer_id`` (the package). None when none of them names it."""
+        identity = run.get("explorer")
+        if not isinstance(identity, str):
+            experiment = run.get("experiment") or {}
+            specification = experiment.get("specification")
+            if isinstance(specification, str):
+                try:
+                    specification = json.loads(specification)
+                except ValueError:
+                    specification = None
+            profile = specification.get("profile") if isinstance(specification, dict) else None
+            if isinstance(profile, dict):
+                identity = profile.get("explorer", DEFAULT_EXPLORER)
+        if isinstance(identity, str):
+            entry = self.explorer_entry("id", identity)
+        else:
+            package = ((run.get("attempt") or {}).get("record") or {}).get("explorer_id")
+            entry = self.explorer_entry("package", package)
+        name = entry.get("framework") if entry else None
+        return name if isinstance(name, str) and name else None
+
     def explorer_note_of(self, run: Mapping[str, Any]) -> str:
         """The note for a run whose explorer has no decision insight (empty when it has it): the engine names
         the run's explorer (``explorer``, a profiles.yaml ID) and the catalog its ``insight`` flag."""
         explorer = run.get("explorer")
         if not isinstance(explorer, str):
             return ""
-        entry = next(
-            (
-                e
-                for e in self.catalog.get("explorers") or []
-                if isinstance(e, dict) and e.get("id") == explorer
-            ),
-            None,
-        )
+        entry = self.explorer_entry("id", explorer)
         if entry is None or entry.get("insight") is not False:
             return ""
         return "No decision insight for " + str(entry.get("label") or explorer)
@@ -1551,7 +1584,10 @@ class MonitorPage(QtWidgets.QWidget):
         self._read_coverage()
         self.event_view.set_attempt(identity)
         self.log_view.select_attempt(identity, attempt.get("directory"))
-        self.card.set_meta(attempt_meta(attempt), BadgeLook("Run ended", "neutral", None))
+        self.card.set_meta(
+            attempt_meta(attempt, self.explorer_name_of(run)),
+            BadgeLook("Run ended", "neutral", None),
+        )
         self.measurements.set_metrics(run["metrics"], ended=True)
         self._update_head()
         self._update_card()
@@ -1704,7 +1740,7 @@ class MonitorPage(QtWidgets.QWidget):
                 metrics["coverage_covered_m2"] = percent / 100 * target
         milestones = []
         # The coverage sample shown: a valid one at or above a milestone means that milestone was reached by now,
-        # also when the replay's last frame precedes the sample that set it (the stop sample of coverage-stop-v2).
+        # also when the replay's last frame precedes the sample that set it (the trigger sample of the coverage stop).
         sample_percent = (
             metrics.get("coverage_percent") if metrics.get("coverage_status") == "valid" else None
         )

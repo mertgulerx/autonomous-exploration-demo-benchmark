@@ -898,8 +898,9 @@ class TracesView(Themed):
         self.legend = [
             (self.chart.colour(run), profile_name(str(run.get("profile_id")))) for run in ordered
         ]
-        if any(r.get("outcome") == "completed" for r in runs):
-            self.legend.append((None, "Completed, carried forward to L"))
+        carried = [o for o in ("completed", "stuck") if any(r.get("outcome") == o for r in runs)]
+        if carried:
+            self.legend.append((None, " or ".join(carried).capitalize() + ", carried forward to L"))
         axis = self.chart.axis()
         self.note = "Simulated time since first movement" + (
             f" · compressed after {duration(axis.split)}" if axis.compressed else ""

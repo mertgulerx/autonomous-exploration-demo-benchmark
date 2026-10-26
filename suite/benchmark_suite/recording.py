@@ -27,7 +27,19 @@ import uuid
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
-from exploration_benchmark_runner.coverage import COVERAGE_STOP_PERCENT, COVERAGE_STOP_RULE
+from exploration_benchmark_runner.coverage import (
+    COVERAGE_STOP_DELAY_S,
+    COVERAGE_STOP_PERCENT,
+    COVERAGE_STOP_RULE,
+    MEASURED_OUTCOMES,
+    STUCK_COMPLETION_PERCENT,
+    STUCK_GAIN_PP,
+    STUCK_NO_GAIN_RADIUS_M,
+    STUCK_NO_GAIN_WINDOW_S,
+    STUCK_RADIUS_M,
+    STUCK_RULE,
+    STUCK_WINDOW_S,
+)
 
 from .contracts import DATASET_VERSION
 from .schemas import SCHEMAS
@@ -117,6 +129,14 @@ class Recorder:
                 no_movement_simulation_seconds=180,
                 coverage_stop_rule=COVERAGE_STOP_RULE,
                 coverage_stop_percent=COVERAGE_STOP_PERCENT,
+                coverage_stop_delay_seconds=COVERAGE_STOP_DELAY_S,
+                stuck_rule=STUCK_RULE,
+                stuck_window_seconds=STUCK_WINDOW_S,
+                stuck_radius_m=STUCK_RADIUS_M,
+                stuck_no_gain_window_seconds=STUCK_NO_GAIN_WINDOW_S,
+                stuck_no_gain_radius_m=STUCK_NO_GAIN_RADIUS_M,
+                stuck_gain_threshold_pp=STUCK_GAIN_PP,
+                stuck_completion_percent=STUCK_COMPLETION_PERCENT,
                 stationary_warmup_seconds=0,
                 trajectory_maximum_hz=20,
                 flush_wall_seconds=5,
@@ -350,7 +370,7 @@ class Recorder:
             ),
             eligibility=dict(
                 timing=self.dropped == 0
-                and outcome in ("completed", "time_limit")
+                and outcome in MEASURED_OUTCOMES
                 and metrics.get("motion_started", False)
                 and not self.timing.rejected
                 and not self.timing.reset_observed

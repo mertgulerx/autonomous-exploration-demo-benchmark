@@ -235,7 +235,7 @@ def runs_page(
 
 def run_counts(database: sqlite3.Connection, filters: dict[str, Any]) -> dict[str, int]:
     """Counts over every run a filter selects (``results.query`` runs with ``include: ["counts"]``): final
-    runs by report class (``reported-outcomes-v2``, as each row's read-time field) and the attempts that are
+    runs by report class (``reported-outcomes-v3``, as each row's read-time field) and the attempts that are
     not final as ``discarded`` (a discard) or ``replaced`` (a timing rejection or an interruption, replaced or
     waiting for its replacement). The Results footer reads them."""
     source, arguments = _run_source(database, filters)

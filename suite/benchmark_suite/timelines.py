@@ -286,6 +286,7 @@ TRACE_FIELDS = (
     "outcome",
     "completion_s",
     "completion_event",
+    "elapsed_s",  # a stuck run's stop (stuck-stop-v1), where its carry-forward starts
     "coverage_final_pct",
     "coverage_at_limit_pct",
     "time_limit_s",

@@ -1,0 +1,61 @@
+--- a/config/params.yaml
++++ b/config/params.yaml
+@@ -14,7 +14,7 @@
+     weight_gain_ws: 1.0
+     max_linear_speed_vmax: 0.5
+     max_angular_speed_wmax: 1.0
+-    occ_threshold: 50
++    occ_threshold: 60
+     min_frontier_size_cells: 5
+     publish_debug_topics: true
+     planning_rate_hz: 1.0
+--- a/mrtsp_exploration_ros2/explorer_node.py
++++ b/mrtsp_exploration_ros2/explorer_node.py
+@@ -32,6 +32,7 @@
+ from rclpy.duration import Duration
+ from rclpy.node import Node
+ from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
++from std_msgs.msg import Empty
+ from tf2_ros import Buffer, TransformException
+ from tf2_ros.transform_listener import TransformListener
+ from visualization_msgs.msg import MarkerArray
+@@ -91,7 +92,7 @@
+         self.max_angular_speed_wmax = float(
+             self.declare_parameter("max_angular_speed_wmax", 1.0).value
+         )
+-        self.occ_threshold = int(self.declare_parameter("occ_threshold", 50).value)
++        self.occ_threshold = int(self.declare_parameter("occ_threshold", 60).value)
+         self.min_frontier_size_cells = int(
+             self.declare_parameter("min_frontier_size_cells", 5).value
+         )
+@@ -208,6 +209,11 @@
+                 volatile_qos,
+             )
+ 
++        # Completion event (benchmark build patch): published once, latched, when exploration completes.
++        self.completion_pub = self.create_publisher(
++            Empty, "/exploration_complete", transient_qos
++        )
++
+         self.timer = self.create_timer(
+             1.0 / max(self.planning_rate_hz, 1.0),
+             self._on_timer,
+@@ -768,6 +774,7 @@
+             self.get_logger().info(
+                 "Exploration complete: no frontiers remain on the optimized map"
+             )
++            self.completion_pub.publish(Empty())
+ 
+         if not self.return_to_start_on_complete or self.return_to_start_completed:
+             return
+--- a/mrtsp_exploration_ros2/occupancy_grid.py
++++ b/mrtsp_exploration_ros2/occupancy_grid.py
+@@ -42,7 +42,7 @@
+ class OccupancyGridAdapter:
+     """Helpers for OccupancyGrid indexing and paper-specific image conversion."""
+ 
+-    def __init__(self, msg: OccupancyGrid, occupied_threshold: int = 50) -> None:
++    def __init__(self, msg: OccupancyGrid, occupied_threshold: int = 60) -> None:
+         self.msg = msg
+         self.size = GridSize(width=msg.info.width, height=msg.info.height)
+         self.resolution = msg.info.resolution

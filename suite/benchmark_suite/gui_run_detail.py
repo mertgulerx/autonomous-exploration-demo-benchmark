@@ -87,16 +87,23 @@ def carries_forward(
     record: Mapping[str, Any], last_sample_s: float | None, limit_s: float | None
 ) -> bool:
     """RD-6's carry-forward as the run view and the traces draw it: a run that completed by L (``completion_event``)
-    holds its final value to L from its last sample, never across a final gap (F1, ``data.run_end`` in the
-    analysis package, and C(L) in ``run_record`` apply the same rule)."""
-    completion = number(record.get("completion_s"))
+    or stopped stuck before L (stuck-stop-v1, ``elapsed_s``) holds its final value to L from its last sample,
+    never across a final gap (F1, ``data.run_end`` in the analysis package, and C(L) in ``run_record`` apply the
+    same rule)."""
+    outcome = record.get("outcome")
+    end = (
+        number(record.get("completion_s"))
+        if outcome == "completed" and record.get("completion_event") is True
+        else number(record.get("elapsed_s"))
+        if outcome == "stuck"
+        else None
+    )
     return (
-        record.get("outcome") == "completed"
-        and record.get("completion_event") is True
-        and limit_s is not None
-        and completion is not None
+        limit_s is not None
+        and end is not None
+        and end <= limit_s
         and last_sample_s is not None
-        and completion - last_sample_s <= GAP_S
+        and end - last_sample_s <= GAP_S
     )
 
 
@@ -517,8 +524,8 @@ class RunCharts(Themed):
     one time axis (``TimeAxis``), each under its legend row; L as a dashed warning line through every track.
 
     Coverage: recorded samples as area and line (broken at invalid samples and at gaps over 2 s), milestone
-    circles with drop lines, the last gain as a diamond and, for a completed run, its final value carried
-    forward to L dashed (RD-6). Goals: one bar per goal, green reached, grey ended by the explorer, orange
+    circles with drop lines, the last gain as a diamond and, for a completed or stuck run, its final value
+    carried forward to L dashed (RD-6). Goals: one bar per goal, green reached, grey ended by the explorer, orange
     failed. Dispatches: a mark per explorer dispatch, the gate evaluations under them (from the R8 logging
     release on). DP: pool size and route length as steps, ticks where the DP's first frontier differs from
     greedy (an estimate). Speed: ground truth and odometry. A track without data says why."""
@@ -566,8 +573,8 @@ class RunCharts(Themed):
         return TimeAxis.of(self.end_s(), self.limit_s(), left, right)
 
     def carried_forward(self) -> bool:
-        """A completed run's final value is carried forward to L (the defined carry-forward, RD-6), from its
-        last sample, never across a final gap (as F1 and the traces)."""
+        """A completed or stuck run's final value is carried forward to L (the defined carry-forward, RD-6),
+        from its last sample, never across a final gap (as F1 and the traces)."""
         last = next(
             (
                 number(row[0])
@@ -951,7 +958,8 @@ class RunCharts(Themed):
             dashed.setCapStyle(QtCore.Qt.PenCapStyle.FlatCap)
             painter.setPen(dashed)
             painter.drawLine(end, QtCore.QPointF(axis.x(axis.limit), end.y()))
-            completion = number(self.record.get("completion_s"))
+            stuck = self.record.get("outcome") == "stuck"
+            stop = number(self.record.get("elapsed_s" if stuck else "completion_s"))
             painter.setClipping(
                 False
             )  # the label may reach past the plot's edge, as before the clip
@@ -959,7 +967,7 @@ class RunCharts(Themed):
                 painter,
                 end.x() + 8,
                 end.y() + 16,
-                f"Completed {duration(completion)}",
+                f"{'Stuck' if stuck else 'Completed'} {duration(stop)}",
                 "text.secondary",
             )
         card = self.color("surface.card")

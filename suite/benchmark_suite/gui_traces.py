@@ -42,19 +42,22 @@ TRACE_LEFT, TRACE_RIGHT, TRACE_TOP, TRACE_BOTTOM = 44, 14, 14, 30
 
 
 def run_end(run: Mapping[str, Any]) -> float:
-    """When a run stops exploring on the axis: its completion, else its limit (a run that never moved never
-    explored)."""
+    """When a run stops exploring on the axis: its completion, a stuck run's stop (stuck-stop-v1), else its
+    limit (a run that never moved never explored)."""
     if run.get("outcome") == "no_movement":
         return 0.0
     completion = number(run.get("completion_s"))
     if run.get("outcome") == "completed" and completion is not None:
         return completion
+    stopped = number(run.get("elapsed_s"))
+    if run.get("outcome") == "stuck" and stopped is not None:
+        return stopped
     return number(run.get("time_limit_s")) or 0.0
 
 
 class TracesChart(Themed):
     """Every reported run's coverage in one stratum as a raw line (no band, no statistic), Default in ink and
-    the other profiles in their colours, completed runs carried forward to L dashed; the axis of the run view
+    the other profiles in their colours, completed and stuck runs carried forward to L dashed; the axis of the run view
     (linear past the last end, compressed to L). Hovering names a run, a click opens it (``opened``)."""
 
     opened = QtCore.Signal(str)  # attempt id

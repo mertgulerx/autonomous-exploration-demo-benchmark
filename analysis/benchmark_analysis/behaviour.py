@@ -47,7 +47,7 @@ from matplotlib.lines import Line2D
 from matplotlib.ticker import MaxNLocator
 import numpy as np
 
-from .data import GAP_S, TIME_EPSILON, Row, Stratum, run_end
+from .data import GAP_S, STUCK, TIME_EPSILON, Row, Stratum, run_end
 from .figures import (
     AXIS_NOTE,
     GREY,
@@ -103,6 +103,7 @@ MARKS: dict[str, dict[str, Any]] = {
         ls="none",
     ),
     "time_limit": dict(marker="^", ms=4.5, mfc="#FFFFFF", mec="#000000", mew=0.6, ls="none"),
+    "stuck": dict(marker="v", ms=4.5, mfc="#FFFFFF", mec="#000000", mew=0.6, ls="none"),
     "candidates": dict(color="#000000", lw=0.7, marker=".", ms=2),
     "route": dict(color=GREY, lw=0.7, ls="--"),
 }
@@ -110,6 +111,7 @@ MARK_LABELS = {
     "milestone": "milestone",
     "completed": "completed (end)",
     "time_limit": "time limit (at L)",
+    "stuck": "stuck (end)",
     "candidates": "candidate frontiers",
     "route": "frontiers in the chosen route",
 }
@@ -210,7 +212,7 @@ def _coverage_lane(
     ax: Any, ctx: FigureContext, run: Row, style: ProfileStyle, end: float, limit: float
 ) -> tuple[dict[str, Any], set[str]]:
     """Coverage steps broken at gaps over 2 s, the first sample at each declared milestone (at its threshold),
-    and the outcome mark at the run's end (a completed run's completion time, L otherwise) when the last sample
+    and the outcome mark at the run's end (a completed or stuck run's end, L otherwise) when the last sample
     lies within 2 s of it. Returns the run's sidecar fields and the marks drawn."""
     drawn: set[str] = set()
     series = ctx.study.coverage.get(run["attempt_id"])
@@ -253,8 +255,8 @@ def _coverage_lane(
         ax.plot([end], [last], zorder=5, clip_on=False, **MARKS[outcome])
         drawn.add(outcome)
     words = (
-        f"completed, T_end = {run['elapsed_s']:.1f} s"
-        if outcome == "completed" and end < limit
+        f"{OUTCOMES[outcome]['label'].lower()}, T_end = {run['elapsed_s']:.1f} s"
+        if outcome in ("completed", STUCK) and end < limit
         else f"{OUTCOMES[outcome]['label'].lower()} at L"
     )
     ax.text(0.99, 0.04, words, transform=ax.transAxes, ha="right", va="bottom", fontsize=7)
@@ -506,8 +508,8 @@ def f15(
         [
             f"Runs chosen by {rule} on {endpoint} (FIGURE_STYLE §8). Lanes from the top: coverage (valid samples "
             "as steps, broken at gaps over 2 s; open circles: the first sample at each declared milestone; end "
-            "mark: completed (square) at T_end or time limit (open triangle) at L, when the last sample lies "
-            "within 2 s of the end); Nav2 goals from dispatch to end, filled by status (an open goal to the run's "
+            "mark: completed (square) or stuck (open down triangle, stuck-stop-v1) at T_end, or time limit "
+            "(open triangle) at L, when the last sample lies within 2 s of the end); Nav2 goals from dispatch to end, filled by status (an open goal to the run's "
             "end; a goal dispatched before first movement starts at 0), the explorer's cancel reason at the end of "
             "a goal it ended, a goal Nav2 rejected as a tick; results of the visible-reveal preemption gate; the "
             "explorer's decisions: unsuppressed candidate frontiers and the frontiers in the chosen route; RTF "
@@ -621,17 +623,20 @@ def _distance_steps(ax: Any, trace: _DistanceTrace, style: ProfileStyle) -> floa
 
 def _end_look(outcome: str, colour: str, marker: str) -> dict[str, Any]:
     """An F16 end mark: completed the profile's filled marker; time limit an open triangle (the run's position
-    at L); no movement a cross."""
+    at L); stuck an open down triangle (its position at the stuck stop); no movement a cross."""
     if outcome == "completed":
         return dict(marker=marker, ms=3.5, color=colour, ls="none")
     if outcome == "time_limit":
         return dict(marker="^", ms=4, mfc="#FFFFFF", mec=colour, mew=0.8, ls="none")
+    if outcome == STUCK:
+        return dict(marker="v", ms=4, mfc="#FFFFFF", mec=colour, mew=0.8, ls="none")
     return dict(marker="x", ms=4, mec=colour, mew=0.8, ls="none")
 
 
 END_LABELS = {
     "completed": "completed",
     "time_limit": "time limit (at L)",
+    STUCK: "stuck (at its end)",
     "no_movement": "no movement",
 }
 
@@ -743,7 +748,8 @@ def f16(ctx: FigureContext) -> FigureOut:
             "path length of the last 1 s ground-truth row at or before it (no interpolation), broken where "
             "samples are more than 2 s apart; no band and no carry-forward. End marks, only when the last "
             "sample lies within 2 s of the run's end: completed (the profile's marker), time limit (open "
-            "triangle, the run's position at L); no movement: a cross at distance 0 and the pre-motion coverage. "
+            "triangle, the run's position at L), stuck (open down triangle, its position at the stuck stop, "
+            "stuck-stop-v1); no movement: a cross at distance 0 and the pre-motion coverage. "
             "A run that stops early has a short trace: its end is not an efficiency. End distances in the "
             "sidecar are descriptive.",
         ],

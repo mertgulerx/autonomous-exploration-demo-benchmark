@@ -21,8 +21,8 @@ block's default says "no taxonomy figure"). The stall window is optional: withou
 show the whole path.
 
 - ``F23_sheet_<page>``: the coding sheet for the researcher, one crop per reported run (completed, time limit,
-  no movement), 20 crops a page, blinded to profile and outcome: study order (stratum, profile, block execution
-  order) shuffled with the plan's seed on its own stream (``SHEET_ORDER_STREAM``), each crop labelled with its
+  stuck, no movement), 20 crops a page, blinded to profile and outcome: study order (stratum, profile, block
+  execution order) shuffled with the plan's seed on its own stream (``SHEET_ORDER_STREAM``), each crop labelled with its
   number only (no world either: the map shows the place). A crop is the run's ground-truth path over the plan's
   ``stall.window_s`` before its end min(T_end, L) (the whole path to it without a window) on the coverage
   reference around it, coloured by the time before the end, with the window's first pose, the end and the goals
@@ -878,8 +878,8 @@ def f23(ctx: FigureContext, coding: Coding, found: Sequence[Crop], streams: Stre
     _mark_legend(ctx, bottom, drawn)
     finish(fig, ctx, descriptive=True)
     first = (
-        "Behaviour taxonomy (FIGURE_EXTENSION FX-19): reported runs (completed, time limit, no movement) coded by "
-        "the researcher against the categories declared in the plan's taxonomy (definitions in T9). Counts are "
+        "Behaviour taxonomy (FIGURE_EXTENSION FX-19): reported runs (completed, time limit, stuck, no movement) "
+        "coded by the researcher against the categories declared in the plan's taxonomy (definitions in T9). Counts are "
         "absolute over every reported run of each stratum and profile, n per bar; runs the coding file does not "
         "name are counted as not coded. Coding never changes a recorded outcome. Descriptive counts, not in "
         f"stats.json; not cited as evidence. {blinding_text(coding.document())} {CODER_NOTE} "

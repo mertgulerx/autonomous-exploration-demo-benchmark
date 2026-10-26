@@ -1,0 +1,135 @@
+# Parameter metadata of mrtsp_exploration_ros2 (base MRTSP): one entry per Default parameter
+# (config/mrtsp_exploration_ros2/default.yaml); managed values are interface settings the benchmark fixes
+# (docs/plans/EXTERNAL_EXPLORERS_MRTSP.md). Descriptions follow the code at d9bc180.
+use_sim_time:
+  group: Interface
+  description: Use the simulation clock (its planning timer runs on it); set by the benchmark.
+  managed: true
+map_topic:
+  group: Interface
+  description: Occupancy grid that is optimised and searched for frontiers (the SLAM map).
+  managed: true
+costmap_topic:
+  group: Interface
+  description: Global costmap; frontier cells next to cells at or above occ_threshold are rejected.
+  managed: true
+local_costmap_topic:
+  group: Interface
+  description: Local costmap, read only with goal_preemption_on_blocked_goal.
+  managed: true
+navigate_to_pose_action_name:
+  group: Interface
+  description: Nav2 NavigateToPose action the goals are sent to.
+  managed: true
+global_frame:
+  group: Interface
+  description: Map frame of the goals and the robot pose lookup.
+  managed: true
+robot_base_frame:
+  group: Interface
+  description: Robot base frame for the pose lookup.
+  managed: true
+frontier_marker_topic:
+  group: Interface
+  description: Frontier markers (shared RViz Frontiers display).
+  managed: true
+selected_frontier_topic:
+  group: Interface
+  description: Pose of the frontier chosen for dispatch.
+  managed: true
+optimized_map_topic:
+  group: Interface
+  description: The optimised decision map (bilateral filter and dilation) as an occupancy grid.
+  managed: true
+publish_debug_topics:
+  group: Visualization
+  description: Publish the frontier markers, selected frontier and optimised map.
+  managed: false
+marker_scale:
+  group: Visualization
+  description: Size in metres of the frontier markers.
+  managed: false
+  exclusive_minimum: 0
+sigma_s:
+  group: Map optimization
+  description: Spatial standard deviation in cells of the bilateral filter (window radius ceil(2 sigma_s)).
+  managed: false
+  exclusive_minimum: 0
+sigma_r:
+  group: Map optimization
+  description: Range standard deviation of the bilateral filter on the 0/205/255 map image.
+  managed: false
+  exclusive_minimum: 0
+dilation_kernel_radius_cells:
+  group: Map optimization
+  description: Radius in cells of the disk that dilates free space after filtering (occupied cells stay occupied).
+  managed: false
+  minimum: 0
+occ_threshold:
+  group: Map optimization
+  description: Map and costmap value at or above which a cell counts as occupied or blocked.
+  managed: false
+  minimum: 0
+  maximum: 100
+min_frontier_size_cells:
+  group: Frontier detection
+  description: Minimum number of cells in a frontier cluster.
+  managed: false
+  minimum: 1
+frontier_min_goal_distance_m:
+  group: Frontier detection
+  description: Frontiers whose centre is closer than this to the robot are skipped (0 disables).
+  managed: false
+  minimum: 0
+sensor_effective_range_m:
+  group: MRTSP cost
+  description: Sensor range r_s in metres subtracted from the path cost d = max(d_m + d_u, d_n + d_v) - r_s.
+  managed: false
+  minimum: 0
+weight_distance_wd:
+  group: MRTSP cost
+  description: Weight of the path cost in the ratio cost (w_d d) / (w_s P).
+  managed: false
+  minimum: 0
+weight_gain_ws:
+  group: MRTSP cost
+  description: Weight of the frontier size (information gain P) in the ratio cost.
+  managed: false
+  exclusive_minimum: 0
+max_linear_speed_vmax:
+  group: MRTSP cost
+  description: Linear speed in m/s of the start time term min(L / vmax, |dpsi| / wmax); shipped value for every robot (M2).
+  managed: false
+  exclusive_minimum: 0
+max_angular_speed_wmax:
+  group: MRTSP cost
+  description: Angular speed in rad/s of the start time term; shipped value for every robot (M2).
+  managed: false
+  exclusive_minimum: 0
+planning_rate_hz:
+  group: Planning
+  description: Planning timer rate in Hz on simulated time; values below 1 run at 1 Hz (the node clamps them).
+  managed: false
+  exclusive_minimum: 0
+goal_preemption_on_frontier_opened:
+  group: Preemption
+  description: Replace the active goal when its frontier is no longer a frontier (off as shipped, paper-like).
+  managed: false
+goal_preemption_on_blocked_goal:
+  group: Preemption
+  description: Replace or cancel the active goal when its point becomes blocked in the costmaps (off as shipped).
+  managed: false
+goal_preemption_min_interval_s:
+  group: Preemption
+  description: Seconds after dispatch before an opened frontier may replace the goal.
+  managed: false
+  minimum: 0
+goal_preemption_skip_if_within_m:
+  group: Preemption
+  description: No opened-frontier replacement within this distance in metres of the goal.
+  managed: false
+  minimum: 0
+return_to_start_on_complete:
+  group: Behavior
+  description: Drive back to the start pose after completion (off as shipped).
+  managed: false

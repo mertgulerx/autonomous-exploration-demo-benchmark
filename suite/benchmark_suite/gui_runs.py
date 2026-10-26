@@ -68,6 +68,7 @@ REPORTED = "reported"
 OUTCOMES = (
     "completed",
     "time_limit",
+    "stuck",
     "no_movement",
     "startup_failure",
     "runtime_failure",
@@ -76,8 +77,12 @@ OUTCOMES = (
     "timing_rejection",
 )
 # The outcome word of a completed run that the coverage stop ended (completion_source "coverage_stop";
-# coverage-stop-v2, 99.9 %).
+# coverage-stop-v3: 5 simulated seconds after 99.9 %).
 COVERAGE_STOP_WORD = "Completed · 99.9 % coverage stop"
+# The outcome word of a completed run that the stuck stop ended (completion_source "stuck_stop";
+# stuck-stop-v1: stuck at or above 97.0 % coverage).
+STUCK_STOP_WORD = "Completed · stuck at ≥ 97 %"
+SOURCE_WORDS = {"coverage_stop": COVERAGE_STOP_WORD, "stuck_stop": STUCK_STOP_WORD}
 FOOT = TextStyle(12.5, 400, 18)
 FOOT_COUNT = TextStyle(12.5, 600, 18)
 NESTED_HEIGHT = 36
@@ -174,16 +179,16 @@ class Names:
 
 
 def outcome_look(record: Mapping[str, Any], *, muted: bool = False) -> BadgeLook | None:
-    """The outcome badge of a run record; a completed run that the coverage stop ended
+    """The outcome badge of a run record; a completed run that the coverage stop or the stuck stop ended
     (``completion_source``) says so in its word."""
     outcome = record.get("outcome")
-    stopped = outcome == "completed" and record.get("completion_source") == "coverage_stop"
-    word = COVERAGE_STOP_WORD if stopped else None
+    source = record.get("completion_source")
+    word = SOURCE_WORDS.get(source) if outcome == "completed" and isinstance(source, str) else None
     return badge_look("outcome", outcome, word=word, muted=muted)
 
 
 def excluded(record: Mapping[str, Any]) -> bool:
-    """A final run outside the reported population (``reported-outcomes-v2``)."""
+    """A final run outside the reported population (``reported-outcomes-v3``)."""
     return record.get("report_class") not in (REPORTED, None, "not_final")
 
 

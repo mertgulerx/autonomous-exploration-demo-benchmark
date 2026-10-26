@@ -41,6 +41,7 @@ from . import stats, worlds
 from .data import (
     EXCLUDED,
     REPORTED,
+    STUCK,
     TIME_ENDPOINTS,
     Row,
     Stratum,
@@ -415,7 +416,7 @@ def _restricted(
         profile,
         attempt_ids=(run["attempt_id"] for run, _ in usable),
         endpoint=endpoint,
-        censoring="right-censored at L; no movement never reaches (RD-8, RD-10)",
+        censoring="right-censored at L; no movement never reaches (RD-8, RD-10); stuck as time limit",
         **document,
     )
 
@@ -504,7 +505,8 @@ def _reliability(
     tails: list[tuple[Row, Value]],
 ) -> dict[str, Any]:
     """T7: goal outcomes per goal sent (runs without navigation telemetry left out and counted), low-RTF runs
-    and, with the plan's window W, time-limit runs whose idle tail reaches W (RD-18)."""
+    and, with the plan's window W, time-limit and stuck runs whose idle tail reaches W (RD-18; a stuck run
+    counts as a time-limit run, stuck-stop-v1)."""
     alpha = context.settings.alpha
     totals: dict[str, int] = defaultdict(int)
     with_goals = [run for run in runs if run["goals_sent"] is not None]
@@ -517,7 +519,9 @@ def _reliability(
         k = sum(
             1
             for run, tail in tails
-            if run["outcome"] == "time_limit" and tail.value is not None and tail.value >= window
+            if run["outcome"] in ("time_limit", STUCK)
+            and tail.value is not None
+            and tail.value >= window
         )
         stalled = dict(
             window_s=window,

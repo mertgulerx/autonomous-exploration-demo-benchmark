@@ -33,7 +33,7 @@ from .configuration import (
     scenarios,
 )
 from .coordinator import Coordinator
-from .coverage import attach_reference
+from .coverage import MEASURED_OUTCOMES, attach_reference
 from exploration_benchmark_robots.catalog import RobotCatalog
 
 
@@ -176,7 +176,7 @@ def main():
                 coordinator.summarize()
                 print(f"Results: {coordinator.batch_directory}", flush=True)
                 exit_code = int(
-                    any(s[2] not in ("completed", "time_limit") for s in states)
+                    any(s[2] not in MEASURED_OUTCOMES for s in states)
                 )
                 break
             time.sleep(0.2)

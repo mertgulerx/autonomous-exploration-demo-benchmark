@@ -50,7 +50,6 @@ from .estimates import EFFECTS
 from .figures import (
     AXIS_NOTE,
     GREY,
-    OUTCOME_NOTE,
     TIME_LABEL,
     FigureContext,
     FigureOut,
@@ -71,6 +70,7 @@ from .figures import (
     reference_name,
     outcome_bars,
     outcome_handles,
+    outcome_note,
     outcomes,
     paired_strata,
     panel_message,
@@ -217,7 +217,7 @@ def f21(ctx: FigureContext) -> FigureOut:
         "coverage (as F2_R_90); per-block ΔR_90 against Default (as the right column of F13_dR_90), one strip per "
         "profile. Each part is drawn by its standalone figure's code; time axes differ per row. Time: simulated "
         "time since first movement.",
-        OUTCOME_NOTE,
+        outcome_note(ctx.study),
         *coverage_notes(ctx),
         *attainment_notes(ctx),
         *paired_notes(ctx, MAIN_EFFECT, entries, scatter=False),
@@ -535,8 +535,8 @@ def f22b(ctx: FigureContext) -> FigureOut:
         "distance); beside a goal the explorer ended, its cancel reason (log format 2; the marks of F15). "
         "Descriptive: one run picked by rule, not a comparison (the paired comparison is F3/F13, stats.json). "
         "Right: the run's coverage steps (as "
-        "F1, broken at gaps over 2 s) on the same time colours; dashed: a completed run's final coverage carried "
-        "to L (RD-6); dotted at a constant: a run that never moved, held at its pre-motion coverage (RD-8). Band: "
+        "F1, broken at gaps over 2 s) on the same time colours; dashed: a completed or stuck run's final coverage "
+        "carried to L (RD-6); dotted at a constant: a run that never moved, held at its pre-motion coverage (RD-8). Band: "
         "the pointwise median and IQR (type 2) of the stratum's Default runs, descriptive, only where at least "
         f"{ctx.settings.min_n} runs have a value under the gap rule; a dotted median: runs that moved only (RD-8, "
         f"secondary). {AXIS_NOTE}",

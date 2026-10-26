@@ -20,8 +20,10 @@ After a comparison ends, its worker context and heavy processes are disposed;
 only the observer's cached presentation and frozen measurements remain.
 """
 
+from collections import deque
 from copy import deepcopy
 import json
+import itertools
 import math
 import os
 from pathlib import Path as FilePath
@@ -71,9 +73,23 @@ from .processes import ProcessScope
 from .artifacts import Recorder
 from .measurements import Measurements
 from .coverage import (
+    COVERAGE_STOP_DELAY_S,
     COVERAGE_STOP_DETAIL,
     COVERAGE_STOP_PERCENT,
     COVERAGE_STOP_RULE,
+    STUCK_COMPLETED_DETAIL,
+    STUCK_COMPLETION_PERCENT,
+    STUCK_COVERAGE_MAX_AGE_S,
+    STUCK_DETAIL,
+    STUCK_GAIN_PP,
+    STUCK_NO_GAIN_DETAIL,
+    STUCK_NO_GAIN_RADIUS_M,
+    STUCK_NO_GAIN_WINDOW_S,
+    STUCK_POSE_MAX_AGE_S,
+    STUCK_RADIUS_M,
+    STUCK_RULE,
+    STUCK_SAMPLE_PERIOD_S,
+    STUCK_WINDOW_S,
     Calculator,
     Coverage,
     Reference,
@@ -198,9 +214,17 @@ class Worker:
         self.spec = Specification(**config["spec"])
         self.profile = config["profile"]
         self.phase, self.outcome, self.detail = "STARTING", "", ""
-        # The triggering sample of the coverage stop (coverage-stop-v2), once reached (check_coverage_stop).
+        # The triggering sample of the coverage stop (coverage-stop-v3), once reached (check_coverage_stop).
         self.coverage_stop = None
         self.stopped_by_coverage = False
+        # The stuck-robot stop (stuck-stop-v1): true poses (simulation time, x, y) since movement onset back to
+        # the window's anchor, the latest valid coverage, the trigger and whether it ended the run.
+        self.stuck_samples = deque()
+        # Valid post-motion coverage samples (simulation time, percent) for the no-gain condition.
+        self.stuck_coverage = deque()
+        self.last_valid_coverage = None
+        self.stuck_stop = None
+        self.stopped_by_stuck = False
         self.native_code = -1
         self.explorer_identity = None
         self.explorer_identities = {}
@@ -956,19 +980,132 @@ class Worker:
             self.recorder.coverage_checkpoint(self.coverage)
 
     def check_coverage_stop(self, row):
-        """The coverage stop (COVERAGE_STOP_RULE): the sample that reaches the stop milestone ends the run."""
-        if not row or self.phase != "RUNNING" or self.coverage_stop is not None:
+        """The coverage stop's trigger (COVERAGE_STOP_RULE): the sample that reaches the stop milestone starts its
+        delay; ``coverage_stop_due`` ends the run once the delay has passed. Every valid sample also updates
+        ``last_valid_coverage``, which the stuck-robot stop (``stuck_tick``) reads."""
+        if not row:
+            return
+        if row["coverage_status"] == "valid":
+            self.last_valid_coverage = row["coverage_percent"]
+            if row["simulation_elapsed"] is not None:
+                self.stuck_coverage.append((row["simulation"], row["coverage_percent"]))
+        if self.phase != "RUNNING" or self.coverage_stop is not None:
             return
         for milestone in row["milestones_crossed"]:
             if milestone["percent"] == COVERAGE_STOP_PERCENT:
                 self.coverage_stop = dict(
                     rule=COVERAGE_STOP_RULE,
                     threshold_percent=COVERAGE_STOP_PERCENT,
+                    delay_seconds=COVERAGE_STOP_DELAY_S,
                     simulation=row["simulation"],
                     simulation_elapsed=row["simulation_elapsed"],
                     coverage_percent=row["coverage_percent"],
+                    stop_simulation=None,
                 )
-                self.terminal.put(("completed", COVERAGE_STOP_DETAIL, -1))
+
+    def coverage_stop_due(self):
+        """Queue the coverage stop COVERAGE_STOP_DELAY_S simulated seconds after its trigger sample; the
+        explorer's completion, the time limit and failures stay possible until then (first queued wins)."""
+        stop = self.coverage_stop
+        if stop is None or stop["stop_simulation"] is not None or self.phase != "RUNNING":
+            return
+        if self.clock_value - stop["simulation"] >= COVERAGE_STOP_DELAY_S:
+            stop["stop_simulation"] = self.clock_value
+            self.terminal.put(("completed", COVERAGE_STOP_DETAIL, -1))
+
+    def stuck_tick(self):
+        """The stuck-robot stop (STUCK_RULE): sample the true pose (TF map->base_footprint) after movement onset,
+        at most every STUCK_SAMPLE_PERIOD_S simulated seconds. The run is stuck when the robot stayed within
+        STUCK_RADIUS_M of its pose STUCK_WINDOW_S earlier ("still"), or within STUCK_NO_GAIN_RADIUS_M of its pose
+        STUCK_NO_GAIN_WINDOW_S earlier while valid coverage gained less than STUCK_GAIN_PP over that window
+        ("no_gain"); each anchor is the latest sample at or before the window start. Queue "completed" at or
+        above STUCK_COMPLETION_PERCENT of the latest valid coverage, else "stuck". Triggers once."""
+        if (
+            self.stuck_stop is not None
+            or self.phase != "RUNNING"
+            or not self.measurements
+            or self.measurements.movement_simulation_start is None
+        ):
+            return
+        now = self.clock_value
+        samples = self.stuck_samples
+        if samples and now < samples[-1][0]:
+            samples.clear()  # the simulation clock went back: restart the windows
+            self.stuck_coverage.clear()
+        if samples and now - samples[-1][0] < STUCK_SAMPLE_PERIOD_S:
+            return
+        try:
+            transform = self.buffer.lookup_transform("map", "base_footprint", Time())
+        except TransformException:
+            return
+        stamp = transform.header.stamp
+        if now - (stamp.sec + stamp.nanosec * 1e-9) > STUCK_POSE_MAX_AGE_S:
+            return  # a stale pose is no evidence that the robot stands still
+        if samples and now - samples[-1][0] > STUCK_POSE_MAX_AGE_S:
+            samples.clear()  # an unobserved gap: restart the windows
+        translation = transform.transform.translation
+        samples.append((now, translation.x, translation.y))
+        keep = now - max(STUCK_WINDOW_S, STUCK_NO_GAIN_WINDOW_S)
+        while len(samples) >= 2 and samples[1][0] <= keep:
+            samples.popleft()
+        history = self.stuck_coverage
+        while len(history) >= 2 and history[1][0] <= keep:
+            history.popleft()
+        gain = None
+        condition, anchor = "still", self.stuck_anchor(now - STUCK_WINDOW_S, STUCK_RADIUS_M)
+        if anchor is None:
+            condition = "no_gain"
+            anchor = self.stuck_anchor(now - STUCK_NO_GAIN_WINDOW_S, STUCK_NO_GAIN_RADIUS_M)
+            gain = None if anchor is None else self.stuck_coverage_gain(anchor[0], now)
+            if gain is None or gain >= STUCK_GAIN_PP:
+                return
+        coverage = self.last_valid_coverage
+        completed = coverage is not None and coverage >= STUCK_COMPLETION_PERCENT
+        still = condition == "still"
+        self.stuck_stop = dict(
+            rule=STUCK_RULE,
+            condition=condition,
+            window_seconds=STUCK_WINDOW_S if still else STUCK_NO_GAIN_WINDOW_S,
+            radius_m=STUCK_RADIUS_M if still else STUCK_NO_GAIN_RADIUS_M,
+            gain_threshold_pp=None if still else STUCK_GAIN_PP,
+            coverage_gain_pp=gain,
+            completion_percent=STUCK_COMPLETION_PERCENT,
+            simulation=now,
+            simulation_elapsed=now - self.measurements.movement_simulation_start,
+            anchor_simulation=anchor[0],
+            coverage_percent=coverage,
+            outcome="completed" if completed else "stuck",
+        )
+        if completed:
+            self.terminal.put(("completed", STUCK_COMPLETED_DETAIL, -1))
+        else:
+            self.terminal.put(("stuck", STUCK_DETAIL if still else STUCK_NO_GAIN_DETAIL, -1))
+
+    def stuck_anchor(self, cutoff, radius):
+        """The latest kept pose at or before ``cutoff`` when every pose since lies within ``radius`` of it."""
+        start = None
+        for index, sample in enumerate(self.stuck_samples):
+            if sample[0] > cutoff:
+                break
+            start = index
+        if start is None:
+            return None
+        anchor = self.stuck_samples[start]
+        for _, x, y in itertools.islice(self.stuck_samples, start, None):
+            if math.hypot(x - anchor[1], y - anchor[2]) >= radius:
+                return None
+        return anchor
+
+    def stuck_coverage_gain(self, since, now):
+        """Valid coverage gained since ``since`` (pp): the highest valid sample after it minus the latest one at or
+        before it. None without a sample at or before ``since`` or without one in the last
+        STUCK_COVERAGE_MAX_AGE_S (no evidence of the current coverage)."""
+        history = self.stuck_coverage
+        before = [value for time, value in history if time <= since]
+        if not before or now - history[-1][0] > STUCK_COVERAGE_MAX_AGE_S:
+            return None
+        start = before[-1]
+        return max([start, *(value for time, value in history if time > since)]) - start
 
     def publish_metrics(self, snapshot):
         if self.runtime:
@@ -1601,6 +1738,11 @@ class Worker:
                 "completed",
                 COVERAGE_STOP_DETAIL,
             )
+            self.stopped_by_stuck = (outcome, detail) in (
+                ("completed", STUCK_COMPLETED_DETAIL),
+                ("stuck", STUCK_DETAIL),
+                ("stuck", STUCK_NO_GAIN_DETAIL),
+            )
             terminal_wall = time.monotonic()
             if self.campaign and self.recorder:
                 self.recorder.manifest.update(
@@ -1653,12 +1795,24 @@ class Worker:
         self.close_source()
         if recorder:
             recorder.manifest["robot_diagnostics"] = self.robot_diagnostics
-            # What ended a completed run: the explorer's completion event or the coverage stop (coverage-stop-v2).
+            # What ended a completed run: the explorer's completion event, the coverage stop (coverage-stop-v3) or
+            # the stuck-robot stop at high coverage (stuck-stop-v1).
             stopped_by_rule = self.outcome == "completed" and self.stopped_by_coverage
+            stuck_completed = self.outcome == "completed" and self.stopped_by_stuck
             recorder.manifest["completion_source"] = (
-                ("coverage_stop" if stopped_by_rule else "explorer")
+                (
+                    "coverage_stop"
+                    if stopped_by_rule
+                    else "stuck_stop"
+                    if stuck_completed
+                    else "explorer"
+                )
                 if self.outcome == "completed"
                 else None
+            )
+            # The stuck-robot stop's trigger when it ended the run (stuck-stop-v1), else null.
+            recorder.manifest["stuck_stop"] = (
+                self.stuck_stop if self.stopped_by_stuck else None
             )
             recorder.manifest["coverage_stop"] = (
                 self.coverage_stop if stopped_by_rule else None
@@ -1865,12 +2019,15 @@ class Worker:
                 )
             self.start_exploration_action(wall)
             self.start_exploration_topic(wall)
+            self.coverage_stop_due()
             limit = self.config["simulation_time_limit"]
             limit_origin = self.measurements.movement_simulation_start if self.campaign else self.start_sim
             if limit and limit_origin is not None and self.clock_value - limit_origin >= limit:
                 self.terminal.put(
                     ("time_limit", f"Simulation-time limit ({limit:g} seconds)", -1)
                 )
+            else:
+                self.stuck_tick()
             if self.campaign:
                 if not self.measurements.motion_started and self.clock_value-self.start_sim >= 180:
                     self.terminal.put(("no_movement", "No planar motion within 180 simulation seconds after activation", -1))

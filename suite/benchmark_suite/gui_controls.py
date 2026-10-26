@@ -104,6 +104,8 @@ OUTCOME_BADGES: Mapping[str, tuple[Tone, str]] = MappingProxyType(
     {
         "completed": ("ok", "ccheck"),
         "time_limit": ("warn", "hourglass"),
+        # stuck-stop-v1: a reported outcome like time_limit, not a failure
+        "stuck": ("warn", "cpause"),
         "no_movement": ("neutral", "ban"),
         "manual_stop": ("neutral", "cstop"),
         "startup_failure": ("bad", "cx"),

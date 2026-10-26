@@ -1,13 +1,14 @@
 default_comparison: [default, default, default, default]
-# Explorer launch profiles (docs/plans/EXTERNAL_EXPLORERS.md, EXTERNAL_EXPLORERS_RRT_TDLE.md): the ID is the
-# run specification's ``profile``. parameters: the Default file (parameter_package share); metadata: beside this
-# file; node: the parameter scope; executables: package/executable of the processes whose CPU and memory count
-# (decision E7, within the launch's own process scope); start: launch (starts by itself), action (one Explore
-# goal) or topic (``true`` on start_topic, once start_subscriber subscribes and start_after has delivered two
-# messages); completion: what ends a run as "completed" besides the coverage stop
-# (none: only the coverage stop); insight: frontier insight node and views; robot_defaults: Default scoring speeds
-# and preemption lidar range from the robot (configuration.robot_parameter_schema); source: the submodule path, or
-# an external explorer's url and commit (explorer_source "<url>@<commit>"; branch and build_patch informational).
+# Explorer launch profiles (docs/plans/EXTERNAL_EXPLORERS.md, EXTERNAL_EXPLORERS_RRT_TDLE.md,
+# EXTERNAL_EXPLORERS_MRTSP.md): the ID is the run specification's ``profile``. parameters: the Default file
+# (parameter_package share); metadata: beside this file; node: the parameter scope; executables:
+# package/executable of the processes whose CPU and memory count (decision E7, within the launch's own process
+# scope); start: launch (starts by itself), action (one Explore goal) or topic (``true`` on start_topic, once
+# start_subscriber subscribes and start_after has delivered two messages); completion: what ends a run as
+# "completed" besides the coverage stop (none: only the coverage stop); insight: frontier insight node and views;
+# robot_defaults: Default scoring speeds and preemption lidar range from the robot
+# (configuration.robot_parameter_schema); source: the submodule path, or an external explorer's url and commit
+# (explorer_source "<url>@<commit>"; branch and build_patch informational).
 profiles:
   default:
     label: Default
@@ -124,4 +125,31 @@ profiles:
       licence: MIT (package.xml; no licence file)
       # Build-only change (docker/fetch_external_explorers.sh): the empty launch/ directory its CMakeLists.txt installs.
       build_patch: tdle_ws/src/tdle/launch (empty directory created)
+    random_seed: unsupported
+  mrtsp_exploration_ros2:
+    label: base MRTSP
+    framework: mrtsp_exploration_ros2
+    package: mrtsp_exploration_ros2
+    launch_package: exploration_benchmark_runner
+    launch: mrtsp_exploration_ros2.launch.py
+    parameter_package: rviz_autonomous_exploration_benchmark
+    parameters: config/mrtsp_exploration_ros2/default.yaml
+    metadata: parameters/mrtsp_exploration_ros2.yaml
+    node: mrtsp_explorer
+    executable: mrtsp_explorer
+    executables: [mrtsp_exploration_ros2/mrtsp_explorer]
+    start: launch
+    # Published by the build patch (decision M1) when the node logs its completion.
+    completion: {kind: event, topic: /exploration_complete}
+    insight: false
+    # Shipped speeds for every robot (decision M2).
+    robot_defaults: false
+    source:
+      url: https://github.com/mertgulerx/mrtsp_exploration_ros2
+      commit: d9bc18085f49f6aa4396b4009d22ad5255096bf9
+      licence: Apache-2.0
+      # Patch to the method (docker/fetch_external_explorers.sh): a latched std_msgs/Empty on
+      # /exploration_complete when it logs completion (M1) and occ_threshold 60 as its default (maintainer,
+      # 26 October 2026; shipped 50); nothing else changed.
+      build_patch: docker/patches/mrtsp_exploration_ros2-d9bc180-benchmark.patch sha256 c998dc09178c49d0d63dbf7fd376086610440edd66b5249f3200d3317ecc9fac
     random_seed: unsupported

@@ -46,12 +46,16 @@ from typing import Any
 from .data import (
     COMPLETION_SOURCE,
     COMPLETION_SOURCES,
+    COVERAGE_STOP_TEXT,
     EXCLUDED,
     MISSING,
     REPORTED,
+    STUCK,
+    STUCK_TEXT,
     Stratum,
     Study,
     mapping_condition,
+    outcome_rule,
 )
 from .estimates import EFFECTS, PRIMARY_TIME, UNITS, Entries, EstimateContext, time_endpoints
 from .families import CONTRACT as FAMILY_CONTRACT
@@ -373,8 +377,20 @@ T1_COLUMNS = [
     "Not done",
     "Completion (Wilson)",
 ]
-# T1's split of Completed by completion_source, after Completed, when the export carries it (run record 3)
-SOURCE_COLUMNS = {"explorer": "Completed (explorer)", "coverage_stop": "Completed (coverage stop)"}
+# T1's split of Completed by completion_source, after Completed, when the export carries it (run record 3;
+# stuck_stop from run record 6)
+SOURCE_COLUMNS = {
+    "explorer": "Completed (explorer)",
+    "coverage_stop": "Completed (coverage stop)",
+    "stuck_stop": "Completed (stuck stop)",
+}
+# T1's Stuck column, after Time limit, when the export's run record knows the stuck stop (run record 6)
+STUCK_COLUMN = "Stuck"
+# the reported outcomes in words, by whether the export knows the stuck stop
+REPORTED_TEXT = {
+    False: "completed, time limit, no movement",
+    True: "completed, time limit, stuck, no movement",
+}
 
 
 def accounting(study: Study) -> dict[tuple[str, str, str, str], dict[str, int]]:
@@ -413,10 +429,20 @@ def t1(src: Sources) -> Table:
     """Accounting per robot, world, spawn and profile of every planned experiment (``accounting``)."""
     study = src.study
     counts = accounting(study)
-    sources = list(COMPLETION_SOURCES) if study.has_completion_source else []
+    sources = (
+        [s for s in COMPLETION_SOURCES if study.has_stuck or s != "stuck_stop"]
+        if study.has_completion_source
+        else []
+    )
+    others = (
+        ("time_limit", STUCK, "no_movement") if study.has_stuck else ("time_limit", "no_movement")
+    )
     columns = list(T1_COLUMNS)
     at = columns.index("Completed") + 1
     columns[at:at] = [SOURCE_COLUMNS[source] for source in sources]
+    if study.has_stuck:
+        at = columns.index("Time limit") + 1
+        columns[at:at] = [STUCK_COLUMN]
     table = Table("T1", "Outcome accounting per stratum and profile", columns, sparse_counts=True)
     stratum_of = {(s.robot_id, s.world_id, s.spawn_id): s for s in study.strata}
     order = {profile: index for index, profile in enumerate(src.order)}
@@ -433,7 +459,7 @@ def t1(src: Sources) -> Table:
                 str(group["done"]),
                 str(group["outcome_completed"]),
                 *(str(group["source_" + source]) for source in sources),
-                *(str(group["outcome_" + o]) for o in ("time_limit", "no_movement")),
+                *(str(group["outcome_" + o]) for o in others),
                 *(str(group[c]) for c in (*MISSING, *EXCLUDED)),
                 str(group["replaced_timing_rejection"]),
                 str(group["replaced_engine_interruption"]),
@@ -447,16 +473,27 @@ def t1(src: Sources) -> Table:
     table.attempt_ids |= {r["attempt_id"] for r in study.runs}
     table.notes = [
         "Completed counts final runs that completed within L; completion = completed / reported runs "
-        f"(completed, time limit, no movement), Wilson {level_text(src.level)} interval.",
+        f"({REPORTED_TEXT[study.has_stuck]}), Wilson {level_text(src.level)} interval.",
         "Missing observations and exclusions are final runs outside the reported population "
-        "(reported-outcomes-v2); replaced and discarded attempts are not final. Every planned experiment has "
+        f"({outcome_rule(study)}); replaced and discarded attempts are not final. Every planned experiment has "
         "a row, also where no run was reported.",
     ]
     if sources:
+        stuck_stop = (
+            f" Completed (stuck stop): {STUCK_TEXT} at or above 97.0 % coverage."
+            if "stuck_stop" in sources
+            else ""
+        )
         table.notes.append(
             "Completed (explorer): the explorer's completion event ended the run; Completed (coverage stop): "
-            "coverage reached 99.9 % (coverage-stop-v2; coverage-stop-v1 stopped at 99.0 % before 26 October "
-            "2026). Both count as completed; a completed run without a recorded source is in neither column."
+            f"{COVERAGE_STOP_TEXT}.{stuck_stop} "
+            f"{'All' if stuck_stop else 'Both'} count as completed; a completed run without a recorded source "
+            "is in no source column."
+        )
+    if study.has_stuck:
+        table.notes.append(
+            f"Stuck: {STUCK_TEXT} below 97.0 % coverage; a reported run, not completed, analysed as a "
+            "time-limit run except that its coverage is carried from its end to L."
         )
     return table
 
@@ -598,11 +635,17 @@ def t3(src: Sources) -> Table:
         "run censored at L reads > L. RMST(L) = mean of min(T, L): t interval below 10 runs, percentile "
         "bootstrap over runs from 10 (RD-5, RD-11).",
     ]
-    if src.study.has_completion_source:
+    if src.study.has_stuck:
         table.notes.append(
-            "R_completion counts both completions: the explorer's completion event and the coverage stop at "
-            "99.9 % (coverage-stop-v2; coverage-stop-v1 stopped at 99.0 % before 26 October 2026); T1 counts "
-            "them apart."
+            f"R_completion counts every completion: the explorer's completion event, {COVERAGE_STOP_TEXT} and "
+            f"the stuck stop at or above 97.0 % coverage ({STUCK_TEXT}); T1 counts them apart. A stuck run "
+            "(below 97.0 %) is censored at L like a time-limit run; a milestone it reached before the stop is "
+            "observed."
+        )
+    elif src.study.has_completion_source:
+        table.notes.append(
+            f"R_completion counts both completions: the explorer's completion event and {COVERAGE_STOP_TEXT}; "
+            "T1 counts them apart."
         )
     return table
 
@@ -651,8 +694,9 @@ def t4(src: Sources) -> Table:
             )
             table.attempt_ids |= set(e.get("attempt_ids", []))
     table.notes = [
-        "C(h) and A_h hold a completed run's final coverage to L (carry-forward) and a run without movement at "
-        "its pre-motion coverage; no value across a sample gap above 2 s. D(h): odometry, moving runs only.",
+        "C(h) and A_h hold a completed or stuck run's final coverage to L (carry-forward) and a run without "
+        "movement at its pre-motion coverage; no value across a sample gap above 2 s. D(h): odometry, moving "
+        "runs only, a completed or stuck run's final distance held to L.",
         "Quartiles: Hyndman–Fan type 2. Mean (SD) only for quantities never censored.",
     ]
     return table
@@ -946,7 +990,7 @@ def t7(src: Sources) -> Table:
     table.notes = [
         "Goal counts summed over reported runs with navigation telemetry; idle tail = min(T_end, L) − last gain "
         f"(stall-v1, δ = {src.settings.stall_delta_pp:g} pp from the plan). Stalls are counted only with the "
-        "plan's window W: time-limit runs whose idle tail reaches W, Wilson interval.",
+        "plan's window W: time-limit and stuck runs whose idle tail reaches W, Wilson interval.",
     ]
     return table
 
@@ -1109,7 +1153,7 @@ def t9(src: Sources) -> Table | None:
     )
     table.attempt_ids = {r["attempt_id"] for runs in reported.values() for r in runs}
     table.notes = [
-        "Reported runs (completed, time limit, no movement) per profile over all strata, coded by the researcher "
+        f"Reported runs ({REPORTED_TEXT[src.study.has_stuck]}) per profile over all strata, coded by the researcher "
         "against the categories and definitions declared in the plan's taxonomy (hashed with the plan); per "
         "stratum in F23. The last row is each column's denominator. Coding never changes a recorded outcome; "
         f"descriptive counts, not in stats.json. {blinding_text(src.coding_record)} {CODER_NOTE} "
@@ -1354,7 +1398,7 @@ def t10(src: Sources) -> Table | None:
     table.notes = [
         "World rows: the world mean over its spawns (each spawn's mean weighted equally) of the reported runs, (n) = "
         "runs with a value; a dash names why a world has none. Final runs by report class "
-        "(reported-outcomes-v2); the average row sums them over the family's worlds.",
+        f"({outcome_rule(src.study)}); the average row sums them over the family's worlds.",
         FAMILY_INTERVAL_NOTE
         + f" Level {level_text(src.level)}; (n) = worlds with a value; {DESCRIPTIVE_MARK} descriptive, no "
         "interval.",

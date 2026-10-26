@@ -26,7 +26,19 @@ import subprocess
 import time
 import yaml
 
-from .coverage import COVERAGE_STOP_PERCENT, COVERAGE_STOP_RULE
+from .coverage import (
+    COVERAGE_STOP_DELAY_S,
+    COVERAGE_STOP_PERCENT,
+    COVERAGE_STOP_RULE,
+    MEASURED_OUTCOMES,
+    STUCK_COMPLETION_PERCENT,
+    STUCK_GAIN_PP,
+    STUCK_NO_GAIN_RADIUS_M,
+    STUCK_NO_GAIN_WINDOW_S,
+    STUCK_RADIUS_M,
+    STUCK_RULE,
+    STUCK_WINDOW_S,
+)
 
 
 def digest(path):
@@ -146,8 +158,22 @@ class Recorder:
                 "framework": profile.get("random_seed", "unsupported"),
                 "ros2_stack": "No seed override applied; baseline SLAM/Nav2 configuration retained",
             },
-            # The run's stop rule (coverage-stop-v1): a condition of every run since 25 October 2026.
-            coverage_stop_policy=dict(rule=COVERAGE_STOP_RULE, percent=COVERAGE_STOP_PERCENT),
+            # The run's stop rule (coverage-stop-v1 from 25 October 2026, v2 and v3 with its delay from 26 October).
+            coverage_stop_policy=dict(
+                rule=COVERAGE_STOP_RULE,
+                percent=COVERAGE_STOP_PERCENT,
+                delay_seconds=COVERAGE_STOP_DELAY_S,
+            ),
+            # The stuck-robot stop (stuck-stop-v1, 26 October 2026).
+            stuck_policy=dict(
+                rule=STUCK_RULE,
+                window_seconds=STUCK_WINDOW_S,
+                radius_m=STUCK_RADIUS_M,
+                no_gain_window_seconds=STUCK_NO_GAIN_WINDOW_S,
+                no_gain_radius_m=STUCK_NO_GAIN_RADIUS_M,
+                gain_threshold_pp=STUCK_GAIN_PP,
+                completion_percent=STUCK_COMPLETION_PERCENT,
+            ),
             quality_policy={
                 "rtf_threshold": 0.95,
                 "window_wall_seconds": 5,
@@ -351,7 +377,7 @@ class Recorder:
             actual_commands=commands,
             finished_unix=time.time(),
             valid_comparison=not metrics.get("quality_flags")
-            and outcome in ("completed", "time_limit"),
+            and outcome in MEASURED_OUTCOMES,
         )
         self.manifest["coverage_valid_comparison"] = bool(
             self.manifest["valid_comparison"]

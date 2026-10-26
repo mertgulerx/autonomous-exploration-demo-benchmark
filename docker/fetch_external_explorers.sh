@@ -15,14 +15,16 @@
 
 # Place the external explorers of the comparison (plans/EXTERNAL_EXPLORERS, EXTERNAL_EXPLORERS_RRT_TDLE) at their
 # pinned commits into a colcon source directory: explore_lite and explore_lite_msgs from m-explore-ros2,
-# roadmap_explorer and roadmap_explorer_msgs from roadmap-explorer, rrt_explore from rrt-explore and tdle from
-# TDLE. Each source archive is checked by its SHA-256; the other packages and files of the repositories
+# roadmap_explorer and roadmap_explorer_msgs from roadmap-explorer, rrt_explore from rrt-explore, tdle from
+# TDLE and mrtsp_exploration_ros2 (base MRTSP, plans/EXTERNAL_EXPLORERS_MRTSP). Each source archive is checked by its SHA-256; the other packages and files of the repositories
 # (multirobot_map_merge, roadmap_explorer_rviz_plugins, TDLE's bcr_bot demo workspaces) are left out.
 # Two build-only edits: roadmap_explorer builds its gtests whenever ament_cmake_gtest is found, ignoring
 # BUILD_TESTING, so they are gated on BUILD_TESTING as well (the image build skips them); tdle installs a
-# launch/ directory its repository does not have, so an empty one is created. One patch to a method:
-# rrt_explore gets docker/patches/rrt_explore-41054af-bounds.patch (decision X5: grid reads outside the grid
-# read as unknown), checked by its SHA-256 as profiles.yaml records it.
+# launch/ directory its repository does not have, so an empty one is created. Two patches to methods, each
+# checked by its SHA-256 as profiles.yaml records it: rrt_explore gets
+# docker/patches/rrt_explore-41054af-bounds.patch (decision X5: grid reads outside the grid read as unknown) and
+# mrtsp_exploration_ros2 docker/patches/mrtsp_exploration_ros2-d9bc180-benchmark.patch (decision M1: its
+# completion is published on /exploration_complete; occ_threshold defaults to 60, maintainer 26 October 2026). mrtsp_exploration_ros2's tests are left out.
 # Usage: fetch_external_explorers.sh SOURCE_DIR
 set -euo pipefail
 
@@ -37,6 +39,11 @@ RRT_EXPLORE_URL="https://codeload.github.com/acachathuranga/rrt-explore/tar.gz/$
 RRT_EXPLORE_SHA256="9b584eb9e8a63cc426560be6974c9f7ed5039b7a942f0487cc42af5eba268128"
 RRT_EXPLORE_PATCH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/patches/rrt_explore-41054af-bounds.patch"
 RRT_EXPLORE_PATCH_SHA256="fef19df8c7da2feb7d3c4f3c860ceb50692a57e4efce3ada59175f10902d16e1"
+MRTSP_COMMIT="d9bc18085f49f6aa4396b4009d22ad5255096bf9"
+MRTSP_URL="https://codeload.github.com/mertgulerx/mrtsp_exploration_ros2/tar.gz/${MRTSP_COMMIT}"
+MRTSP_SHA256="971375f44998d796c92ee02519baf35d8aef9ed45089ba164beef4c6c1e4f5d5"
+MRTSP_PATCH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/patches/mrtsp_exploration_ros2-d9bc180-benchmark.patch"
+MRTSP_PATCH_SHA256="c998dc09178c49d0d63dbf7fd376086610440edd66b5249f3200d3317ecc9fac"
 TDLE_COMMIT="b5ed3cf8573cb4a2387b5434d3ec4bb782ba286e"
 TDLE_URL="https://codeload.github.com/SeanZsya/tdle/tar.gz/${TDLE_COMMIT}"
 TDLE_SHA256="197f15e4d0e738af5657da715b56aad5718a680db67586fe094d8b1e5a196b7f"
@@ -77,22 +84,27 @@ fetch m-explore-ros2 "${EXPLORE_LITE_URL}" "${EXPLORE_LITE_SHA256}" explore expl
 fetch roadmap-explorer "${ROADMAP_URL}" "${ROADMAP_SHA256}" roadmap_explorer roadmap_explorer_msgs
 fetch rrt-explore "${RRT_EXPLORE_URL}" "${RRT_EXPLORE_SHA256}" .
 fetch tdle "${TDLE_URL}" "${TDLE_SHA256}" tdle_ws/src/tdle
+fetch mrtsp_exploration_ros2 "${MRTSP_URL}" "${MRTSP_SHA256}" .
 
 roadmap_cmake="${work}/roadmap-explorer/roadmap_explorer/CMakeLists.txt"
 grep -qx 'if(ament_cmake_gtest_FOUND)' "${roadmap_cmake}"
 sed -i 's/^if(ament_cmake_gtest_FOUND)$/if(BUILD_TESTING AND ament_cmake_gtest_FOUND)/' "${roadmap_cmake}"
 echo "${RRT_EXPLORE_PATCH_SHA256}  ${RRT_EXPLORE_PATCH}" | sha256sum -c --quiet -
 patch -d "${work}/rrt-explore" -p1 --forward --quiet < "${RRT_EXPLORE_PATCH}"
+echo "${MRTSP_PATCH_SHA256}  ${MRTSP_PATCH}" | sha256sum -c --quiet -
+patch -d "${work}/mrtsp_exploration_ros2" -p1 --forward --quiet < "${MRTSP_PATCH}"
+rm -rf "${work}/mrtsp_exploration_ros2/test"
 tdle_package="${work}/tdle/tdle"
 grep -qx 'install(DIRECTORY launch/' "${tdle_package}/CMakeLists.txt"
 [[ ! -e "${tdle_package}/launch" ]]
 mkdir "${tdle_package}/launch"
 
 mkdir -p "$1"
-for name in m-explore-ros2 roadmap-explorer rrt-explore tdle; do
+for name in m-explore-ros2 roadmap-explorer rrt-explore tdle mrtsp_exploration_ros2; do
   rm -rf "${1:?}/${name}"
   mv "${work}/${name}" "$1/${name}"
 done
 echo "explore_lite ${EXPLORE_LITE_COMMIT:0:7} in $1/m-explore-ros2," \
   "roadmap_explorer ${ROADMAP_COMMIT:0:7} in $1/roadmap-explorer," \
-  "rrt_explore ${RRT_EXPLORE_COMMIT:0:7} with $(basename "${RRT_EXPLORE_PATCH}") in $1/rrt-explore, tdle ${TDLE_COMMIT:0:7} in $1/tdle"
+  "rrt_explore ${RRT_EXPLORE_COMMIT:0:7} with $(basename "${RRT_EXPLORE_PATCH}") in $1/rrt-explore, tdle ${TDLE_COMMIT:0:7} in $1/tdle," \
+  "mrtsp_exploration_ros2 ${MRTSP_COMMIT:0:7} with $(basename "${MRTSP_PATCH}") in $1/mrtsp_exploration_ros2"

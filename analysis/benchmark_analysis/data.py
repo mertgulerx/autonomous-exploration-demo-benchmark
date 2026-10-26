@@ -14,9 +14,10 @@
 
 """A study's runs as the analysis sees them: strata, populations and the per-run values of every estimand
 (docs/research/METHODOLOGY.md §3; RESULTS_RESEARCH RD-6 to RD-9, RD-18; docs/MEASUREMENTS.md "Run record" and
-"Reported population `reported-outcomes-v2`").
+"Reported population `reported-outcomes-v3`").
 
-- Final runs only. ``reported`` runs (completed, time limit, no movement) form the population; the other final
+- Final runs only. ``reported`` runs (completed, time limit, stuck, no movement; ``stuck`` from run record 6,
+  ``reported-outcomes-v3``, earlier records ``reported-outcomes-v2``) form the population; the other final
   classes are counted beside every result (missing observations: ``missing_startup``, ``missing_platform``;
   exclusions: ``excluded_runtime_failure``, ``excluded_stopped``).
 - A stratum is one robot, world and spawn with one comparison key and one time limit L, holding at least one
@@ -25,16 +26,24 @@
   timing-rule versions, a cell with two comparison keys or two time limits, two final runs of one block and
   profile, and a profile ID with two parameter hashes.
 - Times are movement-relative simulation seconds. Restricted times R = min(T, L): an event when T ≤ L, else
-  R = L; ``no_movement`` counts as never reaching (R = L, RD-8). C(h) and A_h hold a completed run's final value
-  from its end to L (``carried_forward``, RD-6) and a ``no_movement`` run's pre-motion coverage (RD-8), and
+  R = L; ``no_movement`` counts as never reaching (R = L, RD-8). C(h) and A_h hold the last valid value of a
+  completed or ``stuck`` run from its end to L (``carried_forward``, RD-6) and a ``no_movement`` run's
+  pre-motion coverage (RD-8), and
   have no value when valid samples are more than 2 s apart before min(h, T_end), the run has no sample at
   movement onset or is not coverage-eligible. D(h) is odometry distance from the export's 1 s trajectory rows,
   moving runs only, with no value when the last row is more than 2 s old.
-- The coverage stop ends a run at the first valid sample at or above its threshold as ``completed``:
-  99.9 % since run record 4 (``coverage-stop-v2``), 99.0 % in run record 3 (``coverage-stop-v1``, before
-  26 October 2026). ``completion_source`` (run record 3 on) says whether the explorer or that stop ended it; both
+- The coverage stop ends a run as ``completed``: ``coverage-stop-v3`` 5 simulated seconds after the first valid
+  sample at or above 99.9 % (26 October 2026 on), ``coverage-stop-v2`` at that sample (26 October 2026),
+  ``coverage-stop-v1`` at 99.0 % (25 October 2026); run records are rebuilt at the current version, so the record
+  version does not say which rule a run ran under (its manifest policy does). ``completion_source`` (run record 3 on) says whether the explorer or that stop ended it; both
   are a completion here (R_completion, success) and T1 counts them apart. T99.9 joins the milestones from run
   record 4; run record 3's T99 columns are not read. Earlier records read None for what they lack.
+- The stuck stop (``stuck-stop-v1``, run record 6) ends a run whose robot stayed within 0.75 m for 35 simulated
+  seconds, or within 1 m for 60 simulated seconds while coverage gained less than 0.1 pp: at or above 97.0 % coverage as ``completed`` with ``completion_source`` ``stuck_stop`` (a completion
+  like the others), below it with the outcome ``stuck``. A stuck run is a time-limit run in every estimand
+  (success false; completion and unreached milestones censored at L, milestones reached before the stop
+  observed; distance, compute and speed observed to its end) except that C(h) and A_h carry its last valid
+  sample from its end to L (RD-6), and D(h) holds its final odometry distance there as a completed run's does.
 """
 
 from collections import defaultdict
@@ -54,7 +63,10 @@ Row = dict[str, Any]
 Floats = NDArray[np.float64]
 GAP_S = 2.0  # RD-6: C(h), A_h and D(h) have no value across a longer gap between valid samples
 REPORTED = "reported"
-REPORTED_OUTCOMES = ("completed", "time_limit", "no_movement")  # the outcomes of reported runs
+STUCK = "stuck"  # stuck-stop-v1 below 97.0 % coverage (run record 6, reported-outcomes-v3)
+# the outcomes of reported runs; ``stuck`` from run record 6 (``STUCK_RECORD_VERSION``)
+REPORTED_OUTCOMES = ("completed", "time_limit", STUCK, "no_movement")
+STUCK_RECORD_VERSION = 6
 MISSING = ("missing_startup", "missing_platform")
 EXCLUDED = ("excluded_runtime_failure", "excluded_stopped")
 VERSION_COLUMNS = (
@@ -74,12 +86,21 @@ TIME_ENDPOINTS = {
     "R_completion": "completion",
     **{endpoint: f"t{milestone_key(m)}" for endpoint, m in MILESTONE_OF_ENDPOINT.items()},
 }
-# Run record 3 on: what ended a completed run, ``explorer`` (its completion event) or ``coverage_stop`` (coverage
-# reached 99.9 %, coverage-stop-v2; coverage-stop-v1 stopped at 99.0 % before 26 October 2026); null for other
-# outcomes. Run record 4 replaced T99 by T99.9. Records without a column read None for it (no value,
-# ``not_recorded``), and the settings leave milestone 99.9 out before run record 4.
+# Run record 3 on: what ended a completed run, ``explorer`` (its completion event), ``coverage_stop`` (COVERAGE_STOP_TEXT)
+# or, from run record 6, ``stuck_stop`` (stuck-stop-v1 at or above 97.0 % coverage); null for other outcomes. Run record 4
+# replaced T99 by T99.9. Records without a column read None for it (no value, ``not_recorded``), and the
+# settings leave milestone 99.9 out before run record 4.
 COMPLETION_SOURCE = "completion_source"
-COMPLETION_SOURCES = ("explorer", "coverage_stop")
+# The stop rules as the table and figure notes state them (one wording for every output).
+COVERAGE_STOP_TEXT = (
+    "the coverage stop 5 simulated seconds after coverage first reached 99.9 % (coverage-stop-v3; v2 stopped at "
+    "the 99.9 % sample and v1 at 99.0 %, before 26 October 2026; a study may hold runs of several versions)"
+)
+STUCK_TEXT = (
+    "the robot stayed within 0.75 m for 35 simulated seconds, or within 1 m for 60 simulated seconds while "
+    "coverage gained less than 0.1 pp (stuck-stop-v1)"
+)
+COMPLETION_SOURCES = ("explorer", "coverage_stop", "stuck_stop")
 OPTIONAL_COLUMNS = (
     COMPLETION_SOURCE,
     *(f"t{milestone_key(STOP_MILESTONE)}{suffix}" for suffix in ("_s", "_event", "_censor_s")),
@@ -161,6 +182,7 @@ class Study:
     pre_motion: Mapping[str, float | None] = field(repr=False)
     trajectory: Mapping[str, tuple[Floats, Floats]] = field(repr=False)  # t, odometry distance
     has_completion_source: bool = False  # the export's runs carry completion_source (run record 3)
+    has_stuck: bool = False  # some run ran under the stuck stop (its stuck_rule, run record 6)
 
     @property
     def finals(self) -> list[Row]:
@@ -334,7 +356,26 @@ def load(export: Export) -> Study:
         pre_motion={run["attempt_id"]: run["pre_motion_coverage_pct"] for run in finals},
         trajectory=_trajectory(export, reported),
         has_completion_source=COMPLETION_SOURCE in table.column_names,
+        has_stuck=has_stuck(export.study, table),
     )
+
+
+def has_stuck(study: Mapping[str, Any], runs: pa.Table) -> bool:
+    """Whether any run of the export ran under the stuck stop: run record 6 and later name each run's
+    ``stuck_rule`` (records are rebuilt at the current version, so the version alone does not say it)."""
+    version = study.get("run_record_version")
+    if (
+        type(version) is not int
+        or version < STUCK_RECORD_VERSION
+        or "stuck_rule" not in runs.column_names
+    ):
+        return False
+    return any(isinstance(rule, str) and rule for rule in runs.column("stuck_rule").to_pylist())
+
+
+def outcome_rule(study: Study) -> str:
+    """The reported-population rule of the export's runs, for notes."""
+    return "reported-outcomes-v3" if study.has_stuck else "reported-outcomes-v2"
 
 
 def _coverage(export: Export, attempts: set[str]) -> dict[str, Series]:
@@ -388,7 +429,8 @@ def block_starts(study: Study) -> dict[tuple[str, str, str, str], int]:
 
 
 def restricted_time(run: Row, endpoint: str, limit: float) -> Value:
-    """R = min(T, L) of a reported run for ``R_completion`` or ``R_m`` (RD-7, RD-8, RD-10)."""
+    """R = min(T, L) of a reported run for ``R_completion`` or ``R_m`` (RD-7, RD-8, RD-10); a ``stuck`` run as
+    a time-limit run: its event-free endpoints are censored at L (reason ``stuck``, the export's end reason)."""
     if run["outcome"] == "no_movement":
         return Value(limit, "no_movement", False)
     prefix = TIME_ENDPOINTS[endpoint]
@@ -400,14 +442,20 @@ def restricted_time(run: Row, endpoint: str, limit: float) -> Value:
         return Value(min(time, limit), "observed", time <= limit + TIME_EPSILON)
     if event is False:
         below = run["outcome"] == "completed" and prefix != "completion" and run["completion_event"]
-        return Value(limit, "completed_below_m" if below else "time_limit", False)
+        reason = (
+            "completed_below_m" if below else STUCK if run["outcome"] == STUCK else "time_limit"
+        )
+        return Value(limit, reason, False)
     return Value(None, "coverage_ineligible" if not run["coverage_eligible"] else "not_recorded")
 
 
 def run_end(run: Row, limit: float) -> tuple[float, bool]:
-    """The run's end on the movement clock within [0, L] and whether its values are carried to L (a run that
-    completed within L; RD-6)."""
-    carried = run["outcome"] == "completed" and bool(run["completion_event"])
+    """The run's end on the movement clock within [0, L] and whether its values are carried to L: a run that
+    completed within L (RD-6) or a ``stuck`` run, whose stuck stop ended it before L (stuck-stop-v1)."""
+    if run["outcome"] == STUCK:
+        carried = run["elapsed_s"] is not None
+    else:
+        carried = run["outcome"] == "completed" and bool(run["completion_event"])
     return (min(run["elapsed_s"], limit) if carried else limit), carried
 
 
@@ -429,7 +477,8 @@ def _usable(study: Study, run: Row) -> Series | str:
 
 
 def coverage_at(study: Study, run: Row, horizon: float, limit: float) -> Value:
-    """C(h): the last valid sample at or before h ≤ L, carried forward after completion (RD-6)."""
+    """C(h): the last valid sample at or before h ≤ L, carried forward after a completion or a stuck stop
+    (RD-6)."""
     if not run["coverage_eligible"]:
         return Value(None, "coverage_ineligible")
     if run["outcome"] == "no_movement":
@@ -452,8 +501,8 @@ def coverage_at(study: Study, run: Row, horizon: float, limit: float) -> Value:
 
 
 def coverage_auc(study: Study, run: Row, horizon: float, limit: float) -> Value:
-    """A_h = (1/h)∫₀ʰ C(t) dt with left-hold steps over the actual sample times, carried forward after
-    completion; the same gap, onset and eligibility rules as C(h)."""
+    """A_h = (1/h)∫₀ʰ C(t) dt with left-hold steps over the actual sample times, carried forward after a
+    completion or a stuck stop; the same gap, onset and eligibility rules as C(h)."""
     at = coverage_at(study, run, horizon, limit)
     if at.value is None or at.reason == "pre_motion":
         return at
@@ -463,14 +512,14 @@ def coverage_auc(study: Study, run: Row, horizon: float, limit: float) -> Value:
     keep = series.t <= until + TIME_EPSILON
     t, c = series.t[keep], series.coverage[keep]
     area = float(np.sum(c * np.diff(np.concatenate([t, [until]]))))
-    if horizon > until:  # completed before h: the final value holds to h
+    if horizon > until:  # completed or stuck before h: the final value holds to h
         area += float(c[-1]) * (horizon - until)
     return Value(area / horizon, "carried_forward" if carried and horizon > end else "observed")
 
 
 def distance_at(study: Study, run: Row, horizon: float, limit: float) -> Value:
     """D(h): odometry distance at min(h, T_end) for runs that moved (RD-8), from the export's 1 s rows; a
-    completed run holds its final distance; no value when the last row is more than ``GAP_S`` old."""
+    completed or stuck run holds its final distance; no value when the last row is more than ``GAP_S`` old."""
     if run["outcome"] == "no_movement" or not run["motion_started"]:
         return Value(None, "no_movement")
     if not run["motion_eligible"]:
@@ -513,7 +562,7 @@ def idle_tail(study: Study, run: Row, limit: float, delta_pp: float) -> Value:
 def coverage_grid(study: Study) -> pa.Table:
     """``coverage_grid.parquet``: every reported run on a 1 s grid from 0 to L (RESULTS_OVERHAUL §7) with the
     rule each value follows. ``source``: ``sample`` (the last valid sample at or before t; ``sample_age_s`` its
-    age), ``carried_forward`` (a completed run's final value), ``pre_motion`` (a run that never moved), or no
+    age), ``carried_forward`` (a completed or stuck run's final value), ``pre_motion`` (a run that never moved), or no
     value: ``gap`` (once a stretch without a sample has lasted more than 2 s, as C(h) has no value from then
     on; nothing bridges it), ``coverage_ineligible``, ``no_sample_at_onset``. ``observed`` is true for
     ``sample`` values."""

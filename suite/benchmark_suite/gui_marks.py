@@ -292,6 +292,8 @@ class ProgressRing(Themed):
 BAR_SEGMENTS = (
     ("completed", "data.completed"),
     ("time_limit", "data.timeLimit"),
+    # stuck-stop-v1: stuck runs, reported like time limits, join in the warning tone when there are any.
+    ("stuck", "state.warn"),
     ("failure", "data.failure"),
     # D9: no-movement and stopped runs join as neutral segments when there are any.
     ("no_movement", "state.neutral"),
@@ -301,7 +303,8 @@ BAR_SEGMENTS = (
 
 class OutcomeBar(Themed, CssBox):
     """``.bar``: 8 px, radius 4, 2 px gaps; completed, time-limit and failure shares of the planned
-    experiments (and no-movement and stopped ones, neutral, D9), then the remaining share hatched at 135°
+    experiments (and stuck ones in the warning tone, no-movement and stopped ones neutral, D9), then the
+    remaining share hatched at 135°
     (zero-count segments take no gap)."""
 
     def __init__(self, themes: ThemeManager, parent: QtWidgets.QWidget | None = None) -> None:

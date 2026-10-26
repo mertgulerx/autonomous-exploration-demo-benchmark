@@ -32,7 +32,13 @@ import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
 
-from .contracts import REPORTED_OUTCOMES, average_speed, content_hash, milestone_key
+from .contracts import (
+    MEASURED_OUTCOMES,
+    REPORTED_OUTCOMES,
+    average_speed,
+    content_hash,
+    milestone_key,
+)
 from .datasets import (
     explorer_profile,
     files,
@@ -61,9 +67,11 @@ from .strata import COMPARISON_KEY_VERSION, comparison_key
 # the T99 fields. 4 (coverage-stop-v2, 26 October 2026): the T99 fields replaced by the T99.9 fields
 # (t99_9_s, t99_9_event, t99_9_censor_s). 5 (external explorers, 26 October 2026): explorer_id names the
 # run's explorer (the package of its profiles.yaml entry) and explorer_source its source;
-# explorer CPU and memory of an external explorer sum its listed processes (E7). Older records stay beside the
-# rebuilt ones (run_records.py).
-RUN_RECORD_VERSION = 5
+# explorer CPU and memory of an external explorer sum its listed processes (E7). 6 (stuck-stop-v1, 26 October
+# 2026): the outcome stuck (reported-outcomes-v3; censored as time_limit, its coverage carried forward to L as
+# for completed), the completion_source stuck_stop and the fields coverage_stop_rule and stuck_rule. Older records stay beside the rebuilt ones
+# (run_records.py).
+RUN_RECORD_VERSION = 6
 ELIGIBILITY_VERSION = "eligibility-v2"
 DERIVED_VERSION = 1
 # Goal statuses the explorer itself causes (a cancel request or a replacement goal).
@@ -135,11 +143,15 @@ FIELDS: tuple[Field, ...] = (
     *_fields("text", "", "never", "outcome"),
     *_fields("text", "", "never", "outcome_detail"),
     *_fields("text", "", "outcome not a failure", "outcome_detail_code"),
-    # What ended a completed run (coverage-stop-v1): "explorer" or "coverage_stop". A manifest written
-    # before the rule has no completion_source; its completed runs are "explorer" (no other source existed).
+    # What ended a completed run (coverage-stop-v1): "explorer", "coverage_stop" or (run-record-v6,
+    # stuck-stop-v1) "stuck_stop". A manifest written before coverage-stop-v1 has no completion_source; its
+    # completed runs are "explorer" (no other source existed).
     *_fields(
         "text", "", "outcome not completed, or the manifest names no source", "completion_source"
     ),
+    # The stop rules the run ran under (run-record-v6; manifest policy coverage_stop_rule, stuck_rule): records
+    # are rebuilt at the current version, so the record version alone does not say which rules applied.
+    *_fields("text", "", "stub, or recorded before the rule", "coverage_stop_rule", "stuck_rule"),
     *_fields("float", "sim s", "limit disabled", "time_limit_s"),
     *_fields("float", "sim s", "never moved or stub", "elapsed_s", "restricted_elapsed_s"),
     *_fields("bool", "", "stub", "motion_started"),
@@ -329,7 +341,8 @@ def report_class(
     insight_exited_before_stop: bool | None,
     experiment_state: str | None,
 ) -> str:
-    """``reported-outcomes-v2`` (RD-9, RD-17): rows tried in the contract's order."""
+    """``reported-outcomes-v3`` (RD-9, RD-17; v3 adds ``stuck`` to the reported outcomes): rows tried in the
+    contract's order."""
     if not is_final:
         return "not_final"
     if insight_started is False or insight_exited_before_stop is True:
@@ -394,19 +407,25 @@ NOT_APPLICABLE = Censored(None, None, None)
 
 
 def completion(outcome: str, elapsed: float | None, limit: float | None) -> Censored:
-    """Completion (RD-7, RD-10): an event only when observed within L; competing outcomes have none."""
+    """Completion (RD-7, RD-10): an event only when observed within L; competing outcomes have none. A
+    ``stuck`` run (stuck-stop-v1) never completed: censored at L, as a ``time_limit`` run."""
     if outcome == "completed" and elapsed is None:
         return Censored(
             None, False, None
         )  # completion without movement onset, flagged by the caller
     if outcome == "completed" and (limit is None or elapsed is not None and elapsed <= limit):
         return Censored(elapsed, True, None)
-    if outcome in ("completed", "time_limit"):
+    if outcome in MEASURED_OUTCOMES:
         return Censored(None, False, limit)
     return NOT_APPLICABLE
 
 
-COMPLETION_SOURCES = frozenset({"explorer", "coverage_stop"})
+COMPLETION_SOURCES = frozenset({"explorer", "coverage_stop", "stuck_stop"})
+
+
+def rule_name(value: Any) -> str | None:
+    """A stop rule's name from the manifest policy; None when absent or not a nonempty text."""
+    return value if isinstance(value, str) and value else None
 
 
 def completion_source(outcome: str, manifest: dict[str, Any]) -> str | None:
@@ -427,8 +446,9 @@ def milestone(
     limit: float | None,
     elapsed: float | None,
 ) -> Censored:
-    """A coverage milestone from its recorded entry and ``reached`` flag (RD-7)."""
-    if item is None or not eligible or outcome not in ("completed", "time_limit"):
+    """A coverage milestone from its recorded entry and ``reached`` flag (RD-7); a ``stuck`` run as a
+    ``time_limit`` run (reached before the stop: an event; unreached: censored at L)."""
+    if item is None or not eligible or outcome not in MEASURED_OUTCOMES:
         return NOT_APPLICABLE
     reached = finite(item.get("simulation_elapsed")) if item.get("reached") else None
     if reached is not None and (limit is None or reached <= limit):
@@ -444,7 +464,8 @@ def coverage_at_limit(
     pre_motion_pct: float | None,
     sample: tuple[float, float] | None,
 ) -> tuple[float | None, float | None, str | None]:
-    """C(L) with its sample time and source (RO-2); defined only for the reported outcomes."""
+    """C(L) with its sample time and source (RO-2); defined only for the reported outcomes. A run that
+    completed or stopped ``stuck`` (stuck-stop-v1) within L holds its final value to L (RD-6)."""
     if limit is None:
         return None, None, None
     if outcome == "no_movement":
@@ -454,13 +475,13 @@ def coverage_at_limit(
             else (None, None, None)
         )
     if (
-        outcome == "completed"
+        outcome in ("completed", "stuck")
         and elapsed is not None
         and elapsed <= limit
         and final_pct is not None
     ):
         return final_pct, elapsed, "carried_forward"
-    if outcome in ("completed", "time_limit") and sample is not None:
+    if outcome in MEASURED_OUTCOMES and sample is not None:
         return sample[1], sample[0], "sample"
     return None, None, None
 
@@ -972,6 +993,8 @@ def measure(payload: dict[str, Any]) -> dict[str, Any]:
         completion_event=finished.event,
         completion_censor_s=finished.censor_s,
         completion_source=completion_source(outcome, manifest),
+        coverage_stop_rule=rule_name(policy.get("coverage_stop_rule")),
+        stuck_rule=rule_name(policy.get("stuck_rule")),
     )
     # Matched by numeric value: the runner writes percent as a float (99.9; 25.0 … 95.0).
     milestones = {

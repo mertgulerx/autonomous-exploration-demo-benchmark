@@ -26,11 +26,11 @@ simulated seconds since movement onset t0 (the milestone clock), L the stratum's
   the time of the first explored-cell snapshot at or before L in which at least 90 % of R_j is explored. The
   t = 0 state is the last pre-motion snapshot only (a region at 90 % there has T90_j = 0); later snapshots are
   stamped with their own movement clock (every 5 s, phase-locked to activation, so up to one period after the
-  crossing). Not reached by L: censored at L, also for a run that completed earlier (event-free through L,
-  METHODOLOGY §4.5); the last snapshot used may lie up to one period before L. ``no_movement``: never reached,
-  censored at L, with the last pre-motion snapshot's share (RD-8). The chain is incomplete, giving no value for
-  any region (``snapshots_incomplete``), when the stream is missing or empty, a row was not decoded (a broken
-  chain or a row marked invalid, ``streams.explored_chain``), two consecutive snapshots up to the terminal one
+  crossing). Not reached by L: censored at L, also for a run that completed or stuck earlier (event-free
+  through L, METHODOLOGY §4.5); the last snapshot used may lie up to one period before L. ``no_movement``: never
+  reached, censored at L, with the last pre-motion snapshot's share (RD-8). The chain is incomplete, giving no
+  value for any region (``snapshots_incomplete``), when the stream is missing or empty, a row was not decoded (a
+  broken chain or a row marked invalid, ``streams.explored_chain``), two consecutive snapshots up to the terminal one
   lie more than 5.5 s apart (a dropped row: the worker restarts with a keyframe, so the chain itself stays whole),
   or, for a run that moved, the last decoded snapshot (a pre-motion one counts as t = 0) lies more than 5.5 s
   before the window's end min(T_end, L) (``data.run_end``): the terminal row that closes the window was lost;

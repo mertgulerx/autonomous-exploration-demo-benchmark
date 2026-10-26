@@ -40,7 +40,7 @@ from typing import TYPE_CHECKING, Any
 import uuid
 
 import duckdb
-from exploration_benchmark_runner.coverage import erode
+from exploration_benchmark_runner.coverage import STUCK_COMPLETION_PERCENT, STUCK_RULE, erode
 from exploration_benchmark_runner.worlds import WorldRegistry
 import numpy as np
 from PIL import Image
@@ -51,7 +51,14 @@ import pyarrow.parquet as pq
 import yaml
 
 from .analysis_block import WorldFacts, plan_parts, validate
-from .contracts import NO_MOVEMENT_LIMIT, ContractError, canonical, content_hash, milestone_key
+from .contracts import (
+    NO_MOVEMENT_LIMIT,
+    REPORTED_OUTCOMES,
+    ContractError,
+    canonical,
+    content_hash,
+    milestone_key,
+)
 from .datasets import files, iter_rows, materialize_manifest, stream_relation
 from .explorer_log import read_text
 from .run_record import (
@@ -80,7 +87,8 @@ if TYPE_CHECKING:
 
 # 2 (world integration, plans/worlds/I2 §3.10, R-1): the ``worlds`` table, the registry hash and each campaign's
 # time-limit rule and inputs in study.yaml, and descriptors.json and regions.png per reference. Additive.
-EXPORT_VERSION = 2
+# 3 (stuck-stop-v1, run-record-v6): the accounting count final_stuck and the endpoint end reason stuck.
+EXPORT_VERSION = 3
 LOGS = ("explorer", "insight", "navigation", "robot", "simulation", "worker")
 ARROW = {
     "text": pa.string(),
@@ -118,7 +126,8 @@ DESCRIPTIONS: dict[str, dict[str, tuple[str, str, str]]] = {
         "end_reason": (
             "",
             "never",
-            "RD-27 end reasons, plus coverage_ineligible, not_recorded and completion_without_motion",
+            "RD-27 end reasons, plus coverage_ineligible, not_recorded, completion_without_motion and "
+            "stuck (censored at L as time_limit; export-v3)",
         ),
         "limit_s": (
             "sim s",
@@ -150,7 +159,7 @@ DESCRIPTIONS: dict[str, dict[str, tuple[str, str, str]]] = {
         "odom_distance_m": ("m", "no odometry yet", "cumulative raw-odometry distance"),
     },
     # One row per robot, world, spawn and profile (RD-33): the group's identity, then counts
-    # (reported-outcomes-v2 report classes, run_record.report_class).
+    # (reported-outcomes-v3 report classes, run_record.report_class).
     "accounting": {
         "robot_id": ("", "never", "the group's robot"),
         "world_id": ("", "never", "the group's world"),
@@ -168,6 +177,12 @@ DESCRIPTIONS: dict[str, dict[str, tuple[str, str, str]]] = {
         "final_completed": ("count", "never", "reported final runs that completed"),
         "final_time_limit": ("count", "never", "reported final runs stopped at the time limit"),
         "final_no_movement": ("count", "never", "reported final runs that never moved"),
+        "final_stuck": (
+            "count",
+            "never",
+            f"reported final runs stopped stuck below {STUCK_COMPLETION_PERCENT:g} % coverage "
+            f"({STUCK_RULE}; export-v3)",
+        ),
         "reported": ("count", "never", "final runs of report class reported"),
         "coverage_ineligible": ("count", "never", "reported final runs not eligible for coverage"),
         "missing_startup": ("count", "never", "final runs of report class missing_startup"),
@@ -254,6 +269,7 @@ ACCOUNTING_COUNTS = (
     "final_completed",
     "final_time_limit",
     "final_no_movement",
+    "final_stuck",
     "reported",
     "coverage_ineligible",
     "missing_startup",
@@ -689,6 +705,8 @@ def _end_reason(record: dict[str, Any], report: str, endpoint: str) -> str:
     if event:
         return "event"
     if event is False:
+        if outcome == "stuck":
+            return "stuck"  # censored at L as a time_limit run (stuck-stop-v1)
         return (
             "completed_below_m"
             if outcome == "completed" and endpoint != "completion" and record["completion_event"]
@@ -829,7 +847,7 @@ def _accounting_rows(
         counts[group][report] += 1
         if report != "reported":
             continue
-        if record["outcome"] in ("completed", "time_limit", "no_movement"):
+        if record["outcome"] in REPORTED_OUTCOMES:
             counts[group][f"final_{record['outcome']}"] += 1
         if record["coverage_eligible"] is False:
             counts[group]["coverage_ineligible"] += 1

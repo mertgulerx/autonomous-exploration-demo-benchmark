@@ -82,9 +82,9 @@ RUN /bin/bash -lc "source /opt/ros/${ROS_DISTRO}/setup.bash && \
     rm -rf /var/lib/apt/lists/*"
 
 # SLAM Toolbox 2.8.5 with the grid-extent patch, built in the workspace so it overlays the apt package, and
-# the external explorers explore_lite, roadmap_explorer, rrt_explore and tdle at their pinned commits
-# (plans/EXTERNAL_EXPLORERS, EXTERNAL_EXPLORERS_RRT_TDLE; their binary dependencies, pcl_ros among them, come from
-# the binary lock).
+# the external explorers explore_lite, roadmap_explorer, rrt_explore, tdle and mrtsp_exploration_ros2 at their
+# pinned commits (plans/EXTERNAL_EXPLORERS, EXTERNAL_EXPLORERS_RRT_TDLE, EXTERNAL_EXPLORERS_MRTSP; their binary
+# dependencies, pcl_ros among them, come from the binary lock).
 RUN bash docker/fetch_slam_toolbox.sh ${WORKSPACE_DIR}/vendor_src && \
     bash docker/fetch_external_explorers.sh ${WORKSPACE_DIR}/vendor_src
 

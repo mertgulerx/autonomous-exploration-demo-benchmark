@@ -33,7 +33,7 @@ table T12, and the region boundaries the atlas F12 draws (I8 §3.2).
 Both are diagnostics (decision 56): never tested or ranked, with many regions × strata × profiles and no
 multiplicity control; T90_j means mapped, not visited, at the 5 s snapshot resolution; E_j and K_j cover windows
 that differ by outcome. Censoring follows the milestone rule (``regions``): a run not reaching 90 % of a region by L
-is censored at L, also when it completed earlier. An export without region rasters (export version 1) writes
+is censored at L, also when it completed or stuck earlier. An export without region rasters (export version 1) writes
 neither output.
 """
 
@@ -370,14 +370,14 @@ def limits_text() -> list[str]:
         "T90_j: the first explored-cell snapshot at or before L in which at least 90 % of the region's reference "
         "target cells are explored, stamped with its own time since first movement; snapshots every 5 s, so the "
         "resolution is 5 s and values are printed in whole seconds. It means mapped, not visited: a region can "
-        "reach 90 % from the next room. Not reached by L: censored at L, also for a run that completed earlier "
-        "(event-free through L, METHODOLOGY §4.5); a run without movement never reaches it. A run whose snapshot "
+        "reach 90 % from the next room. Not reached by L: censored at L, also for a run that completed or stuck "
+        "earlier (event-free through L, METHODOLOGY §4.5); a run without movement never reaches it. A run whose snapshot "
         "chain is incomplete (missing, broken, a gap above 5.5 s or none in the last 5.5 s of its window) has no value for any region "
         "(snapshots_incomplete), counted and never shown as late.",
         "Entries E_j: stays of at least 1.0 s reaching 0.25 m inside the region, from the 20 Hz ground truth "
         "between first movement and min(T_end, L); recoveries K_j: the recovery rows placed at the ground-truth "
-        "pose within 50 ms (dataset schema 11). Both cover windows that differ by outcome (a completed run is "
-        "counted over a shorter window), so outcomes are given beside them and differences are not behaviour "
+        "pose within 50 ms (dataset schema 11). Both cover windows that differ by outcome (a completed or stuck "
+        "run is counted over a shorter window), so outcomes are given beside them and differences are not behaviour "
         "effects. Simulation only.",
     ]
 
@@ -635,7 +635,7 @@ def _outcomes(measures: Sequence[RunRegions]) -> str:
 
 
 # T12's short outcome codes (its notes spell them out)
-OUTCOME_CODES = {"completed": "c", "time_limit": "tl", "no_movement": "nm"}
+OUTCOME_CODES = {"completed": "c", "time_limit": "tl", "stuck": "st", "no_movement": "nm"}
 
 
 def _outcome_codes(measures: Sequence[RunRegions]) -> str:
@@ -654,8 +654,8 @@ def _notes(
     label = ctx.label(stratum)
     notes = [
         f"{label}, L = {stratum.limit_s:g} s of simulated time since first movement; all reported runs per "
-        f"profile on the coverage reference {data.reference} (time limit and no movement included). Every map "
-        f"at {layout.scale:.4g} mm per metre (5 m bar), cropped to the reference grid plus "
+        f"profile on the coverage reference {data.reference} (time limit, stuck and no movement included). Every "
+        f"map at {layout.scale:.4g} mm per metre (5 m bar), cropped to the reference grid plus "
         f"{REFERENCE_PAD_M:g} m; map greys as FIGURE_STYLE §6, obstacles outlined, region boundaries dashed, "
         "counted regions numbered (the raster's labels, as in T12).",
         f"Fill: with more than {FEW_RUNS} runs with a value, the Kaplan–Meier median of T90_j (midpoint rule, "
@@ -976,8 +976,8 @@ def t12(src: Sources) -> Table:
             table.attempt_ids |= {m.attempt_id for m in runs}
     table.notes = [
         "Per stratum, profile and counted region: Runs = reported runs on the stratum's coverage reference; "
-        "Outcomes = those runs by outcome (c completed, tl time limit, nm no movement; the windows of E_j and "
-        "K_j differ by outcome); "
+        "Outcomes = those runs by outcome (c completed, tl time limit, st stuck, nm no movement; the windows of "
+        "E_j and K_j differ by outcome); "
         "Reached = k/n of the runs with a T90_j value; T90_j = the individual values in whole seconds up to "
         f"{FEW_RUNS} runs with a value, else the Kaplan–Meier median [Q1, Q3] (midpoint rule, RD-10), > L or "
         "not reached when not reached by L; Completed, not reached = completed runs censored at L in the "

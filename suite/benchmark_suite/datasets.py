@@ -31,7 +31,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import zstandard as zstd
 
-from .contracts import DATASET_VERSION, ContractError, integer, text
+from .contracts import DATASET_VERSION, MEASURED_OUTCOMES, ContractError, integer, text
 from .schemas import ADDED_FIELDS, LEGACY_FIELDS, SCHEMAS, SCHEMAS_BY_VERSION
 from .storage import atomic_json, file_hash, inside as inside, load_object, sync_directory
 
@@ -148,10 +148,7 @@ def validate_attempt(directory: Path) -> dict[str, Any]:
     ):
         raise OSError("Attempt checkpoint index hash mismatch")
     if not index.exists():
-        if manifest.get("source") == "gazebo" and manifest.get("outcome") in (
-            "completed",
-            "time_limit",
-        ):
+        if manifest.get("source") == "gazebo" and manifest.get("outcome") in MEASURED_OUTCOMES:
             raise OSError("Successful native attempt is missing its measurement checkpoint index")
         return manifest
     for entry in json.loads(index.read_bytes())["segments"]:

@@ -37,12 +37,48 @@ TARGET_MARGIN = 0.10
 # T25 added 17 October 2026; T99 on 25 October 2026, replaced by T99.9 on 26 October 2026 (the coverage stop's
 # milestone).
 MILESTONES = (25.0, 50.0, 75.0, 90.0, 95.0, 99.9)
-# Every run stops at the first valid post-motion sample reaching this coverage (maintainer; v1 stopped at 99.0 %
-# from 25 October 2026, v2 at 99.9 % from 26 October 2026); samples after the stop signal may exceed it and are
-# kept. The stop is the outcome "completed".
+# Every run stops COVERAGE_STOP_DELAY_S simulated seconds after the first valid post-motion sample reaching this
+# coverage, unless the explorer's completion, the time limit or a failure ends it first (maintainer; v1 stopped at
+# the 99.0 % sample from 25 October 2026, v2 at the 99.9 % sample from 26 October 2026, v3 adds the delay so SLAM
+# can add the last scans). Samples after the trigger may exceed it and are kept. The stop is the outcome
+# "completed".
 COVERAGE_STOP_PERCENT = 99.9
-COVERAGE_STOP_RULE = "coverage-stop-v2"
-COVERAGE_STOP_DETAIL = f"Coverage reached {COVERAGE_STOP_PERCENT:.1f} % ({COVERAGE_STOP_RULE})"
+COVERAGE_STOP_DELAY_S = 5.0
+COVERAGE_STOP_RULE = "coverage-stop-v3"
+COVERAGE_STOP_DETAIL = (
+    f"Coverage reached {COVERAGE_STOP_PERCENT:.1f} % {COVERAGE_STOP_DELAY_S:g} s earlier"
+    f" ({COVERAGE_STOP_RULE})"
+)
+# Outcomes whose run was measured to its end (eligibility, the manual valid_comparison, the CLI's success); the
+# suite keeps the same set as contracts.MEASURED_OUTCOMES.
+MEASURED_OUTCOMES = ("completed", "time_limit", "stuck")
+# Stuck-robot stop (maintainer, 26 October 2026; docs/plans/STUCK_STOP.md), after movement onset, two conditions
+# on the true pose: "still", within STUCK_RADIUS_M of where the robot was STUCK_WINDOW_S simulated seconds
+# earlier for the whole window; "no_gain", within STUCK_NO_GAIN_RADIUS_M of where it was STUCK_NO_GAIN_WINDOW_S
+# earlier for the whole window while valid coverage gained less than STUCK_GAIN_PP percentage points over it.
+# Either ends the run as "completed" (completion_source stuck_stop) when the latest valid coverage is at least
+# STUCK_COMPLETION_PERCENT, otherwise with the outcome "stuck".
+STUCK_RULE = "stuck-stop-v1"
+STUCK_WINDOW_S = 35.0
+STUCK_RADIUS_M = 0.75
+STUCK_NO_GAIN_WINDOW_S = 60.0
+STUCK_NO_GAIN_RADIUS_M = 1.0
+STUCK_GAIN_PP = 0.1
+STUCK_COMPLETION_PERCENT = 97.0
+# A pose older than this (simulated seconds, against /clock) is not sampled; a longer gap between samples restarts
+# the windows, as does a clock that goes back. Poses are kept at most STUCK_SAMPLE_PERIOD_S apart in simulated time.
+STUCK_POSE_MAX_AGE_S = 1.0
+STUCK_SAMPLE_PERIOD_S = 0.1
+# The no-gain condition needs a valid coverage sample at most this old (simulated seconds; RD-6's 2 s gap rule).
+STUCK_COVERAGE_MAX_AGE_S = 2.0
+STUCK_DETAIL = f"Robot stuck within {STUCK_RADIUS_M:g} m for {STUCK_WINDOW_S:g} s ({STUCK_RULE})"
+STUCK_NO_GAIN_DETAIL = (
+    f"Robot within {STUCK_NO_GAIN_RADIUS_M:g} m for {STUCK_NO_GAIN_WINDOW_S:g} s with coverage gaining less than"
+    f" {STUCK_GAIN_PP:g} pp ({STUCK_RULE})"
+)
+STUCK_COMPLETED_DETAIL = (
+    f"Robot stuck at or above {STUCK_COMPLETION_PERCENT:.1f} % coverage ({STUCK_RULE})"
+)
 SAMPLE_INTERVAL = 1.0
 STALE_SECONDS = 5.0
 

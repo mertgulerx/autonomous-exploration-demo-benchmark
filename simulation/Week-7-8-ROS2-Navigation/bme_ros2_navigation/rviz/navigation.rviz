@@ -841,6 +841,51 @@ Visualization Manager:
         Value: true
       Enabled: true
       Name: TDLE
+    - Class: rviz_common/Group
+      Displays:
+      - Alpha: 0.6000000238418579
+        Axes Length: 1
+        Axes Radius: 0.10000000149011612
+        Class: rviz_default_plugins/Pose
+        Color: 255; 25; 0
+        Enabled: true
+        Head Length: 0.30000001192092896
+        Head Radius: 0.20000000298023224
+        Name: selected_frontier
+        Shaft Length: 0.5
+        Shaft Radius: 0.10000000149011612
+        Shape: Arrow
+        Topic:
+          Depth: 5
+          Durability Policy: Volatile
+          Filter size: 10
+          History Policy: Keep Last
+          Reliability Policy: Reliable
+          Value: /explore/selected_frontier
+        Value: true
+      - Alpha: 0.699999988079071
+        Class: rviz_default_plugins/Map
+        Color Scheme: map
+        Draw Behind: false
+        Enabled: false
+        Name: optimized_map
+        Topic:
+          Depth: 5
+          Durability Policy: Volatile
+          Filter size: 10
+          History Policy: Keep Last
+          Reliability Policy: Reliable
+          Value: /explore/optimized_map
+        Update Topic:
+          Depth: 5
+          Durability Policy: Volatile
+          History Policy: Keep Last
+          Reliability Policy: Reliable
+          Value: /explore/optimized_map_updates
+        Use Timestamp: false
+        Value: false
+      Enabled: true
+      Name: base MRTSP
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48

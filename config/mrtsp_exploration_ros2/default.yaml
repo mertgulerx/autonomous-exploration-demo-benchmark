@@ -1,0 +1,36 @@
+# Benchmark Default of base MRTSP (mrtsp_exploration_ros2, the Liu et al. 2025 method): the shipped
+# config/params.yaml of github.com/mertgulerx/mrtsp_exploration_ros2 at d9bc18085f49f6aa4396b4009d22ad5255096bf9
+# (Apache-2.0) as the benchmark build patch leaves it (docs/plans/EXTERNAL_EXPLORERS_MRTSP.md, decisions E2, M1,
+# M2: the shipped speeds 0.5 m/s and 1.0 rad/s for every robot). The patch publishes its completion on
+# /exploration_complete (M1) and sets occ_threshold to 60 in the code and this file (shipped 50; maintainer,
+# 26 October 2026). use_sim_time is set by the benchmark.
+mrtsp_explorer:
+  ros__parameters:
+    map_topic: /map
+    costmap_topic: /global_costmap/costmap
+    local_costmap_topic: /local_costmap/costmap
+    navigate_to_pose_action_name: navigate_to_pose
+    global_frame: map
+    robot_base_frame: base_footprint
+    sigma_s: 2.0
+    sigma_r: 30.0
+    dilation_kernel_radius_cells: 1
+    sensor_effective_range_m: 1.5
+    weight_distance_wd: 1.0
+    weight_gain_ws: 1.0
+    max_linear_speed_vmax: 0.5
+    max_angular_speed_wmax: 1.0
+    occ_threshold: 60
+    min_frontier_size_cells: 5
+    publish_debug_topics: true
+    planning_rate_hz: 1.0
+    frontier_min_goal_distance_m: 0.0
+    goal_preemption_on_frontier_opened: false
+    goal_preemption_on_blocked_goal: false
+    goal_preemption_min_interval_s: 2.0
+    goal_preemption_skip_if_within_m: 0.75
+    return_to_start_on_complete: false
+    frontier_marker_topic: /explore/frontiers
+    selected_frontier_topic: /explore/selected_frontier
+    optimized_map_topic: /explore/optimized_map
+    marker_scale: 0.15

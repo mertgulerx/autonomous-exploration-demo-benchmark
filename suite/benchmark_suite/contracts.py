@@ -40,9 +40,12 @@ HIDDEN_GROUPS = frozenset({"Suppression", "QoS", "Visualization", "Benchmark Int
 # Most campaigns or profiles one deletion request may name; the GUI checks the same bounds.
 CAMPAIGN_DELETION_LIMIT = 100
 PROFILE_DELETION_LIMIT = 250
-# The final outcomes the outcome bar counts as reported (reported-outcomes-v1's rule, docs/MEASUREMENTS.md
-# "Reported population"); run records and study exports use reported-outcomes-v2 (run_record.report_class).
-REPORTED_OUTCOMES = frozenset({"completed", "time_limit", "no_movement"})
+# The final outcomes counted as reported (reported-outcomes-v3, docs/MEASUREMENTS.md "Reported population": the
+# v1 classes plus stuck, stuck-stop-v1); run records apply it in run_record.report_class.
+REPORTED_OUTCOMES = frozenset({"completed", "time_limit", "no_movement", "stuck"})
+# Outcomes whose run was measured to its end (eligibility, completion and milestone censoring, C(L)); the same set
+# as exploration_benchmark_runner.coverage.MEASURED_OUTCOMES (this module stays free of runner imports).
+MEASURED_OUTCOMES = frozenset({"completed", "time_limit", "stuck"})
 STOPPED_OUTCOMES = frozenset({"manual_stop"})
 # RD-6's gap rule: a longer stretch without a valid coverage sample breaks a line and gives no value across it
 # (the analysis package keeps its own copy, analysis/benchmark_analysis/data.py, with a 1e-9 float tolerance).

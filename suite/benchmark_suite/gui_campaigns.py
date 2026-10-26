@@ -585,6 +585,13 @@ ACCOUNTING = (
         "Final runs in which the activated explorer never moved the robot; reported.",
     ),
     (
+        "stuck",
+        "Stuck",
+        "Final runs whose robot stayed within 0.75 m for 35 simulated seconds, or within 1 m for 60 "
+        "simulated seconds while coverage gained less than 0.1 pp, below 97 % coverage (stuck-stop-v1); "
+        "reported.",
+    ),
+    (
         "stopped",
         "Stopped",
         "Runs stopped from the Monitor; data kept, left out of the study's statistics and counted.",
@@ -694,6 +701,7 @@ def campaign_facts(
     counts = {
         "completed": outcomes.get("completed", 0),
         "time_limit": outcomes.get("time_limit", 0),
+        "stuck": outcomes.get("stuck", 0),
         "failure": sum(n for key, n in outcomes.items() if report_exclusion(key) == "failure"),
         "no_movement": outcomes.get("no_movement", 0),
         "stopped": sum(n for key, n in outcomes.items() if key in STOPPED_OUTCOMES),
@@ -720,6 +728,7 @@ def campaign_facts(
             "not_done": states.get("NOT_DONE", 0),
             "discards": attempts["discards"] or 0,
             "no_movement": counts["no_movement"],
+            "stuck": counts["stuck"],
             "stopped": counts["stopped"],
         },
     )
@@ -866,7 +875,7 @@ class CampaignCard(Card):
         place(self.bar, TRACK_LEFT, height - BAR_TOP, width - CARD_LEFT - TRACK_LEFT, 8)
 
     def stats(self) -> list[Stat]:
-        """The numbers (D9: no movement and stopped only when there are any)."""
+        """The numbers (D9: stuck, no movement and stopped only when there are any)."""
         counts, count = self.facts.counts, self.facts.count
         known = count is not None
         stats = [
@@ -874,9 +883,13 @@ class CampaignCard(Card):
             Stat("Time limits", counts.get("time_limit") if known else None, "data.timeLimit"),
             Stat("Failures", counts.get("failure") if known else None, "data.failure"),
         ]
-        for key, label in (("no_movement", "No movement"), ("stopped", "Stopped")):
+        for key, label, token in (
+            ("stuck", "Stuck", "state.warn"),
+            ("no_movement", "No movement", "state.neutral"),
+            ("stopped", "Stopped", "state.neutral"),
+        ):
             if counts.get(key):
-                stats.append(Stat(label, counts[key], "state.neutral"))
+                stats.append(Stat(label, counts[key], token))
         remaining = None if count is None or self.facts.resolved is None else count
         if remaining is not None and self.facts.resolved is not None:
             remaining -= self.facts.resolved

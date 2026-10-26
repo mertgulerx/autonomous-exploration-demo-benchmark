@@ -51,9 +51,11 @@ from .data import (
     MISSING,
     REPORTED,
     REPORTED_OUTCOMES,
+    STUCK,
     Row,
     Stratum,
     block_starts,
+    outcome_rule,
     restricted_time,
 )
 from .figures import (
@@ -117,7 +119,10 @@ FLOW_ROWS = {"planned": 5.0, "attempts": 3.9, "final": 2.8, "reported": 1.7}
 FLOW_SIDES = {"not_run": 4.45, "not_final": 3.35, "not_reported": 2.25}
 FLOW_TITLES = {"not_run": "Not run", "not_final": "Not final", "not_reported": "Not reported"}
 MAIN_X, MAIN_W, SIDE_X, SIDE_W, BOX_H = 0.2, 0.34, 0.68, 0.58, 0.5
-OUTCOME_Y, OUTCOME_W, OUTCOME_H, OUTCOME_X0, OUTCOME_STEP = 0.62, 0.3, 0.5, 0.17, 0.33
+OUTCOME_Y, OUTCOME_H = 0.62, 0.5
+# (x of the first box, step, box width, font size) of the reported-outcome boxes by their number: three before
+# run record 6, four with ``stuck`` (stuck-stop-v1)
+OUTCOME_SLOTS = {3: (0.17, 0.33, 0.3, 7.0), 4: (0.125, 0.25, 0.23, 6.0)}
 TEXT_LINE = 0.17  # one 7 pt line
 HEADER_MARK_Y, HEADER_NAME_Y = 6.0, 5.72
 
@@ -266,10 +271,12 @@ def _flow_column(
         height = TEXT_LINE * (text.count("\n") + 1) + 0.1
         _flow_box(ax, side_x, FLOW_SIDES[stage], SIDE_W, height, text, size=7)
         _arrow(ax, (main_x, FLOW_SIDES[stage]), (side_x - SIDE_W / 2, FLOW_SIDES[stage]))
-    for slot, outcome in enumerate(REPORTED_OUTCOMES):
-        x = column + OUTCOME_X0 + OUTCOME_STEP * slot
+    shown = [o for o in REPORTED_OUTCOMES if ctx.study.has_stuck or o != STUCK]
+    x0, step, w, size = OUTCOME_SLOTS[len(shown)]
+    for slot, outcome in enumerate(shown):
+        x = column + x0 + step * slot
         text = f"{OUTCOMES[outcome]['label']}\n{counts.get('outcome_' + outcome, 0)}"
-        _flow_box(ax, x, OUTCOME_Y, OUTCOME_W, OUTCOME_H, text, outcome=outcome, size=7)
+        _flow_box(ax, x, OUTCOME_Y, w, OUTCOME_H, text, outcome=outcome, size=size)
         _arrow(
             ax,
             (main_x, FLOW_ROWS["reported"] - BOX_H / 2),
@@ -319,7 +326,7 @@ def f9(ctx: FigureContext) -> FigureOut:
             "sources (runs, experiments). Not run: planned experiments without a final run (T1 Not done). Not "
             "final: attempts replaced (a later attempt of the experiment exists), discarded, or other (still "
             "waiting or running in an unfinished campaign). Not reported: final runs outside "
-            "reported-outcomes-v2, missing observations and exclusions; an unresolved experiment (a timing "
+            f"{outcome_rule(ctx.study)}, missing observations and exclusions; an unresolved experiment (a timing "
             "rejection without a replacement) is missing (platform) (FX-14).",
         ],
         {"flow": {p: dict(sorted(totals[p].items())) for p in profiles}},

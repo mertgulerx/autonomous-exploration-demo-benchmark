@@ -76,7 +76,7 @@ RUN /bin/bash -c "source /opt/ros/jazzy/setup.bash && source install/setup.bash 
     CMAKE_BUILD_PARALLEL_LEVEL=2 \
     colcon build --symlink-install --executor sequential \
     --packages-select exploration_benchmark_interfaces frontier_exploration_ros2 bme_ros2_navigation bme_ros2_navigation_py exploration_benchmark_robots exploration_benchmark_runner rviz_autonomous_exploration_benchmark slam_toolbox \
-    explore_lite_msgs explore_lite roadmap_explorer_msgs roadmap_explorer rrt_explore tdle \
+    explore_lite_msgs explore_lite roadmap_explorer_msgs roadmap_explorer rrt_explore tdle mrtsp_exploration_ros2 \
     --cmake-args -DBUILD_TESTING=OFF"
 # Mark the patched SLAM Toolbox build with its patch hash; the worker refuses any other build
 # (mapping-known-pose-v3, plans/worlds/I10).

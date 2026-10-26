@@ -84,6 +84,8 @@ LINESTYLES: tuple[Any, ...] = ("-", "--", "-.", ":", (0, (5, 1)), (0, (3, 1, 1, 
 OUTCOMES: dict[str, dict[str, Any]] = {
     "completed": dict(facecolor="#4D4D4D", hatch=None, label="Completed"),
     "time_limit": dict(facecolor="#8C8C8C", hatch=None, label="Time limit"),
+    # stuck-stop-v1 below 97.0 %: a reported unsuccessful outcome, the time-limit grey with a hatch
+    "stuck": dict(facecolor="#8C8C8C", hatch="//", label="Stuck"),
     "no_movement": dict(facecolor="#CCCCCC", hatch=None, label="No movement"),
     "missing_startup": dict(facecolor="#FFFFFF", hatch="////", label="Missing (startup)"),
     "missing_platform": dict(facecolor="#FFFFFF", hatch="\\\\\\\\", label="Missing (platform)"),

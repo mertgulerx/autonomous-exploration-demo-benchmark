@@ -14,8 +14,8 @@
 
 """Figures F1–F3, F5, F6 and F8 (RESULTS_OVERHAUL §7; docs/research/FIGURE_STYLE.md §4–§9).
 
-- F1: coverage per run as steps (broken at sample gaps over 2 s), a completed run's carry-forward to L dashed,
-  a run that never moved dotted at its pre-motion coverage, a pointwise median with its IQR band only where at
+- F1: coverage per run as steps (broken at sample gaps over 2 s), a completed or stuck run's carry-forward to L
+  dashed, a run that never moved dotted at its pre-motion coverage, a pointwise median with its IQR band only where at
   least ``min_n`` runs have a value under the gap rule (``coverage_grid``), the movement-only median as a
   secondary dotted line when some run never moved (RD-8), a strip of running runs, L marked; the time axis ends
   at the stratum's latest run end rounded up to a tick, or at L when a run ends there (FX-2, ``time_axis_end``).
@@ -85,6 +85,7 @@ import yaml
 from . import stats
 from .data import (
     GAP_S,
+    STUCK_TEXT,
     TIME_EPSILON,
     Row,
     Stratum,
@@ -92,6 +93,7 @@ from .data import (
     Value,
     idle_tail,
     TIME_ENDPOINTS,
+    outcome_rule,
     restricted_time,
     run_end,
 )
@@ -670,8 +672,8 @@ def time_axis(
 
 
 AXIS_NOTE = (
-    "Time axis: to the stratum's latest run end (a completed run's end; L for a run at the limit or one that "
-    "never moved) rounded up to a tick, so to L when a run ends at L; an L beyond the axis is named in the panel "
+    "Time axis: to the stratum's latest run end (a completed or stuck run's end; L for a run at the limit or "
+    "one that never moved) rounded up to a tick, so to L when a run ends at L; an L beyond the axis is named in the panel "
     "(FX-2, display only: estimates stay at L and the plan's horizons)."
 )
 
@@ -685,7 +687,7 @@ class Trace:
 
     # (times, values) of each step piece (``where="post"``), broken where valid samples are more than 2 s apart
     pieces: list[tuple[np.ndarray[Any, Any], np.ndarray[Any, Any]]]
-    # a completed run's (end, final value), carried to L (RD-6); None otherwise
+    # a completed or stuck run's (end, final value), carried to L (RD-6); None otherwise
     carried: tuple[float, float] | None
     # a run that never moved: its pre-motion coverage, held from 0 to L (RD-8); None otherwise
     held: float | None
@@ -803,8 +805,8 @@ def coverage_panel(
 def coverage_notes(ctx: FigureContext) -> list[str]:
     """How to read a coverage panel (F1, F21)."""
     return [
-        "Thin steps: runs, broken where valid samples are more than 2 s apart; dashed: a completed run's final "
-        "coverage carried to L (RD-6); dotted at a constant: a run that never moved, held at its pre-motion "
+        "Thin steps: runs, broken where valid samples are more than 2 s apart; dashed: a completed or stuck run's "
+        "final coverage carried to L (RD-6); dotted at a constant: a run that never moved, held at its pre-motion "
         "coverage (RD-8). Band: pointwise median and IQR (type 2), descriptive, only where at least "
         f"{ctx.settings.min_n} runs have a value under the gap rule; a dotted median: runs that moved only (RD-8, "
         "secondary). Strip: runs still running.",
@@ -813,7 +815,7 @@ def coverage_notes(ctx: FigureContext) -> list[str]:
 
 
 def carried_handle() -> Line2D:
-    """The legend entry of a completed run's coverage carried to L (F1, F21)."""
+    """The legend entry of a completed or stuck run's coverage carried to L (F1, F21)."""
     return Line2D([], [], color=GREY, ls="--", lw=TRACE_WIDTH, label="carried forward to L")
 
 
@@ -1395,7 +1397,14 @@ def outcome_handles(counts: Iterable[dict[str, int]]) -> list[Patch]:
     ]
 
 
-OUTCOME_NOTE = "Outcome classes follow reported-outcomes-v2 (greys and hatches, FP-4)."
+def outcome_note(study: Study) -> str:
+    """How the outcome classes are drawn (F6, F21)."""
+    stuck = (
+        f" Stuck (hatched grey): {STUCK_TEXT} below 97.0 % coverage, a reported run analysed as a time-limit run."
+        if study.has_stuck
+        else ""
+    )
+    return f"Outcome classes follow {outcome_rule(study)} (greys and hatches, FP-4).{stuck}"
 
 
 def _outcomes(ax: Any, labels: list[str], counts: list[dict[str, int]]) -> None:
@@ -1476,7 +1485,7 @@ def f6(ctx: FigureContext) -> FigureOut:
         "Outcomes, success with Wilson intervals, restricted completion times and idle tails per profile and "
         "stratum.",
         [
-            f"{OUTCOME_NOTE} Triangles: runs that did not complete by L, drawn at L; boxes over all restricted "
+            f"{outcome_note(ctx.study)} Triangles: runs that did not complete by L, drawn at L; boxes over all restricted "
             f"times. Idle tail: min(T_end, L) − last gain (stall-v1, δ = {delta:g} pp)."
         ],
     )

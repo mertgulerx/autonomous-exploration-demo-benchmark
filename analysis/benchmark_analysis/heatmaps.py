@@ -15,9 +15,9 @@
 """Figure F17: map heat maps across runs (docs/plans/FIGURE_EXTENSION.md, FX3, FX-12, FX-20; FIGURE_STYLE §3, §6;
 METHODOLOGY §3 "Display quantities").
 
-One figure per stratum (``F17_<stratum>``), one row of maps per profile over all its reported runs (time limit and
-no movement included), on the stratum's coverage reference at one scale (millimetres per metre the same in every
-map of the figure):
+One figure per stratum (``F17_<stratum>``), one row of maps per profile over all its reported runs (time limit,
+stuck and no movement included), on the stratum's coverage reference at one scale (millimetres per metre the
+same in every map of the figure):
 
 - (a) the per-cell explored share at L: the share of the runs whose explored reference cells (the worker's
   ``explored_cells``, the last snapshot at or before L; the pre-motion snapshot counts from 0) include the cell,
@@ -588,7 +588,7 @@ def _notes(
 ) -> list[str]:
     notes = [
         f"{label}, L = {stratum.limit_s:g} s of simulated time since first movement; all reported runs per "
-        "profile (time limit and no movement included). Values are descriptive display quantities "
+        "profile (time limit, stuck and no movement included). Values are descriptive display quantities "
         f"(METHODOLOGY §3): sidecar only, never cited. Every map at {layout.scale:.4g} mm per metre (5 m bar), "
         f"cropped to the reference grid plus {REFERENCE_PAD_M:g} m; map greys as FIGURE_STYLE §6, obstacles "
         "outlined, outside the reference hatched.",

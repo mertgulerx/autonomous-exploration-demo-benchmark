@@ -31,9 +31,10 @@ return_to_init:
   managed: false
 planner_frequency:
   group: Frontier selection
-  description: Rate in Hz at which frontiers are recomputed and the goal reconsidered.
+  description: Wall-timer rate in Hz at which frontiers are recomputed and the goal reconsidered (a reached goal replans at once, an aborted one waits for the next tick); 1.0 in the benchmark Default (E9, shipped 0.15).
   managed: false
-  exclusive_minimum: 0
+  # The node's period is a 16-bit millisecond count: below about 0.016 Hz it overflows.
+  minimum: 0.02
 progress_timeout:
   group: Frontier selection
   description: Seconds without progress after which the current goal is abandoned and blacklisted.

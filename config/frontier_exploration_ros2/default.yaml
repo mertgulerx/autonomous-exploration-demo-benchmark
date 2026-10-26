@@ -177,7 +177,7 @@ frontier_explorer:
     # Lower values make the explorer avoid inflated-cost regions more aggressively.
     # Higher values allow frontiers closer to obstacles and inflation bands.
     # Value between 0-100. Use higher values if exploration skips very small areas.
-    occ_threshold: 65
+    occ_threshold: 60
 
     # Minimum connected frontier size accepted by WFD, measured in cells.
     # This removes tiny fragments caused by noise or partial unknown boundaries.
