@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The run record ``run-record-v4``: its field registry and the facts measured from an attempt's files.
+"""The run record ``run-record-v5``: its field registry and the facts measured from an attempt's files.
 
-Contract: docs/MEASUREMENTS.md, "Run record run-record-v4". ``measure`` runs in a spawned job (``jobs.py``)
+Contract: docs/MEASUREMENTS.md, "Run record run-record-v5". ``measure`` runs in a spawned job (``jobs.py``)
 and reads the manifest, the streams and the explorer log; ``run_records.RunRecords`` adds the engine's
 facts and stores the record once. Read-time fields (finality, report class) are derived from the store
 by ``read_time_fields``. Null never means zero.
@@ -33,7 +33,13 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from .contracts import REPORTED_OUTCOMES, average_speed, content_hash, milestone_key
-from .datasets import files, iter_rows, materialize_manifest, recorded_version
+from .datasets import (
+    explorer_profile,
+    files,
+    iter_rows,
+    materialize_manifest,
+    recorded_version,
+)
 from .explorer_log import (
     ClockMap,
     Structured,
@@ -53,8 +59,11 @@ from .strata import COMPARISON_KEY_VERSION, comparison_key
 
 # 2 (I10): adds mapping_condition. 3 (coverage-stop-v1, 25 October 2026): adds completion_source and
 # the T99 fields. 4 (coverage-stop-v2, 26 October 2026): the T99 fields replaced by the T99.9 fields
-# (t99_9_s, t99_9_event, t99_9_censor_s). Older records stay beside the rebuilt ones (run_records.py).
-RUN_RECORD_VERSION = 4
+# (t99_9_s, t99_9_event, t99_9_censor_s). 5 (external explorers, 26 October 2026): explorer_id names the
+# run's explorer (the package of its profiles.yaml entry) and explorer_source its source;
+# explorer CPU and memory of an external explorer sum its listed processes (E7). Older records stay beside the
+# rebuilt ones (run_records.py).
+RUN_RECORD_VERSION = 5
 ELIGIBILITY_VERSION = "eligibility-v2"
 DERIVED_VERSION = 1
 # Goal statuses the explorer itself causes (a cancel request or a replacement goal).
@@ -64,7 +73,13 @@ STALL_DELTA_PP = 0.1  # stall-v1 (RESULTS_RESEARCH RD-18)
 MOTION_GAP_NS = 500_000_000  # eligibility-v2: largest interval between valid trajectory rows
 RESOURCE_CHAIN_NS = 2_500_000_000  # RD-20: valid resource samples at most 2.5 s apart
 # Where every field is defined; the study export's codebook cites it (R4).
-DEFINITION = "docs/MEASUREMENTS.md, Results overhaul contracts, Run record run-record-v4"
+DEFINITION = "docs/MEASUREMENTS.md, Results overhaul contracts, Run record run-record-v5"
+# The explorer resource fields' definition: frontier_exploration_ros2 is its one process, an external
+# explorer the sum over the processes its profiles.yaml entry lists (``executables``; decision E7).
+RESOURCE_DEFINITION = (
+    DEFINITION + "; frontier_exploration_ros2: its process; external explorers: the sum over the "
+    "processes their profiles.yaml executables list (E7)"
+)
 Kind = Literal["text", "int", "float", "bool", "list"]
 
 
@@ -106,8 +121,13 @@ FIELDS: tuple[Field, ...] = (
     *_fields("int", "", "revision not recorded", "profile_revision"),
     *_fields("text", "sha256", "stub", "parameter_hash"),
     *_fields("bool", "", "stub or no Default hash recorded", "is_baseline"),
+    # The explorer's package (run-record-v5: frontier_exploration_ros2, explore_lite, roadmap_explorer,
+    # rrt_explore, tdle; the profile's profiles.yaml ID maps to it), the built commit of
+    # frontier_exploration_ros2 (image label), and
+    # the source the run's manifest records: "<submodule path>@<commit>" or "<pinned URL>@<commit>".
     *_fields("text", "", "never", "explorer_id"),
-    *_fields("text", "", "runtime image unlabelled", "explorer_version"),
+    *_fields("text", "", "runtime image unlabelled, or an external explorer", "explorer_version"),
+    *_fields("text", "", "stub, or no framework_source in the manifest", "explorer_source"),
     *_fields("int", "", "never", "campaign_position", "block_position"),
     *_fields("int", "UTC ns", "attempt never started", "wall_start_ns", "wall_end_ns"),
     *_fields("int", "", "never", "worker_slot"),
@@ -163,9 +183,11 @@ FIELDS: tuple[Field, ...] = (
         "goals_rejected",
         "recoveries",
     ),
-    *_fields("float", "CPU s", "no valid sample", "explorer_cpu_s"),
-    *_fields("float", "% of one core", "no valid sample pair", "explorer_cpu_tw_pct"),
-    *_fields("float", "MiB", "no valid sample", "explorer_rss_peak_mib"),
+    Field("explorer_cpu_s", "float", "CPU s", "no valid sample", RESOURCE_DEFINITION),
+    Field(
+        "explorer_cpu_tw_pct", "float", "% of one core", "no valid sample pair", RESOURCE_DEFINITION
+    ),
+    Field("explorer_rss_peak_mib", "float", "MiB", "no valid sample", RESOURCE_DEFINITION),
     *_fields("bool", "", "stub", "resource_valid"),
     *_fields("float", "CPU s", "no sample in that scope", "cpu_s_instrumentation", "cpu_s_insight"),
     *_fields("float", "ratio", "never moved or no window", "rtf_mean", "rtf_min_5s", "rtf_p05_5s"),
@@ -174,8 +196,13 @@ FIELDS: tuple[Field, ...] = (
     *_fields("int", "", "wall times null", "parallel_max"),
     *_fields("float", "0-1", "wall times null", "concurrent_wall_fraction"),
     *_fields("bool", "", "stub", "diagnostics_enabled"),
-    *_fields("bool", "", "schema below 9", "insight_started"),
-    *_fields("bool", "", "schema below 10 or node not started", "insight_exited_before_stop"),
+    *_fields("bool", "", "schema below 9, or an explorer without insight", "insight_started"),
+    *_fields(
+        "bool",
+        "",
+        "schema below 10, node not started, or an explorer without insight",
+        "insight_exited_before_stop",
+    ),
     *_fields("list", "", "stub", "debug_streams", "quality_flags"),
     *_fields(
         "bool",
@@ -187,10 +214,17 @@ FIELDS: tuple[Field, ...] = (
         "navigation_eligible",
         "event_clock_valid",
     ),
-    *_fields("text", "", "stub", "explorer_exit_status"),
-    *_fields("int", "", "no exit code", "explorer_exit_code"),
-    *_fields("bool", "", "no exit line", "explorer_exited_before_stop"),
-    *_fields("int", "", "parser not run (stub)", "goal_match_mismatches", "log_unmapped_lines"),
+    # The explorer-log facts read frontier_exploration_ros2's log format; an external explorer has none.
+    *_fields("text", "", "stub, or an external explorer", "explorer_exit_status"),
+    *_fields("int", "", "no exit code, or an external explorer", "explorer_exit_code"),
+    *_fields("bool", "", "no exit line, or an external explorer", "explorer_exited_before_stop"),
+    *_fields(
+        "int",
+        "",
+        "parser not run (stub), or an external explorer",
+        "goal_match_mismatches",
+        "log_unmapped_lines",
+    ),
     *_fields("text", "sha256", "recorded before suite image 17", "provenance_id"),
     # Reserved by RD-51; never measured since decision 59 (no moving-object measures).
     *_fields("int", "", "not measured", "contact_events", "ghost_cells"),
@@ -840,6 +874,42 @@ def _goal_rows(
     return rows
 
 
+OUR_PACKAGE = "frontier_exploration_ros2"
+OUR_SOURCE: dict[str, Any] = {"path": "exploration_packages/frontier_exploration_ros2"}
+
+
+def explorer_source(framework: Any, profile: dict[str, Any], runtime: dict[str, Any]) -> str | None:
+    """``explorer_source`` as "<where>@<commit>". A manual manifest's ``framework_source`` gives it (the
+    submodule path relative to the checkout, "+dirty" when its working tree had changes); a suite run's
+    explorer profile names its ``source`` (profiles.yaml): an external explorer's pinned archive URL and
+    commit, or frontier_exploration_ros2's submodule path with the commit the runtime identity records for
+    that role. None without a source or a commit."""
+    if not isinstance(framework, dict):
+        named = profile.get("source")
+        source: dict[str, Any] = named if isinstance(named, dict) else OUR_SOURCE
+        if isinstance(source.get("url"), str):
+            framework = dict(source)
+        elif isinstance(source.get("path"), str):
+            recorded = runtime.get("commits")
+            commits: dict[str, Any] = recorded if isinstance(recorded, dict) else {}
+            framework = {"path": source["path"], "commit": commits.get(source["path"])}
+    if not isinstance(framework, dict) or not isinstance(framework.get("commit"), str):
+        return None
+    source = framework
+    commit = source["commit"].strip()
+    if not commit:
+        return None
+    if isinstance(source.get("url"), str):
+        return f"{source['url']}@{commit}"
+    path = source.get("path")
+    if not isinstance(path, str):
+        return None
+    marker = "exploration_packages/"
+    where = path[path.rindex(marker) :] if marker in path else Path(path).name
+    dirty = "+dirty" if source.get("working_tree_status") else ""
+    return f"{where}@{commit}{dirty}"
+
+
 def measure(payload: dict[str, Any]) -> dict[str, Any]:
     """The record fields measured from one attempt's files, and its derived tables (job side).
 
@@ -998,7 +1068,11 @@ def measure(payload: dict[str, Any]) -> dict[str, Any]:
     )
     # The explorer log: exit facts, and dispatches paired with Nav2 goals (the parser of suite image 27 reads log formats 1
     # and 2). Rejected goals take part in the pairing, so a rejected dispatch never pairs with the next goal.
-    log = parse(read_text(directory))
+    # An external explorer's log is not in frontier_exploration_ros2's format: its log facts and the
+    # dispatch pairing are null (an empty log pairs nothing; the goal tables keep their Nav2 facts).
+    explorer = explorer_profile(manifest, workspace)
+    external = explorer.get("package", OUR_PACKAGE) != OUR_PACKAGE
+    log = parse(None if external else read_text(directory))
     clock = ClockMap(
         (
             r["receipt_utc_ns"],
@@ -1016,13 +1090,13 @@ def measure(payload: dict[str, Any]) -> dict[str, Any]:
         clock,
     )
     record.update(
-        explorer_exit_status=log.exit_status,
+        explorer_exit_status=None if external else log.exit_status,
         explorer_exit_code=log.exit_code
-        if log.exit_status in ("exited_nonzero", "signalled")
+        if not external and log.exit_status in ("exited_nonzero", "signalled")
         else None,
-        explorer_exited_before_stop=log.exited_before_stop,
-        goal_match_mismatches=mismatches,
-        log_unmapped_lines=unmapped,
+        explorer_exited_before_stop=None if external else log.exited_before_stop,
+        goal_match_mismatches=None if external else mismatches,
+        log_unmapped_lines=None if external else unmapped,
     )
     # A manifest the engine wrote for a run that never started has no robot, coverage or policy: such a
     # record has no stratum (it is placed by its design factors).
@@ -1032,6 +1106,11 @@ def measure(payload: dict[str, Any]) -> dict[str, Any]:
         load_object(workspace, runtime["object"]) if runtime.get("object") else runtime
     )
     record.update(
+        explorer_source=explorer_source(
+            manifest.get("framework_source"),
+            explorer,
+            runtime_document if isinstance(runtime_document, dict) else {},
+        ),
         comparison_key=comparison_key(manifest, runtime_document) if complete else None,
         comparison_key_version=COMPARISON_KEY_VERSION,
         parameter_hash=content_hash(manifest.get("effective_parameters", {})),

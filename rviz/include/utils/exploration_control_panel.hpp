@@ -32,6 +32,7 @@ limitations under the License.
 #include <exploration_benchmark_interfaces/srv/stop_comparison.hpp>
 #include <exploration_benchmark_interfaces/srv/stop_run.hpp>
 #include <functional>
+#include <map>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <memory>
 #include <mutex>
@@ -74,6 +75,7 @@ class ExplorationControlPanel : public rviz_common::Panel
   struct Row
   {
     QLineEdit* label;
+    QComboBox* explorer;
     QPushButton* editor;
     std::vector<rcl_interfaces::msg::Parameter> parameters;
     QWidget* widget;
@@ -84,6 +86,10 @@ class ExplorationControlPanel : public rviz_common::Panel
   void startComparison();
   void startSingle();
   void editParameters(size_t index);
+  void explorerChanged(size_t index);
+  std::string rowProfile(size_t index) const;
+  const exploration_benchmark_interfaces::msg::ParameterCatalog* rowCatalog(size_t index) const;
+  void updateEditorText(size_t index);
   void scenarioReceived(const exploration_benchmark_interfaces::msg::ScenarioCatalog&);
   void robotCatalogReceived(const exploration_benchmark_interfaces::msg::RobotCatalog&);
   void robotChanged();
@@ -131,12 +137,15 @@ class ExplorationControlPanel : public rviz_common::Panel
   std::string session_root_;
   std::string single_view_run_;
   bool single_has_metrics_{false};
-  exploration_benchmark_interfaces::msg::ParameterCatalog parameter_catalog_;
+  // Per explorer profile: the coordinator's catalogs and the robot-adjusted ones the editor shows.
+  std::map<std::string, exploration_benchmark_interfaces::msg::ParameterCatalog> parameter_catalogs_;
+  exploration_benchmark_interfaces::msg::ProfileCatalog profile_catalog_;
   QComboBox* world_;
   QComboBox* robot_;
   QLabel* robot_details_;
   exploration_benchmark_interfaces::msg::RobotCatalog robot_catalog_;
-  exploration_benchmark_interfaces::msg::ParameterCatalog baseline_parameter_catalog_;
+  std::map<std::string, exploration_benchmark_interfaces::msg::ParameterCatalog>
+      baseline_parameter_catalogs_;
   rclcpp::Subscription<exploration_benchmark_interfaces::msg::RobotCatalog>::SharedPtr robot_sub_;
   QComboBox* mode_;
   QPushButton* start_single_button_;

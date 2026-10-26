@@ -65,6 +65,7 @@ PROFILE_FIELDS = {
     "id",
     "name",
     "robot_id",
+    "explorer",
     "requested",
     "overrides",
     "yaml_text",
@@ -87,6 +88,11 @@ REFERENCE_CACHE = 4
 # Spawn names that stand for a world's Default spawn (tier A) or its whole predefined set (collection
 # worlds, I9 §3.4), besides "default-<world>" and the default spawn's own ID.
 DEFAULT_SPAWN_NAMES = ("Default", "default")
+# The explorer launch profiles (docs/plans/EXTERNAL_EXPLORERS.md): a suite profile's ``explorer`` is one of
+# their IDs. A profile without the key runs DEFAULT_EXPLORER (frontier_exploration_ros2); resolved profiles of
+# it leave the key out, so profiles saved before external explorers keep their content, hash and ID.
+PROFILES_FILE = "exploration_benchmark_runner/config/profiles.yaml"
+DEFAULT_EXPLORER = "default"
 
 
 def world_code(registry: Any, world: Any) -> str | None:
@@ -134,6 +140,82 @@ def incompatible(robot_id: str, world_id: str) -> ContractError:
         "compatibility",
         f"{robot_id} cannot use {world_id}; explicitly exclude this combination",
     )
+
+
+@dataclass(frozen=True, slots=True)
+class Explorer:
+    """One explorer launch profile of ``profiles.yaml`` with its parameter schema: the Default file (relative to
+    the checkout), the metadata (beside profiles.yaml) and their hashes, which stored profiles must match."""
+
+    id: str
+    label: str
+    framework: str
+    package: str
+    insight: bool
+    robot_defaults: bool
+    source: dict[str, Any]
+    entry: dict[str, Any]
+    schema: ParameterSchema
+    baseline_hash: str
+    metadata_hash: str
+    groups: tuple[str, ...]
+
+    @classmethod
+    def load(cls, root: Path, identity: str, entry: dict[str, Any]) -> "Explorer":
+        baseline = root / text(entry.get("parameters"), f"profiles.{identity}.parameters")
+        metadata = (root / PROFILES_FILE).parent / text(
+            entry.get("metadata"), f"profiles.{identity}.metadata"
+        )
+        node = text(entry.get("node"), f"profiles.{identity}.node")
+        try:
+            schema = ParameterSchema(baseline, metadata, node)
+        except (OSError, KeyError, ValueError) as exc:
+            raise ValueError(f"Explorer {identity}: invalid parameter schema: {exc}") from exc
+        groups: list[str] = []
+        for information in schema.metadata.values():
+            group = information.get("group", "") if isinstance(information, dict) else ""
+            if isinstance(group, str) and group and group not in groups:
+                groups.append(group)
+        source = entry.get("source")
+        return cls(
+            id=identity,
+            label=text(entry.get("label", identity), f"profiles.{identity}.label"),
+            framework=text(entry.get("framework", identity), f"profiles.{identity}.framework"),
+            package=text(entry.get("package"), f"profiles.{identity}.package"),
+            insight=entry.get("insight") is True,
+            robot_defaults=entry.get("robot_defaults") is True,
+            source=dict(source) if isinstance(source, dict) else {},
+            entry=deepcopy(entry),
+            schema=schema,
+            baseline_hash=file_hash(baseline),
+            metadata_hash=file_hash(metadata),
+            groups=tuple(groups),
+        )
+
+    def default_id(self, robot_id: str) -> str:
+        """The ID of the robot's Default profile of this explorer: "default-<robot>" for frontier_exploration_ros2
+        (unchanged), "default-<explorer>-<robot>" for the others."""
+        if self.id == DEFAULT_EXPLORER:
+            return "default-" + robot_id
+        return f"default-{self.id}-{robot_id}"
+
+    def default_name(self) -> str:
+        return "Default" if self.id == DEFAULT_EXPLORER else f"{self.label} Default"
+
+
+def load_explorers(root: Path) -> dict[str, Explorer]:
+    """Every explorer launch profile of the checkout's profiles.yaml, in file order (DEFAULT_EXPLORER first)."""
+    document = mapping(
+        yaml.load((root / PROFILES_FILE).read_text(), Loader=UniqueKeyLoader), "profiles"
+    )
+    entries = mapping(document.get("profiles"), "profiles")
+    if DEFAULT_EXPLORER not in entries:
+        raise ValueError(f"{PROFILES_FILE} has no {DEFAULT_EXPLORER} explorer profile")
+    explorers = {
+        identity: Explorer.load(root, identity, mapping(entry, "profiles." + identity))
+        for identity, entry in entries.items()
+    }
+    return {DEFAULT_EXPLORER: explorers.pop(DEFAULT_EXPLORER), **explorers}
 
 
 def load_yaml(source: str) -> dict[str, Any]:
@@ -186,13 +268,12 @@ class Library:
     def __init__(self, root: Path, *, native: bool = True):
         self.root, self.native = root.resolve(), native
         self.store: Store | None = None
-        self.baseline_file = self.root / "config/frontier_exploration_ros2/default.yaml"
-        self.metadata_file = self.root / "exploration_benchmark_runner/config/parameters.yaml"
-        self.schema = ParameterSchema(self.baseline_file, self.metadata_file)
-        self.baseline_hash, self.metadata_hash = (
-            file_hash(self.baseline_file),
-            file_hash(self.metadata_file),
-        )
+        # One parameter schema per explorer (profiles.yaml); frontier_exploration_ros2's stays the library's
+        # ``schema`` and hash pair, so its stored profiles keep validating unchanged.
+        self.explorers = load_explorers(self.root)
+        ours = self.explorers[DEFAULT_EXPLORER]
+        self.schema = ours.schema
+        self.baseline_hash, self.metadata_hash = ours.baseline_hash, ours.metadata_hash
         # The world registry (worlds.yaml) of this checkout, read once at engine start.
         self.registry = WorldRegistry.load(self.root)
         resource = self.root / "exploration_benchmark_robots"
@@ -300,6 +381,10 @@ class Library:
             self.facts = world_facts(self.registry)
         return self.facts
 
+    def explorer_ids(self) -> dict[str, str]:
+        """Each explorer's run-record ``explorer_id`` (its package) by its profiles.yaml ID."""
+        return {identity: explorer.package for identity, explorer in self.explorers.items()}
+
     def world_families(self) -> dict[str, str | None]:
         """Each registry world's run-record ``world_family`` (the family of tier F, else null)."""
         return {world.id: world.family for world in self.registry.worlds}
@@ -334,9 +419,10 @@ class Library:
         known_keys(value, PROFILE_FIELDS, "profile")
         if value.get("robot_id", robot_id) != robot_id:
             raise ContractError("robot_id", "Profile belongs to another robot")
+        explorer = self.explorer(value.get("explorer", DEFAULT_EXPLORER))
         if (
-            value.get("baseline_hash", self.baseline_hash) != self.baseline_hash
-            or value.get("metadata_hash", self.metadata_hash) != self.metadata_hash
+            value.get("baseline_hash", explorer.baseline_hash) != explorer.baseline_hash
+            or value.get("metadata_hash", explorer.metadata_hash) != explorer.metadata_hash
         ):
             raise ContractError(
                 "profile",
@@ -344,7 +430,7 @@ class Library:
             )
         requested = mapping(value.get("requested", value.get("overrides", {})), "overrides")
         robot = self.robot(robot_id)
-        schema = robot_parameter_schema(self.schema, robot)
+        schema = robot_parameter_schema(explorer.schema, robot, explorer.entry)
         imported = value.get("yaml_text", "")
         if not isinstance(imported, str):
             raise ContractError("yaml_text", "Expected YAML text")
@@ -357,16 +443,19 @@ class Library:
         except ValueError as exc:
             raise ContractError("parameters", str(exc)) from exc
         result = {
-            "name": text(value.get("name", "Default"), "profile.name"),
+            "name": text(value.get("name", explorer.default_name()), "profile.name"),
             "robot_id": robot_id,
             "requested": deepcopy(requested),
             "effective": effective,
             "robot": robot,
-            "baseline_hash": self.baseline_hash,
-            "metadata_hash": self.metadata_hash,
+            "baseline_hash": explorer.baseline_hash,
+            "metadata_hash": explorer.metadata_hash,
             "yaml_text": imported,
             "description": value.get("description", ""),
         }
+        if explorer.id != DEFAULT_EXPLORER:
+            # in the content and hash; absent for frontier_exploration_ros2 (DEFAULT_EXPLORER)
+            result["explorer"] = explorer.id
         if not isinstance(result["description"], str):
             raise ContractError("description", "Description must be text")
         if len(result["description"]) > 4096:
@@ -377,9 +466,61 @@ class Library:
             result["created_ns"] = integer(value["created_ns"], "created_ns", 1, 2**63 - 1)
         result["hash"] = content_hash(result)
         result["id"] = text(
-            value.get("id", "default-" + robot_id if not requested else result["hash"]),
+            value.get("id", explorer.default_id(robot_id) if not requested else result["hash"]),
             "profile.id",
         )
+        return result
+
+    def explorer(self, identity: Any) -> Explorer:
+        """The explorer a profile names (``explorer``, a profiles.yaml ID)."""
+        if not isinstance(identity, str) or identity not in self.explorers:
+            raise ContractError(
+                "explorer",
+                f"Unknown explorer {identity!r}; choose {', '.join(self.explorers)}",
+            )
+        return self.explorers[identity]
+
+    def default_reference(self, robot_id: str, item: str) -> dict[str, Any] | None:
+        """A campaign's shorthand for a robot's Default profile of an explorer, as the profile to resolve:
+        "Default", "default" or "default-<robot>" (frontier_exploration_ros2) and "default-<explorer>-<robot>".
+        None for any other text (a saved profile's ID)."""
+        for explorer in self.explorers.values():
+            names = {explorer.default_id(robot_id)}
+            if explorer.id == DEFAULT_EXPLORER:
+                names |= {"Default", "default"}
+            if item in names:
+                reference = {"name": explorer.default_name(), "id": explorer.default_id(robot_id)}
+                if explorer.id != DEFAULT_EXPLORER:
+                    reference["explorer"] = explorer.id
+                return reference
+        return None
+
+    def explorer_catalog(self) -> list[dict[str, Any]]:
+        """The catalog's ``explorers``: per explorer its identity, capabilities, source, parameter metadata and
+        groups, hashes, and the Default values per catalog robot (robot-derived where ``robot_defaults``)."""
+        result = []
+        for explorer in self.explorers.values():
+            defaults = {
+                identity: robot_parameter_schema(explorer.schema, profile, explorer.entry).defaults
+                for identity, profile in self.robots.items()
+            }
+            result.append(
+                {
+                    "id": explorer.id,
+                    "label": explorer.label,
+                    "framework": explorer.framework,
+                    "package": explorer.package,
+                    "node": explorer.schema.node,
+                    "insight": explorer.insight,
+                    "robot_defaults": explorer.robot_defaults,
+                    "source": deepcopy(explorer.source),
+                    "parameters": deepcopy(explorer.schema.metadata),
+                    "groups": list(explorer.groups),
+                    "defaults": defaults,
+                    "baseline_hash": explorer.baseline_hash,
+                    "metadata_hash": explorer.metadata_hash,
+                }
+            )
         return result
 
     def catalog(self) -> dict[str, Any]:
@@ -449,9 +590,12 @@ class Library:
             # The catalog's default robot (robots.yaml ``default_robot``), preselected by the GUI.
             "default_robot": self.default_robot,
             "worlds": worlds,
+            # frontier_exploration_ros2's metadata and hashes (as before); every explorer's in ``explorers``
             "parameters": self.schema.metadata,
             "baseline_hash": self.baseline_hash,
             "metadata_hash": self.metadata_hash,
+            "explorers": self.explorer_catalog(),
+            "default_explorer": DEFAULT_EXPLORER,
             "source": "native" if self.native else "synthetic",
             "defaults": {"concurrency": 1},
         }
@@ -503,8 +647,9 @@ class Library:
             selected = []
             for item in profiles:
                 if isinstance(item, str):
-                    if item in ("Default", "default", "default-" + robot_id):
-                        item = {"name": "Default", "id": "default-" + robot_id}
+                    default = self.default_reference(robot_id, item)
+                    if default is not None:
+                        item = default
                     else:
                         item = self._saved(item, "profile")
                         if item["robot_id"] != robot_id:
@@ -850,8 +995,11 @@ class Library:
             summary = params.get("summary", False)
             if type(summary) is not bool:
                 raise ContractError("summary", "Expected boolean")
-            selection = "id,kind,owner,name,family_id,hash,archived,created_ns" + (
-                "" if summary else ",snapshot"
+            selection = (
+                "id,kind,owner,name,family_id,hash,archived,created_ns"
+                # a profile's explorer (null: frontier_exploration_ros2), so lists can tag it
+                + (",json_extract(snapshot,'$.explorer') AS explorer" if kind == "profile" else "")
+                + ("" if summary else ",snapshot")
             )
             rows = store.rows(
                 "SELECT "
@@ -881,7 +1029,9 @@ class Library:
         if method == "profiles.export":
             value = self._saved(text(params.get("id"), "id"), "profile")
             if params.get("format", "explorer") == "explorer":
-                return {"yaml": self.schema.yaml(value["effective"])}
+                # the profile's explorer's node scope (explore_node, roadmap_explorer_node, frontier_explorer)
+                schema = self.explorer(value.get("explorer", DEFAULT_EXPLORER)).schema
+                return {"yaml": schema.yaml(value["effective"])}
             if params["format"] != "suite":
                 raise ContractError("format", "Use explorer or suite")
             return {
@@ -898,7 +1048,9 @@ class Library:
                                 "baseline_hash",
                                 "metadata_hash",
                             )
-                        },
+                        }
+                        # an external explorer's profile names it; frontier_exploration_ros2's leave it out
+                        | ({"explorer": value["explorer"]} if "explorer" in value else {}),
                     },
                     sort_keys=False,
                 )

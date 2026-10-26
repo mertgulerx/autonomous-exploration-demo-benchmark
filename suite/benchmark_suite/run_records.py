@@ -39,12 +39,16 @@ from .run_record import (
     ordered,
     validate,
 )
+from .storage import load_object
 from .store import Store
 from .strata import COMPARISON_KEY_VERSION
 
 if TYPE_CHECKING:
     from .jobs import Job
 
+# The explorer of profiles without ``explorer`` (frontier_exploration_ros2's profiles.yaml ID) and its
+# run-record explorer_id (its package, as in run-record-v4).
+DEFAULT_EXPLORER = "default"
 EXPLORER_ID = "frontier_exploration_ros2"
 EXPLORER_LABEL = (
     "org.benchmark.runtime.repository.exploration_packages.frontier_exploration_ros2.commit"
@@ -62,6 +66,7 @@ class RunRecords:
         workspace: Path,
         provenance_id: str,
         world_families: Mapping[str, str | None] | None = None,
+        explorer_ids: Mapping[str, str] | None = None,
     ):
         self.store = store
         self.workspace = workspace
@@ -69,6 +74,8 @@ class RunRecords:
         # world_family per world from the registry (Library.world_families): the family of a generated
         # world, null for every other tier and for worlds the engine's registry does not list.
         self.world_families = dict(world_families or {})
+        # explorer_id per profiles.yaml explorer ID (Library.explorer_ids): the explorer's package.
+        self.explorer_ids = {DEFAULT_EXPLORER: EXPLORER_ID, **(explorer_ids or {})}
         self.job: Job | None = None
         self.building: str | None = None
         self.building_campaign: str | None = None
@@ -244,6 +251,7 @@ class RunRecords:
             else {}
         )
         profile = json.loads(experiment["specification"]).get("profile") or {}
+        explorer = self._explorer(profile)
         outcome = attempt["outcome"] or ""
         return dict(
             run_record_version=RUN_RECORD_VERSION,
@@ -263,8 +271,10 @@ class RunRecords:
             world_family=self.world_families.get(experiment["world_id"]),
             profile_id=experiment["profile_id"],
             profile_revision=profile.get("revision"),
-            explorer_id=EXPLORER_ID,
-            explorer_version=labels.get(EXPLORER_LABEL),
+            explorer_id=self.explorer_ids.get(explorer, explorer),
+            # the image labels name frontier_exploration_ros2's built commit only; an external explorer's
+            # pinned commit is in explorer_source
+            explorer_version=labels.get(EXPLORER_LABEL) if explorer == DEFAULT_EXPLORER else None,
             campaign_position=experiment["position"],
             block_position=block["n"] if block else 0,
             wall_start_ns=attempt["started_ns"],
@@ -281,6 +291,18 @@ class RunRecords:
             moving_object_time_within_0_5_m_s=None,
             **self._concurrency(attempt),
         ), specification
+
+    def _explorer(self, profile: dict[str, Any]) -> str:
+        """The profiles.yaml explorer ID of an experiment's profile (stored inline or as an object)."""
+        if "explorer" not in profile and isinstance(profile.get("object"), str):
+            try:
+                profile = load_object(self.workspace, profile["object"])
+            except OSError as exc:
+                raise ValueError(f"Profile object unreadable: {exc}") from exc
+        explorer = profile.get("explorer", DEFAULT_EXPLORER)
+        if not isinstance(explorer, str) or not explorer:
+            raise ValueError("The profile names no explorer ID")
+        return explorer
 
     def _concurrency(self, attempt: dict[str, Any]) -> dict[str, Any]:
         """Largest number of attempts running at once with this one, and its overlapped wall share."""

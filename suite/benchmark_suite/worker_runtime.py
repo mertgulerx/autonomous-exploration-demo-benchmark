@@ -769,7 +769,14 @@ class WorkerRuntime:
                 insight = (
                     worker.recorder.manifest.get("insight") if worker.recorder else None
                 ) or {}
-                if tick is None and insight.get("started") is False:
+                explorer = worker.config.get("profile") or {}
+                if tick is None and explorer.get("insight", True) is not True:
+                    # An external explorer: the frontier insight node reads frontier_exploration_ros2's
+                    # analysis and never starts for it (profiles.yaml ``insight``).
+                    result[name]["reason"] = "No decision insight for " + str(
+                        explorer.get("label") or explorer.get("framework") or "this explorer"
+                    )
+                elif tick is None and insight.get("started") is False:
                     # The node never started: say why instead of waiting for a tick.
                     result[name]["reason"] = str(
                         insight.get("reason") or "Insight node not started"

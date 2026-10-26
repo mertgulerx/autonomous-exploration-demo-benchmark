@@ -22,6 +22,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-jazzy-laser-filters=2.0.10-5noble.20260915.190358 \
     ros-jazzy-turtlebot3-description=2.3.6-1noble.20260911.051522 \
     ros-jazzy-rviz-imu-plugin=2.1.6-1noble.20260921.024449 \
+    ros-jazzy-pcl-ros=2.6.5-1noble.20260916.065720 \
     && rm -rf /var/lib/apt/lists/*
 # Remove obsolete vendor SDKs and prior Python installations before copying
 # the current sources; Docker COPY alone would keep deleted adapter files.
@@ -64,15 +65,18 @@ COPY simulation/worlds/fitslam_corridor /opt/benchmark_ws/simulation/worlds/fits
 COPY simulation/worlds/warehouse /opt/benchmark_ws/simulation/worlds/warehouse
 COPY launch.sh docker.sh /opt/benchmark_ws/
 COPY docker/entrypoint.sh /opt/benchmark_ws/docker/entrypoint.sh
-COPY docker/Dockerfile docker/Dockerfile.runtime docker/build_robot_dependencies.sh docker/fetch_slam_toolbox.sh /opt/benchmark_ws/docker/
+COPY docker/Dockerfile docker/Dockerfile.runtime docker/build_robot_dependencies.sh docker/fetch_slam_toolbox.sh docker/fetch_external_explorers.sh /opt/benchmark_ws/docker/
 COPY docker/patches /opt/benchmark_ws/docker/patches
-# SLAM Toolbox 2.8.5 with the grid-extent patch (Dockerfile has the same step).
-RUN bash /opt/benchmark_ws/docker/fetch_slam_toolbox.sh /opt/benchmark_ws/vendor_src
+# SLAM Toolbox 2.8.5 with the grid-extent patch and the external explorers at their pinned commits
+# (Dockerfile has the same step; pcl_ros is pinned in the apt step above).
+RUN bash /opt/benchmark_ws/docker/fetch_slam_toolbox.sh /opt/benchmark_ws/vendor_src && \
+    bash /opt/benchmark_ws/docker/fetch_external_explorers.sh /opt/benchmark_ws/vendor_src
 COPY README.md /opt/benchmark_ws/README.md
 RUN /bin/bash -c "source /opt/ros/jazzy/setup.bash && source install/setup.bash && \
     CMAKE_BUILD_PARALLEL_LEVEL=2 \
     colcon build --symlink-install --executor sequential \
     --packages-select exploration_benchmark_interfaces frontier_exploration_ros2 bme_ros2_navigation bme_ros2_navigation_py exploration_benchmark_robots exploration_benchmark_runner rviz_autonomous_exploration_benchmark slam_toolbox \
+    explore_lite_msgs explore_lite roadmap_explorer_msgs roadmap_explorer rrt_explore tdle \
     --cmake-args -DBUILD_TESTING=OFF"
 # Mark the patched SLAM Toolbox build with its patch hash; the worker refuses any other build
 # (mapping-known-pose-v3, plans/worlds/I10).

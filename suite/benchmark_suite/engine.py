@@ -173,6 +173,7 @@ class Engine:
             self.workspace,
             self.provenance_id,
             library.world_families() if library else None,
+            library.explorer_ids() if library else None,
         )
         self.exports = Exports(self.store, self.workspace)
         self.reads = BackgroundReads()
@@ -369,10 +370,17 @@ class Engine:
                 experiment = self.store.one(
                     "SELECT * FROM experiments WHERE id=?", (attempt["experiment_id"],)
                 )
+                profile = (
+                    json.loads(experiment["specification"]).get("profile") or {}
+                    if experiment
+                    else {}
+                )
                 active.append(
                     {
                         "attempt": attempt,
                         "experiment": experiment,
+                        # the run's explorer (profiles.yaml ID): the Monitor's insight views need it
+                        "explorer": profile.get("explorer", "default"),
                         "metrics": self.metrics.get(identity, {}),
                         "stop_requested": self._stop_requested(identity),
                     }

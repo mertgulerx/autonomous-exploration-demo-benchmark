@@ -91,14 +91,17 @@ def save_visible(visible: Iterable[str]) -> None:
     )
 
 
-def engine_layers(visible: frozenset[str], decisions_view: bool, insight: bool) -> list[str]:
+def engine_layers(
+    visible: frozenset[str], decisions_view: bool, insight: bool, analysis: bool = True
+) -> list[str]:
     """The ``monitor.get`` layers the visible map layers and the Decisions view need (hidden layers are not
-    requested); ``insight``: the engine serves the explorer insight layers."""
+    requested); ``insight``: the engine serves the explorer insight layers; ``analysis``: the run's explorer
+    has the frontier insight (external explorers do not; their goal history is still served)."""
     layers = [name for name in ("explored", "navigation") if name in visible]
     if insight:
-        if decisions_view or visible & {"candidates", "route", "pool"}:
+        if analysis and (decisions_view or visible & {"candidates", "route", "pool"}):
             layers.append("decisions")
-        if "chunks" in visible:
+        if analysis and "chunks" in visible:
             layers.append("chunks")
         if "goals" in visible:
             layers.append("goals")
@@ -1175,11 +1178,16 @@ class InsightMap(LiveMap):
             super()._update_cursor()
 
 
-def disabled_layers(insight: InsightLayers, engine_insight: bool) -> dict[str, str]:
-    """Layers the run cannot show and why (the Layers menu's reasons)."""
+def disabled_layers(
+    insight: InsightLayers, engine_insight: bool, explorer_insight: bool = True
+) -> dict[str, str]:
+    """Layers the run cannot show and why (the Layers menu's reasons); ``explorer_insight`` False: the run's
+    explorer has no frontier insight (an external explorer)."""
     reason = ""
     if not engine_insight:
         reason = "Engine too old"
+    elif not explorer_insight:
+        reason = "No insight"
     elif insight.available is False:
         reason = "No analysis"
     disabled = {spec.key: reason for spec in LAYERS if spec.group == "analysis"} if reason else {}

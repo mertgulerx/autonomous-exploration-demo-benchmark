@@ -1,4 +1,13 @@
 default_comparison: [default, default, default, default]
+# Explorer launch profiles (docs/plans/EXTERNAL_EXPLORERS.md, EXTERNAL_EXPLORERS_RRT_TDLE.md): the ID is the
+# run specification's ``profile``. parameters: the Default file (parameter_package share); metadata: beside this
+# file; node: the parameter scope; executables: package/executable of the processes whose CPU and memory count
+# (decision E7, within the launch's own process scope); start: launch (starts by itself), action (one Explore
+# goal) or topic (``true`` on start_topic, once start_subscriber subscribes and start_after has delivered two
+# messages); completion: what ends a run as "completed" besides the coverage stop
+# (none: only the coverage stop); insight: frontier insight node and views; robot_defaults: Default scoring speeds
+# and preemption lidar range from the robot (configuration.robot_parameter_schema); source: the submodule path, or
+# an external explorer's url and commit (explorer_source "<url>@<commit>"; branch and build_patch informational).
 profiles:
   default:
     label: Default
@@ -7,5 +16,112 @@ profiles:
     launch: frontier_explorer.launch.py
     parameter_package: rviz_autonomous_exploration_benchmark
     parameters: config/frontier_exploration_ros2/default.yaml
+    metadata: parameters.yaml
+    node: frontier_explorer
     executable: frontier_explorer
+    executables: [frontier_exploration_ros2/frontier_explorer]
+    start: launch
+    completion: {kind: event, topic: /exploration_complete}
+    insight: true
+    robot_defaults: true
+    source: {path: exploration_packages/frontier_exploration_ros2}
+    random_seed: unsupported
+  explore_lite:
+    label: m-explore-ros2
+    framework: m-explore-ros2
+    package: explore_lite
+    launch_package: exploration_benchmark_runner
+    launch: explore_lite.launch.py
+    parameter_package: rviz_autonomous_exploration_benchmark
+    parameters: config/explore_lite/default.yaml
+    metadata: parameters/explore_lite.yaml
+    node: explore_node
+    executable: explore
+    executables: [explore_lite/explore]
+    start: launch
+    completion: {kind: explore_lite_status, topic: /explore/status}
+    insight: false
+    robot_defaults: false
+    source:
+      url: https://github.com/robo-friends/m-explore-ros2
+      commit: 326cf8a0b487c34246bb8f3326afbcd69576dc60
+      licence: BSD
+    random_seed: unsupported
+  roadmap_explorer:
+    label: roadmap-explorer
+    framework: roadmap-explorer
+    package: roadmap_explorer
+    launch_package: exploration_benchmark_runner
+    launch: roadmap_explorer.launch.py
+    parameter_package: rviz_autonomous_exploration_benchmark
+    parameters: config/roadmap_explorer/default.yaml
+    metadata: parameters/roadmap_explorer.yaml
+    node: roadmap_explorer_node
+    executable: roadmap_exploration_server
+    executables: [roadmap_explorer/roadmap_exploration_server, nav2_lifecycle_manager/lifecycle_manager]
+    start: action
+    completion: {kind: explore_action, action: /roadmap_explorer}
+    insight: false
+    robot_defaults: false
+    source:
+      url: https://github.com/suchetanrs/roadmap-explorer
+      commit: 203ff2602e1a1e41eec7ef663eacc21266e270c6
+      licence: Apache-2.0
+      # Build-only change (docker/fetch_external_explorers.sh): its gtests follow BUILD_TESTING (off in the images).
+      build_patch: CMakeLists.txt line 264, if(BUILD_TESTING AND ament_cmake_gtest_FOUND)
+    random_seed: unsupported
+  rrt_explore:
+    label: rrt-explore
+    framework: rrt-explore
+    package: rrt_explore
+    launch_package: exploration_benchmark_runner
+    launch: rrt_explore.launch.py
+    parameter_package: rviz_autonomous_exploration_benchmark
+    parameters: config/rrt_explore/default.yaml
+    metadata: parameters/rrt_explore.yaml
+    node: rrt
+    executable: rrt
+    executables: [rrt_explore/rrt]
+    start: topic
+    start_topic: /robot1/rrt/enable
+    # true is sent once this node subscribes and the costmap has been published twice since (worker.py).
+    start_subscriber: /robot1/rrt
+    start_after: /global_costmap/costmap
+    completion: {kind: rrt_state, topic: /exploration_state}
+    insight: false
+    robot_defaults: false
+    source:
+      url: https://github.com/acachathuranga/rrt-explore
+      commit: 41054af8fb68d074ca4927773ecc96afcce8bb90
+      licence: BSD
+      # Patch to the method (decision X5, docker/fetch_external_explorers.sh): grid reads outside the map or
+      # costmap read as unknown (-1) instead of out of bounds; in-range reads and every rule unchanged.
+      build_patch: docker/patches/rrt_explore-41054af-bounds.patch sha256 fef19df8c7da2feb7d3c4f3c860ceb50692a57e4efce3ada59175f10902d16e1
+    random_seed: unsupported
+  tdle:
+    label: TDLE
+    framework: TDLE
+    package: tdle
+    launch_package: exploration_benchmark_runner
+    launch: tdle.launch.py
+    parameter_package: rviz_autonomous_exploration_benchmark
+    parameters: config/tdle/default.yaml
+    metadata: parameters/tdle.yaml
+    # One parameter scope for the four nodes; tdle.launch.py gives each node its section.
+    node: tdle
+    executable: fpoint_selection
+    # The four TDLE nodes; the benchmark's known-pose adapter is left out (decision X4).
+    executables: [tdle/fpoint_selection, tdle/fpoint_detector, tdle/fpoint_filter, tdle/subregion_arrangement]
+    start: launch
+    # TDLE declares no completion (decision X1): its runs end by the coverage stop or the time limit.
+    completion: {kind: none}
+    insight: false
+    robot_defaults: false
+    source:
+      url: https://github.com/SeanZsya/tdle
+      branch: ROS2
+      commit: b5ed3cf8573cb4a2387b5434d3ec4bb782ba286e
+      licence: MIT (package.xml; no licence file)
+      # Build-only change (docker/fetch_external_explorers.sh): the empty launch/ directory its CMakeLists.txt installs.
+      build_patch: tdle_ws/src/tdle/launch (empty directory created)
     random_seed: unsupported

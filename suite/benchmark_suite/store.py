@@ -380,10 +380,14 @@ class Store:
 
         def specification(experiment: Any) -> str:
             value = experiment.dictionary()
+            snapshot = experiment.profile.dictionary()
             value["profile"] = dict(
                 id=experiment.profile.id,
                 name=experiment.profile.name,
                 object=profiles[(experiment.robot_id, experiment.profile.id)],
+                # an external explorer's profile names it here too (Monitor, run records); absent for
+                # frontier_exploration_ros2, so its experiments' specifications are unchanged
+                **({"explorer": snapshot["explorer"]} if "explorer" in snapshot else {}),
             )
             return canonical(value)
 

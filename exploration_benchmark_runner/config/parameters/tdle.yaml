@@ -1,0 +1,215 @@
+# Parameter metadata of tdle: one entry per Default parameter (config/tdle/default.yaml; node sections and nested
+# names as dotted names); managed values are interface settings the benchmark fixes
+# (docs/plans/EXTERNAL_EXPLORERS_RRT_TDLE.md). Descriptions follow the shipped file's comments and the code.
+use_sim_time:
+  group: Interface
+  description: Use the simulation clock; set by the benchmark for every node.
+  managed: true
+fpoint_detector.use_sim_time:
+  group: Interface
+  description: Frontier detector on the simulation clock (forced by the node as well).
+  managed: true
+fpoint_detector.map_topic:
+  group: Interface
+  description: Occupancy grid the detector's trees grow in (the SLAM map).
+  managed: true
+fpoint_detector.odom_topic:
+  group: Interface
+  description: Robot pose in the map frame; the benchmark's known-pose adapter (decision X2).
+  managed: true
+fpoint_detector.stride:
+  group: Frontier detection
+  description: RRT sampling stride in metres.
+  managed: false
+  exclusive_minimum: 0
+fpoint_detector.max_tree_nodes:
+  group: Frontier detection
+  description: Maximum number of nodes in the global and local trees.
+  managed: false
+  minimum: 1
+fpoint_filter.use_sim_time:
+  group: Interface
+  description: Frontier filter on the simulation clock (forced by the node as well).
+  managed: true
+fpoint_filter.map_topic:
+  group: Interface
+  description: Occupancy grid the detected points are checked against (the SLAM map).
+  managed: true
+fpoint_filter.costmap_topic:
+  group: Interface
+  description: Full costmap grid used to drop points in inflated space (Nav2's global costmap).
+  managed: true
+fpoint_filter.max_frontier_points:
+  group: Frontier filtering
+  description: Maximum number of frontier points kept.
+  managed: false
+  minimum: 1
+fpoint_filter.costmap_threshold:
+  group: Frontier filtering
+  description: Costmap value above which a point counts as an obstacle.
+  managed: false
+  minimum: 0
+  maximum: 100
+fpoint_filter.min_point_distance:
+  group: Frontier filtering
+  description: Minimum distance in metres between kept frontier points.
+  managed: false
+  minimum: 0
+fpoint_filter.unknown_threshold:
+  group: Frontier filtering
+  description: Minimum number of unknown neighbour cells for a point to stay a frontier point.
+  managed: false
+  minimum: 0
+fpoint_filter.publish_rate:
+  group: Frontier filtering
+  description: Wall rate in Hz of the filter loop.
+  managed: false
+  exclusive_minimum: 0
+  # The node's timer period is int(1000 / rate) ms: above 1000 Hz it becomes 0 (a busy loop).
+  maximum: 1000
+subregion_arrangement.use_sim_time:
+  group: Interface
+  description: Subregion arrangement on the simulation clock (forced by the node as well).
+  managed: true
+subregion_arrangement.map_topic:
+  group: Interface
+  description: Occupancy grid the subregions divide (the SLAM map).
+  managed: true
+subregion_arrangement.odom_topic:
+  group: Interface
+  description: Robot pose in the map frame; the benchmark's known-pose adapter (decision X2).
+  managed: true
+subregion_arrangement.grid_divisions:
+  group: Subregions
+  description: Shipped grid division count; not read by the code at the pinned commit (divisions follow max_subregion_size).
+  managed: true
+subregion_arrangement.max_subregion_size:
+  group: Subregions
+  description: Maximum side length in metres of a subregion; the number of divisions grows with the map (at least 3 by 3).
+  managed: false
+  exclusive_minimum: 0
+subregion_arrangement.min_points_per_region:
+  group: Subregions
+  description: Minimum frontier points for a subregion to be selected.
+  managed: false
+  minimum: 0
+subregion_arrangement.unknown_threshold:
+  group: Subregions
+  description: A subregion counts as mostly unknown when more of its samples than this are unknown.
+  managed: false
+  minimum: 0
+subregion_arrangement.unknown_sample_step:
+  group: Subregions
+  description: Samples per side of the unknown check (truncated to an integer; the square is the sample count).
+  managed: false
+  exclusive_minimum: 0
+subregion_arrangement.publish_rate:
+  group: Subregions
+  description: Wall rate in Hz of the arrangement loop.
+  managed: false
+  exclusive_minimum: 0
+  # The node's timer period is int(1000 / rate) ms: above 1000 Hz it becomes 0 (a busy loop).
+  maximum: 1000
+subregion_arrangement.ana_initial_temp:
+  group: Subregion order
+  description: Initial temperature of the simulated annealing that orders the frontier subregions.
+  managed: false
+  exclusive_minimum: 0
+subregion_arrangement.ana_stop_temp:
+  group: Subregion order
+  description: Temperature at which the annealing stops.
+  managed: false
+  exclusive_minimum: 0
+subregion_arrangement.ana_max_iterations:
+  group: Subregion order
+  description: Maximum annealing iterations per ordering.
+  managed: false
+  minimum: 1
+subregion_arrangement.ana_mu:
+  group: Subregion order
+  description: Annealing cooling parameter.
+  managed: false
+  exclusive_minimum: 0
+subregion_arrangement.ana_lambda_similarity:
+  group: Subregion order
+  description: Weight of the similarity (dynamic time warping) to the previous order.
+  managed: false
+  minimum: 0
+subregion_arrangement.ana_lambda_end_to_initial:
+  group: Subregion order
+  description: Weight of the closeness of the order's last subregion to the start (a weak regulariser in the shipped file).
+  managed: false
+  minimum: 0
+subregion_arrangement.ana_lambda_path_length:
+  group: Subregion order
+  description: Weight of the route length through the ordered subregions.
+  managed: false
+  minimum: 0
+subregion_arrangement.ana_seed:
+  group: Subregion order
+  description: Seed of the annealing's random generator (the frontier detector's generator is seeded from the system, not by a parameter).
+  managed: false
+  minimum: 0
+fpoint_selection.use_sim_time:
+  group: Interface
+  description: Goal selection on the simulation clock (forced by the node as well).
+  managed: true
+fpoint_selection.map_topic:
+  group: Interface
+  description: Occupancy grid (the SLAM map).
+  managed: true
+fpoint_selection.odom_topic:
+  group: Interface
+  description: Robot pose in the map frame; the benchmark's known-pose adapter (decision X2).
+  managed: true
+fpoint_selection.local_plan:
+  group: Interface
+  description: Shipped local plan topic; read into the node but not subscribed at the pinned commit.
+  managed: true
+fpoint_selection.goal_send_interval_ms:
+  group: Goal selection
+  description: Minimum interval in simulated milliseconds before the same target is sent again.
+  managed: false
+  minimum: 0
+fpoint_selection.stuck_waypoint_threshold:
+  group: Goal selection
+  description: Number of recent pose samples kept for stuck detection.
+  managed: false
+  minimum: 1
+fpoint_selection.position_tolerance:
+  group: Goal selection
+  description: Distance in metres within which recent pose samples count as not moving.
+  managed: false
+  minimum: 0
+fpoint_selection.goal_reached_tolerance:
+  group: Goal selection
+  description: Radius in metres within which a frontier point counts as reached.
+  managed: false
+  minimum: 0
+fpoint_selection.global_compatibility_weight:
+  group: Goal selection
+  description: Weight of the global-compatibility term (Chebyshev distance to the next subregion centre minus a sixth of the map size, z-scored, added to the score as in the code).
+  managed: false
+  minimum: 0
+fpoint_selection.info_gain_weight:
+  group: Goal selection
+  description: Weight of the number of frontier points near a candidate (z-scored).
+  managed: false
+  minimum: 0
+fpoint_selection.motion_consistency_weight:
+  group: Goal selection
+  description: Weight of the heading-change term exp(2 (0.637 |bearing - yaw| - 1)), subtracted.
+  managed: false
+  minimum: 0
+fpoint_selection.distance_to_robot_weight:
+  group: Goal selection
+  description: Weight of the distance to the robot (z-scored, subtracted).
+  managed: false
+  minimum: 0
+fpoint_selection.loop_rate:
+  group: Goal selection
+  description: Wall rate in Hz of the selection loop.
+  managed: false
+  exclusive_minimum: 0
+  # The node's timer period is int(1000 / rate) ms: above 1000 Hz it becomes 0 (a busy loop).
+  maximum: 1000

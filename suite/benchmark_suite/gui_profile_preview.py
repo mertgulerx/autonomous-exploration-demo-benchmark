@@ -13,6 +13,7 @@
 # limitations under the License.
 
 from collections import OrderedDict
+from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
 import hashlib
@@ -38,15 +39,115 @@ from .gui_widgets import (
 )
 
 BASELINE = "Robot-aware baseline"  # the Default profile's description
+# an external explorer's Default profile's description
+EXTERNAL_BASELINE = "Shipped parameters with interface adaptations"
+# The explorer of profiles without ``explorer`` (frontier_exploration_ros2's profiles.yaml ID; library.py).
+DEFAULT_EXPLORER = "default"
+
+
+def profile_explorer(profile: Mapping[str, Any] | None) -> str:
+    """The profiles.yaml explorer ID a profile runs (``explorer``; frontier_exploration_ros2 without it)."""
+    explorer = (profile or {}).get("explorer")
+    return explorer if isinstance(explorer, str) and explorer else DEFAULT_EXPLORER
+
+
+def default_reference(robot_id: str, explorer: str) -> str:
+    """The campaign reference of a robot's Default profile of an explorer (library.Explorer.default_id)."""
+    return "Default" if explorer == DEFAULT_EXPLORER else f"default-{explorer}-{robot_id}"
+
+
+def default_explorer_of(robot_id: str, reference: Any) -> str | None:
+    """The explorer whose Default ``reference`` names, or None for any other reference."""
+    if not isinstance(reference, str):
+        return None
+    if reference in ("Default", "default", "default-" + robot_id):
+        return DEFAULT_EXPLORER
+    prefix, suffix = "default-", "-" + robot_id
+    if reference.startswith(prefix) and reference.endswith(suffix):
+        explorer = reference[len(prefix) : -len(suffix)]
+        return explorer or None
+    return None
+
+
+def default_key(explorer: str) -> str:
+    """``profile_key`` of an explorer's Default ("default" for frontier_exploration_ros2)."""
+    return "default" if explorer == DEFAULT_EXPLORER else "default:" + explorer
 
 
 def profile_key(robot_id: str, reference: Any) -> str:
     if isinstance(reference, dict):
         serialized = json.dumps(reference, sort_keys=True, ensure_ascii=False, default=str)
         return "snapshot:" + hashlib.sha256(serialized.encode()).hexdigest()
-    if reference in ("Default", "default", "default-" + robot_id):
-        return "default"
+    explorer = default_explorer_of(robot_id, reference)
+    if explorer is not None:
+        return default_key(explorer)
     return "profile:" + str(reference)
+
+
+def with_explorer_views(catalog: dict[str, Any]) -> dict[str, Any]:
+    """The catalog with each robot's ``explorer_views`` (explorer ID -> its label, insight flag, Defaults for
+    the robot, parameter metadata and groups) from the catalog's ``explorers``, which the profile views read
+    through ``explorer_parts``. A catalog without ``explorers`` (an older engine) gets
+    frontier_exploration_ros2's view only."""
+    explorers = catalog.get("explorers")
+    if not isinstance(explorers, list) or not explorers:
+        explorers = [
+            {
+                "id": DEFAULT_EXPLORER,
+                "label": "Default",
+                "framework": "frontier_exploration_ros2",
+                "insight": True,
+                "parameters": catalog.get("parameters", {}),
+                "groups": list(GROUP_ORDER),
+                "defaults": {r["id"]: r.get("defaults", {}) for r in catalog.get("robots", [])},
+            }
+        ]
+    for robot in catalog.get("robots", []):
+        robot["explorer_views"] = {
+            str(entry["id"]): {
+                "id": str(entry["id"]),
+                "label": str(entry.get("label") or entry["id"]),
+                "framework": str(entry.get("framework") or entry["id"]),
+                "insight": entry.get("insight") is True,
+                "node": str(entry.get("node") or "frontier_explorer"),
+                "defaults": (entry.get("defaults") or {}).get(robot["id"], {}),
+                "parameters": entry.get("parameters") or {},
+                "groups": list(entry.get("groups") or ()),
+            }
+            for entry in explorers
+            if isinstance(entry, dict) and entry.get("id")
+        }
+    return catalog
+
+
+def explorer_tag(robot: Mapping[str, Any], explorer: str) -> str:
+    """The short explorer name a profile row shows (its framework, as "m-explore-ros2")."""
+    view = (robot.get("explorer_views") or {}).get(explorer) or {}
+    return str(view.get("framework") or explorer)
+
+
+def explorer_parts(
+    robot: Mapping[str, Any], metadata: Mapping[str, Any], explorer: str
+) -> tuple[dict[str, Any], dict[str, Any], tuple[str, ...]]:
+    """The Defaults, parameter metadata and group order a profile of ``explorer`` is compared with:
+    frontier_exploration_ros2's are the robot's ``defaults``, the catalog ``parameters`` and GROUP_ORDER; an
+    external explorer's come from the robot's ``explorer_views`` (empty when the catalog lacks it)."""
+    if explorer == DEFAULT_EXPLORER:
+        return dict(robot.get("defaults") or {}), dict(metadata), GROUP_ORDER
+    view = (robot.get("explorer_views") or {}).get(explorer) or {}
+    return (
+        dict(view.get("defaults") or {}),
+        dict(view.get("parameters") or {}),
+        tuple(view.get("groups") or ()),
+    )
+
+
+def default_title(robot: Mapping[str, Any], explorer: str) -> str:
+    """The Default's title "<robot> Default", or "<robot> <explorer> Default" for an external explorer."""
+    label = str(robot.get("label", ""))
+    if explorer == DEFAULT_EXPLORER:
+        return f"{label} Default"
+    return f"{label} {explorer_tag(robot, explorer)} Default"
 
 
 def _same_value(left: Any, right: Any) -> bool:
@@ -77,8 +178,9 @@ GROUP_ORDER = ("Behavior", "MRTSP Scoring", "Navigation Safety", "Map Optimizati
 
 
 def parameter_label(key: str) -> tuple[str, str]:
-    """The humanized parameter name and its unit ("Min frontier size", "cells")."""
-    name = humanize(key)
+    """The humanized parameter name and its unit ("Min frontier size", "cells"). A nested parameter's dotted
+    prefix ("frontierSearch.GridBasedBFS.") is left out: its group and tooltip name it."""
+    name = humanize(key.rpartition(".")[2])
     words = name.split(" ")
     unit = words[-1].lower()
     if len(words) > 1 and unit in UNIT_WORDS and name not in NAMES_WITH_UNIT_WORDS:
@@ -98,7 +200,9 @@ def value_text(value: Any) -> str:
 def profile_differences(
     robot: dict[str, Any], metadata: dict[str, Any], profile: dict[str, Any]
 ) -> list[ParameterDifference]:
-    defaults, effective = robot["defaults"], profile["effective"]
+    """The parameters where the profile differs from its explorer's Default for the robot."""
+    defaults, metadata, _ = explorer_parts(robot, metadata, profile_explorer(profile))
+    effective = profile["effective"]
     differences = []
     for key in dict.fromkeys([*defaults, *effective]):
         information = metadata.get(key, {})
@@ -114,16 +218,16 @@ def profile_differences(
     return differences
 
 
-def editor_groups(metadata: dict[str, Any]) -> list[str]:
-    """The parameter groups the profile editor shows, in the schema's order (no managed parameters, no hidden
-    groups)."""
+def editor_groups(metadata: dict[str, Any], order: tuple[str, ...] = GROUP_ORDER) -> list[str]:
+    """The parameter groups the profile editor shows, in the schema's order (``order``: the explorer's group
+    order; no managed parameters, no hidden groups)."""
     groups: list[str] = []
     for information in metadata.values():
         group = information.get("group", "")
         if information.get("managed") or group in HIDDEN_GROUPS or group in groups:
             continue
         groups.append(group)
-    known = {group: index for index, group in enumerate(GROUP_ORDER)}
+    known = {group: index for index, group in enumerate(order)}
     groups.sort(key=lambda group: known.get(group, len(known)))  # unknown groups after, as found
     return groups
 
@@ -146,15 +250,20 @@ class ComparedParameter:
 
 
 def compared_parameters(
-    robot: dict[str, Any], metadata: dict[str, Any], profile: dict[str, Any] | None
+    robot: dict[str, Any],
+    metadata: dict[str, Any],
+    profile: dict[str, Any] | None,
+    explorer: str = DEFAULT_EXPLORER,
 ) -> list[ComparedParameter]:
     """Every parameter the editor shows, in editor order (groups as ``editor_groups``, the catalog's order
-    within a group), with the robot's Default and the profile's value (Default against itself for None),
-    plus any other changed parameter outside the managed ones. Changed rows are exactly
-    ``profile_differences``'."""
-    defaults = robot["defaults"]
+    within a group), with its explorer's Default for the robot and the profile's value (``explorer``'s Default
+    against itself for None), plus any other changed parameter outside the managed ones. Changed rows are
+    exactly ``profile_differences``'."""
+    if profile is not None:
+        explorer = profile_explorer(profile)
+    defaults, metadata, order = explorer_parts(robot, metadata, explorer)
     effective = profile["effective"] if profile is not None else defaults
-    groups = editor_groups(metadata)
+    groups = editor_groups(metadata, order)
     rows: list[ComparedParameter] = []
     for key in dict.fromkeys([*defaults, *effective]):
         information = metadata.get(key, {})
@@ -167,8 +276,8 @@ def compared_parameters(
         name, unit = parameter_label(key)
         description = str(information.get("description", ""))
         rows.append(ComparedParameter(key, name, unit, group, before, after, description))
-    order = {group: index for index, group in enumerate(groups)}
-    return sorted(rows, key=lambda row: order.get(row.group, len(order)))
+    rank = {group: index for index, group in enumerate(groups)}
+    return sorted(rows, key=lambda row: rank.get(row.group, len(rank)))
 
 
 def _decimals(value: float | int) -> int:
@@ -257,8 +366,13 @@ class ProfilePreview(Themed):
     def _load(self) -> None:
         if not self.isVisible() or not self._key:
             return
-        if self._key == "default":
-            self._show({"effective": self.robot.get("defaults", {}), "description": BASELINE})
+        if self._key == "default" or self._key.startswith("default:"):
+            explorer = self._key.partition(":")[2] or DEFAULT_EXPLORER
+            defaults, _, _ = explorer_parts(self.robot, self.metadata, explorer)
+            baseline: dict[str, Any] = {"effective": defaults, "description": BASELINE}
+            if explorer != DEFAULT_EXPLORER:
+                baseline.update(explorer=explorer, description=EXTERNAL_BASELINE)
+            self._show(baseline)
         elif self._key in self._cache:
             self._cache.move_to_end(self._key)
             self._show(self._cache[self._key])
@@ -279,7 +393,7 @@ class ProfilePreview(Themed):
                 self.transport.submit(tag, "profiles.get", {"id": self.reference})
 
     def _show(self, profile: dict[str, Any]) -> None:
-        if not self.robot.get("defaults"):
+        if not explorer_parts(self.robot, self.metadata, profile_explorer(profile))[0]:
             self._error("Default parameter values are unavailable. Refresh the robot catalog.")
             return
         self.profile = profile
@@ -337,9 +451,10 @@ class ProfilePreview(Themed):
     def summary(self) -> tuple[str, str]:
         """The header's bold count and the rest ("3 changes", " from <robot> Default")."""
         count = len(self.differences)
+        title = default_title(self.robot, profile_explorer(self.profile))
         if not count:
-            return "", f"No changes from {self.robot['label']} Default"
-        return plural(count, "change"), f" from {self.robot['label']} Default"
+            return "", f"No changes from {title}"
+        return plural(count, "change"), f" from {title}"
 
     # The bar, the description and the header stay; the difference rows scroll under them.
 

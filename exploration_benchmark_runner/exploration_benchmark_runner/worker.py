@@ -56,7 +56,7 @@ from nav2_msgs.srv import ManageLifecycleNodes
 from nav_msgs.msg import OccupancyGrid, Odometry, Path
 from rosgraph_msgs.msg import Clock
 from sensor_msgs.msg import LaserScan, Imu
-from std_msgs.msg import String, Empty
+from std_msgs.msg import Bool, String, Empty
 from controller_manager_msgs.srv import ListControllers
 from tf2_msgs.msg import TFMessage
 from visualization_msgs.msg import MarkerArray, Marker
@@ -140,6 +140,9 @@ NAV_NODES = (
 )
 NAV_DISCOVERY_SETTLE_SECONDS = 3.0
 NAV_ACTIVATION_TIMEOUT_SECONDS = 60.0
+# A start topic's true (profiles.yaml ``start: topic``) waits for this many start_after messages after the
+# explorer's subscriber appears: at 2 Hz (the global costmap) at least one full period after discovery.
+START_AFTER_MESSAGES = 2
 # Frontier insight node (suite runs): its output topic and the attempt log it writes.
 INSIGHT_TOPIC = "/benchmark/frontier_insight"
 INSIGHT_LOG = "insight.log"
@@ -195,11 +198,13 @@ class Worker:
         self.spec = Specification(**config["spec"])
         self.profile = config["profile"]
         self.phase, self.outcome, self.detail = "STARTING", "", ""
-        # The triggering sample of coverage-stop-v1, once reached (check_coverage_stop).
+        # The triggering sample of the coverage stop (coverage-stop-v2), once reached (check_coverage_stop).
         self.coverage_stop = None
         self.stopped_by_coverage = False
         self.native_code = -1
         self.explorer_identity = None
+        self.explorer_identities = {}
+        self.explorer_started_wall = 0.0
         self.start_sim = self.start_unix = 0.0
         self.measurements = None
         descriptor = config["scenario"]["coverage_reference"]
@@ -416,14 +421,7 @@ class Worker:
                     Empty, "/explore/reset_traveled_path", self.reset_path, LATCHED
                 )
             )
-        self.subscriptions.append(
-            self.worker.create_subscription(
-                Empty,
-                "/exploration_complete",
-                lambda _: self.native_completed("primary completion event"),
-                LATCHED,
-            )
-        )
+        self.setup_start_and_completion()
         self.thread = threading.Thread(target=self.spin_worker, daemon=True)
         self.native_controller_names = []
         self.native_controller_states = {}
@@ -526,7 +524,14 @@ class Worker:
         else:
             self.recorder = Recorder(directory, dict(self.config, spec=self.spec.dictionary()),
                                      profile, self.config["project_root"], coverage_reference=self.coverage_reference)
-        params, overrides = adapters.resolve_parameters(self.spec, directory)
+        params, overrides = adapters.resolve_parameters(
+            self.spec,
+            directory,
+            profile,
+            robot=self.config["robot"],
+            spawn=self.config["scenario"]["spawn"],
+            reference=self.coverage_reference,
+        )
         self.parameter_file = params
         self.recorder.manifest["instrumentation_overrides"] = overrides
         self.recorder.flush()
@@ -1168,6 +1173,7 @@ class Worker:
             self.measurements.sample(time.monotonic(), self.clock_value)
         self.terminal = queue.Queue()
         self.explorer_identity = None
+        self.explorer_identities = {}
         self.native_code = -1
         self.path = Path()
         self.path.header.frame_id = "map"
@@ -1178,6 +1184,7 @@ class Worker:
         )
         profile = self.profile
         self.explorer_scope = ProcessScope(self.config["process_token"] + "_explorer")
+        self.explorer_started_wall = time.monotonic()
         self.explorer_process = self.explorer_scope.start(
             adapters.command(profile, self.parameter_file),
             self.environment(shared=True),
@@ -1205,7 +1212,7 @@ class Worker:
             simulation=self.start_sim,
             wall_start_unix=self.start_unix,
         )
-        if self.campaign:
+        if self.campaign and profile.get("insight", True):
             self.start_insight()
         self.recorder.flush()
         self.publish_state()
@@ -1255,6 +1262,173 @@ class Worker:
         ) as error:
             manifest["reason"] = f"Insight node did not start: {error}"
         self.recorder.manifest["insight"] = manifest
+
+    def setup_start_and_completion(self):
+        """What ends a run as completed besides the coverage stop (``completion`` in profiles.yaml), and the
+        start topic of explorers that wait for one (``start: topic``)."""
+        completion = self.profile.get(
+            "completion", {"kind": "event", "topic": "/exploration_complete"}
+        )
+        self.explore_client = None
+        self.explore_goal = None
+        self.explore_handle = None
+        self.start_publisher = None
+        # start_sent: true was published (a stop then publishes false); start_settled: nothing more to try.
+        self.start_sent = False
+        self.start_settled = False
+        self.explorer_active = False
+        if self.profile.get("start") == "topic":
+            self.start_publisher = self.worker.create_publisher(
+                Bool, self.profile["start_topic"], 10
+            )
+            # rrt-explore indexes its costmap on its first loop tick without checking it arrived (rrt.cpp
+            # find_frontiers): true goes out only once start_subscriber is on the graph and the OccupancyGrid
+            # topic start_after has delivered START_AFTER_MESSAGES messages since.
+            self.start_after_count = None
+            self.subscriptions.append(
+                self.worker.create_subscription(
+                    OccupancyGrid,
+                    self.profile["start_after"],
+                    self.count_start_after,
+                    LATCHED,
+                )
+            )
+        if completion["kind"] == "none":
+            # TDLE (decision X1): only the coverage stop or the time limit ends its runs.
+            pass
+        elif completion["kind"] == "event":
+            self.subscriptions.append(
+                self.worker.create_subscription(
+                    Empty,
+                    completion["topic"],
+                    lambda _: self.native_completed("primary completion event"),
+                    LATCHED,
+                )
+            )
+        elif completion["kind"] == "explore_lite_status":
+            from explore_lite_msgs.msg import ExploreStatus
+
+            def status(message):
+                if message.status == ExploreStatus.EXPLORATION_COMPLETE:
+                    self.native_completed("explore_lite EXPLORATION_COMPLETE")
+
+            # explore/status is transient-local with depth 10.
+            self.subscriptions.append(
+                self.worker.create_subscription(
+                    ExploreStatus,
+                    completion["topic"],
+                    status,
+                    QoSProfile(
+                        depth=10,
+                        reliability=ReliabilityPolicy.RELIABLE,
+                        durability=DurabilityPolicy.TRANSIENT_LOCAL,
+                    ),
+                )
+            )
+        elif completion["kind"] == "explore_action":
+            from roadmap_explorer_msgs.action import Explore
+
+            self.explore_client = ActionClient(self.worker, Explore, completion["action"])
+        elif completion["kind"] == "rrt_state":
+            from rrt_explore.msg import ExplorationState
+
+            def state(message):
+                # DONE is 0, the value of an unset status: it counts only after ACTIVE.
+                if message.status == ExplorationState.ACTIVE:
+                    self.explorer_active = True
+                elif message.status == ExplorationState.DONE and self.explorer_active:
+                    self.native_completed("rrt-explore DONE")
+
+            self.subscriptions.append(
+                self.worker.create_subscription(
+                    ExplorationState, completion["topic"], state, 10
+                )
+            )
+        else:
+            raise ValueError(f"Unknown completion kind: {completion['kind']}")
+
+    def start_exploration_action(self, wall):
+        """roadmap-explorer: one Explore goal (a new session) once its server is active; its result ends the run
+        (NO_MORE_REACHABLE_FRONTIERS: completed, other codes: runtime failure)."""
+        if self.explore_client is None or self.explore_goal is not None:
+            return
+        if not self.explore_client.server_is_ready():
+            if wall - self.explorer_started_wall > 120:
+                self.terminal.put(
+                    ("startup_failure", "Explore action server not available within 120 s", -1)
+                )
+                self.explore_goal = False
+            return
+        from roadmap_explorer_msgs.action import Explore
+
+        goal = Explore.Goal()
+        goal.exploration_bringup_mode = Explore.Goal.NEW_EXPLORATION_SESSION
+        self.explore_goal = self.explore_client.send_goal_async(goal)
+        self.explore_goal.add_done_callback(self.exploration_accepted)
+        if self.recorder:
+            self.recorder.event("exploration_goal_sent", simulation=self.clock_value)
+
+    def count_start_after(self, _):
+        if self.start_after_count is not None:
+            self.start_after_count += 1
+
+    def start_exploration_topic(self, wall):
+        """rrt-explore: one ``true`` on its enable topic once the node subscribes to it and its costmap has
+        arrived (``setup_start_and_completion``); refused after 120 s."""
+        if self.start_publisher is None or self.start_settled:
+            return
+        if self.start_after_count is None:
+            expected = self.profile["start_subscriber"]
+            if any(
+                info.node_namespace.rstrip("/") + "/" + info.node_name == expected
+                for info in self.worker.get_subscriptions_info_by_topic(
+                    self.profile["start_topic"]
+                )
+            ):
+                self.start_after_count = 0
+        if self.start_after_count is None or self.start_after_count < START_AFTER_MESSAGES:
+            if wall - self.explorer_started_wall > 120:
+                waiting = (
+                    f"{self.profile['start_subscriber']} on {self.profile['start_topic']}"
+                    if self.start_after_count is None
+                    else f"{self.profile['start_after']} messages"
+                )
+                self.terminal.put(
+                    ("startup_failure", f"Explorer start: no {waiting} within 120 s", -1)
+                )
+                self.start_settled = True
+            return
+        self.start_publisher.publish(Bool(data=True))
+        self.start_sent = self.start_settled = True
+        if self.recorder:
+            self.recorder.event("exploration_start_sent", simulation=self.clock_value)
+
+    def exploration_accepted(self, future):
+        handle = future.result()
+        if handle is None or not handle.accepted:
+            self.terminal.put(("startup_failure", "Explore goal rejected", -1))
+            return
+        self.explore_handle = handle
+        handle.get_result_async().add_done_callback(self.exploration_finished)
+
+    def exploration_finished(self, future):
+        from roadmap_explorer_msgs.action import Explore
+
+        response = future.result()
+        if response is None or response.result is None:
+            self.terminal.put(("runtime_failure", "Explore action ended without a result", -1))
+            return
+        code = response.result.error_code
+        if code == Explore.Result.NO_MORE_REACHABLE_FRONTIERS:
+            self.native_completed("roadmap-explorer NO_MORE_REACHABLE_FRONTIERS")
+        elif self.phase == "RUNNING":
+            self.terminal.put(
+                (
+                    "runtime_failure",
+                    f"roadmap-explorer ended with error code {code} (goal status {response.status})",
+                    -1,
+                )
+            )
 
     def native_completed(self, detail):
         if self.phase == "RUNNING":
@@ -1314,38 +1488,54 @@ class Worker:
             self.path if self.single else prefix_frames(self.path, self.id)
         )
 
+    def explorer_resources(self):
+        """CPU seconds and RSS (MiB) summed over the explorer's processes (``executables`` in profiles.yaml,
+        decision E7), each found once in the explorer's process scope; a changed identity is a runtime failure.
+        The first executable is the explorer itself (``explorer_identity``). A sample counts only when every listed
+        process was read; otherwise both values are unavailable (None)."""
+        executables = self.profile.get(
+            "executables", [f"{self.profile['package']}/{self.profile['executable']}"]
+        )
+        cpu = rss = 0.0
+        read = 0
+        for index, name in enumerate(executables):
+            package, executable = name.split("/")
+            known = self.explorer_identities.get(name)
+            try:
+                if known is None:
+                    process = self.explorer_scope.explorer(package, executable)
+                else:
+                    process = psutil.Process(known[0])
+                if process is None:
+                    continue
+                identity = (process.pid, process.create_time())
+                if known is not None and known != identity:
+                    self.terminal.put(
+                        (
+                            "runtime_failure",
+                            f"Explorer process identity changed during the run ({executable})",
+                            -1,
+                        )
+                    )
+                    continue
+                self.explorer_identities[name] = identity
+                if index == 0:
+                    self.explorer_identity = identity
+                times = process.cpu_times()
+                cpu += times.user + times.system
+                rss += process.memory_info().rss / 1024**2
+                read += 1
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                continue
+        if read != len(executables):
+            return None, None
+        return cpu, rss
+
     def sample(self, wall, *, coverage_force=False):
         if not self.measurements:
             return
         self.coverage_tick(wall, force=coverage_force)
-        cpu = rss = None
-        try:
-            if self.explorer_identity is None:
-                process = self.explorer_scope.explorer(
-                    self.profile["package"], self.profile["executable"]
-                )
-            else:
-                process = psutil.Process(self.explorer_identity[0])
-            if process is not None:
-                identity = (process.pid, process.create_time())
-                if (
-                    self.explorer_identity is not None
-                    and self.explorer_identity != identity
-                ):
-                    self.terminal.put(
-                        (
-                            "runtime_failure",
-                            "Explorer process identity changed during the run",
-                            -1,
-                        )
-                    )
-                else:
-                    self.explorer_identity = identity
-                    times = process.cpu_times()
-                    cpu = times.user + times.system
-                    rss = process.memory_info().rss / 1024**2
-        except (psutil.NoSuchProcess, psutil.AccessDenied):
-            pass
+        cpu, rss = self.explorer_resources()
         gaps = [
             name
             for name in self.config["robot"]["required_streams"] + ["tf"]
@@ -1444,6 +1634,12 @@ class Worker:
             if self.campaign:
                 self.publish_metrics(self.measurements.latest)
         self.publish_state()
+        # The explorer first, so it sends no new Nav2 goal while the Nav2 goals are cancelled: roadmap-explorer's
+        # session goal, rrt-explore's enable topic (false stops its loop and cancels its goals).
+        if self.explore_handle is not None:
+            self.explore_handle.cancel_goal_async()
+        if self.start_sent:
+            self.start_publisher.publish(Bool(data=False))
         for client in self.cancel_clients:
             if client.service_is_ready():
                 client.call_async(CancelGoal.Request())
@@ -1457,7 +1653,7 @@ class Worker:
         self.close_source()
         if recorder:
             recorder.manifest["robot_diagnostics"] = self.robot_diagnostics
-            # What ended a completed run: the explorer's completion event or coverage-stop-v1.
+            # What ended a completed run: the explorer's completion event or the coverage stop (coverage-stop-v2).
             stopped_by_rule = self.outcome == "completed" and self.stopped_by_coverage
             recorder.manifest["completion_source"] = (
                 ("coverage_stop" if stopped_by_rule else "explorer")
@@ -1667,6 +1863,8 @@ class Worker:
                         -1,
                     )
                 )
+            self.start_exploration_action(wall)
+            self.start_exploration_topic(wall)
             limit = self.config["simulation_time_limit"]
             limit_origin = self.measurements.movement_simulation_start if self.campaign else self.start_sim
             if limit and limit_origin is not None and self.clock_value - limit_origin >= limit:

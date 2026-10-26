@@ -1,0 +1,58 @@
+# Parameter metadata of rrt_explore: one entry per Default parameter (config/rrt_explore/default.yaml);
+# managed values are interface settings the benchmark fixes (docs/plans/EXTERNAL_EXPLORERS_RRT_TDLE.md).
+use_sim_time:
+  group: Interface
+  description: Use the simulation clock; set by the benchmark (the node's timers stay wall timers).
+  managed: true
+map_topic:
+  group: Interface
+  description: Occupancy grid the tree grows in and frontiers are taken from (the SLAM map).
+  managed: true
+costmap_topic:
+  group: Interface
+  description: Full costmap grid used to drop frontiers in inflated space (Nav2's global costmap).
+  managed: true
+robot_base_frame:
+  group: Interface
+  description: Robot base frame (without namespace) for the map-to-robot TF lookup.
+  managed: true
+robot_frame_prefix:
+  group: Interface
+  description: Namespace prefix the node takes its robot ID from (namespace robot1 in the benchmark launch).
+  managed: true
+robot_count:
+  group: Interface
+  description: Number of robots; one in the benchmark.
+  managed: true
+rate:
+  group: Exploration loop
+  description: Wall rate in Hz of the exploration loop (one tree extension per tick; goals every 500 ticks or after 25 new frontiers; end check every 100 ticks) and of the state topic.
+  managed: false
+  exclusive_minimum: 0
+  maximum: 1000
+eta:
+  group: Tree
+  description: Steering step in metres of each tree extension.
+  managed: false
+  exclusive_minimum: 0
+costmap_pixel_threshold:
+  group: Goal selection
+  description: Costmap value above which a frontier point is dropped.
+  managed: false
+  minimum: 0
+  maximum: 100
+info_radius:
+  group: Goal selection
+  description: Half-size in metres of the square window whose unknown minus occupied cells give a frontier's information gain.
+  managed: false
+  exclusive_minimum: 0
+hysteresis_radius:
+  group: Goal selection
+  description: Distance in metres from the robot within which a frontier's information gain is multiplied by hysteresis_gain.
+  managed: false
+  minimum: 0
+hysteresis_gain:
+  group: Goal selection
+  description: Multiplier of the information gain of frontiers within hysteresis_radius (score = 3 gain - distance).
+  managed: false
+  minimum: 0

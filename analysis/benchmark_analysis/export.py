@@ -33,9 +33,9 @@ from .errors import Refused
 # 2 adds the worlds table and per-reference descriptors and region rasters (plans/worlds/I2 §3.10); optional
 # for readers, so a version-1 export analyses as before.
 EXPORT_VERSIONS = (1, 2)
-# 2 (I10): mapping_condition; 3 (coverage-stop-v1): completion_source and the T99 fields; 4 (coverage-stop-v2):
-# T99.9 in place of T99
-RUN_RECORD_VERSIONS = (1, 2, 3, 4)
+# 5 (external explorers): explorer_source; 2 (I10): mapping_condition; 3 (coverage-stop-v1):
+# completion_source and the T99 fields; 4 (coverage-stop-v2): T99.9 in place of T99
+RUN_RECORD_VERSIONS = (1, 2, 3, 4, 5)
 CHUNK = 1 << 20
 
 

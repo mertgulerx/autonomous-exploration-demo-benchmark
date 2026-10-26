@@ -39,7 +39,15 @@ from .gui_cells import (
 from .gui_dialogs import Run, wrap
 from .gui_maps import MapStage, SpawnMark, WorldMap
 from .gui_menus import show_tooltip
-from .gui_profile_preview import ParameterDifference, profile_differences, value_text
+from .gui_profile_preview import (
+    ParameterDifference,
+    default_explorer_of,
+    default_title,
+    explorer_parts,
+    profile_differences,
+    profile_explorer,
+    value_text,
+)
 from .gui_theme import ThemeManager, snap
 from .gui_widgets import (
     BODY,
@@ -274,7 +282,8 @@ def first_sentence(text: str) -> str:
 
 
 def is_default_profile(robot_id: str, profile: dict[str, Any]) -> bool:
-    return profile.get("id") in ("Default", "default", "default-" + robot_id)
+    """A robot's Default profile of any explorer (by its ID)."""
+    return default_explorer_of(robot_id, profile.get("id")) is not None
 
 
 def profile_title(profile: dict[str, Any]) -> str:
@@ -287,48 +296,71 @@ def change_blocks(
     robots: dict[str, dict[str, Any]],
     metadata: dict[str, Any],
 ) -> list[ChangeBlock]:
-    """The accepted specification's parameter changes from each robot's Default (``profile_differences``)."""
+    """The accepted specification's parameter changes from each robot's Default (``profile_differences``):
+    one block per robot and explorer (an external explorer's profiles against its own Default)."""
     blocks = []
     for robot_id, profiles in (specification.get("robots") or {}).items():
         robot = robots.get(robot_id)
         if robot is None or not robot.get("defaults"):
             continue
-        changed_profiles = [
+        changed = [
             p for p in profiles if isinstance(p, dict) and not is_default_profile(robot_id, p)
         ]
-        per_profile: list[dict[str, ParameterDifference]] = []
-        order: dict[str, ParameterDifference] = {}
-        for profile in changed_profiles:
-            differences = {d.key: d for d in profile_differences(robot, metadata, profile)}
-            per_profile.append(differences)
-            for key, difference in differences.items():
-                order.setdefault(key, difference)
-        if not order:
-            continue
-        rows = []
-        for key, first in order.items():
-            full = str(metadata.get(key, {}).get("description") or "").strip()
-            values, changed = [], []
-            for differences in per_profile:
-                found = differences.get(key)
-                values.append(value_text(found.value if found else first.default))
-                changed.append(found is not None)
-            rows.append(
-                ChangeRow(
-                    key,
-                    first.name,
-                    first.unit,
-                    first_sentence(full),
-                    full,
-                    value_text(first.default),
-                    tuple(values),
-                    tuple(changed),
-                )
+        explorers = list(dict.fromkeys(profile_explorer(p) for p in changed))
+        for explorer in explorers:
+            block = _change_block(
+                robot_id,
+                robot,
+                [p for p in changed if profile_explorer(p) == explorer],
+                explorer_parts(robot, metadata, explorer)[1],
+                default_title(robot, explorer),
             )
-        label = str(robot.get("label") or robot_id)
-        columns = (label + " Default", *(profile_title(p) for p in changed_profiles))
-        blocks.append(ChangeBlock(label, columns, tuple(rows)))
+            if block is not None:
+                blocks.append(block)
     return blocks
+
+
+def _change_block(
+    robot_id: str,
+    robot: dict[str, Any],
+    changed_profiles: list[dict[str, Any]],
+    metadata: dict[str, Any],
+    default: str,
+) -> ChangeBlock | None:
+    """One robot's (and explorer's) changed parameters; None without a change."""
+    per_profile: list[dict[str, ParameterDifference]] = []
+    order: dict[str, ParameterDifference] = {}
+    for profile in changed_profiles:
+        differences = {d.key: d for d in profile_differences(robot, metadata, profile)}
+        per_profile.append(differences)
+        for key, difference in differences.items():
+            order.setdefault(key, difference)
+    if not order:
+        return None
+    rows = []
+    for key, first in order.items():
+        full = str(metadata.get(key, {}).get("description") or "").strip()
+        values, changed = [], []
+        for differences in per_profile:
+            found = differences.get(key)
+            values.append(value_text(found.value if found else first.default))
+            changed.append(found is not None)
+        rows.append(
+            ChangeRow(
+                key,
+                first.name,
+                first.unit,
+                first_sentence(full),
+                full,
+                value_text(first.default),
+                tuple(values),
+                tuple(changed),
+            )
+        )
+    label = str(robot.get("label") or robot_id)
+    title = default.removesuffix(" Default")  # "<robot>" or "<robot> <explorer>"
+    columns = (default, *(profile_title(p) for p in changed_profiles))
+    return ChangeBlock(title or label, columns, tuple(rows))
 
 
 class ChangesTable(Themed):

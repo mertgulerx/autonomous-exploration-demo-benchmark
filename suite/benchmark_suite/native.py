@@ -376,6 +376,14 @@ class NativeBackend:
         selected = accepted["profile"]
         if "object" in selected:
             selected = load_object(Path(attempt["directory"]).parents[1], selected["object"])
+        # The profile's explorer (a profiles.yaml ID; profiles without the key run frontier_exploration_ros2).
+        explorer = selected.get("explorer", "default")
+        if explorer not in self.profiles:
+            raise ContractError(
+                "explorer",
+                f"Explorer {explorer} is not in this checkout's profiles.yaml",
+                "dependency_or_configuration",
+            )
         robot = selected["robot"]
         world = scenario(self.root, experiment["world_id"], registry=self.registry)
         pose = accepted["spawn"]
@@ -419,12 +427,12 @@ class NativeBackend:
             single=True,
             scenario=world,
             spec=dict(
-                profile="default",
+                profile=explorer,
                 label=selected["name"],
                 parameter_file="",
                 overrides=selected["effective"],
             ),
-            profile=self.profiles["default"],
+            profile=self.profiles[explorer],
             seed=1234,
             simulation_time_limit=time_limit,
             startup_timeout=180.0,

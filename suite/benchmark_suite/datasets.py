@@ -51,6 +51,21 @@ def materialize_manifest(directory: Path) -> dict[str, Any]:
     return manifest
 
 
+def explorer_profile(manifest: dict[str, Any], workspace: Path) -> dict[str, Any]:
+    """The run's explorer launch profile (a profiles.yaml entry): ``configuration.profile`` of a suite
+    manifest (inline or as an object), ``profile`` of a manual one; empty when neither names one."""
+    configuration = manifest.get("configuration")
+    if isinstance(configuration, dict) and set(configuration) == {"object"}:
+        configuration = load_object(workspace, configuration["object"])
+    for candidate in (
+        manifest.get("profile"),
+        configuration.get("profile") if isinstance(configuration, dict) else None,
+    ):
+        if isinstance(candidate, dict) and candidate.get("package"):
+            return candidate
+    return {}
+
+
 def validate_file(path: Path, entry: dict[str, Any], kind: str) -> None:
     if file_hash(path) != entry["sha256"]:
         raise OSError("Artifact hash mismatch: " + str(path))

@@ -172,6 +172,35 @@ def paint_worker_tag(
     return width
 
 
+# ---------- Explorer tag ----------
+
+
+EXPLORER_TAG = TextStyle(11, 500, 11)
+
+
+def explorer_tag_width(tag: str) -> float:
+    """The explorer tag: the text with 5 px padding inside a 1 px ring (``.wtag``'s box)."""
+    return 2 + 10 + EXPLORER_TAG.advance(tag)
+
+
+def paint_explorer_tag(
+    painter: QtGui.QPainter, left: float, top: float, tag: str, theme: Theme
+) -> float:
+    """An external explorer's name on a profile row ("m-explore-ros2"): 11 px 500 ``text.secondary`` in the
+    worker tag's 19 px ``border.line`` ring (radius 3) whose top-left corner is (left, top); returns its width."""
+    width = explorer_tag_width(tag)
+    box_left = snap(left)
+    box = QtCore.QRectF(box_left, snap(top), snap(left + width) - box_left, 19)
+    painter.save()
+    painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+    painter.setPen(QtGui.QPen(theme.color("border.line"), 1))
+    painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
+    painter.drawPath(rounded_path(box.adjusted(0.5, 0.5, -0.5, -0.5), 2.5))
+    painter.restore()
+    draw_text(painter, left + 6, top + 4, tag, EXPLORER_TAG, theme.color("text.secondary"))
+    return width
+
+
 # ---------- Progress ring ----------
 
 

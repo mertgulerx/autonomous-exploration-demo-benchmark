@@ -18,6 +18,7 @@ No explorer node is instantiated for discovery. Values come from the pinned
 benchmark baseline; installed metadata describes the supported research inputs.
 """
 
+from array import array
 from copy import deepcopy
 import math
 from pathlib import Path
@@ -68,15 +69,45 @@ def parameter_values(messages):
         parameter = Parameter.from_parameter_msg(message)
         if parameter.type_ == Parameter.Type.NOT_SET:
             raise ValueError(f"Parameter has no value: {message.name}")
-        values[message.name] = parameter.value
+        value = parameter.value
+        # rclpy returns array.array for numeric array parameters; the schema compares with the YAML list type.
+        values[message.name] = value.tolist() if isinstance(value, array) else value
     return values
 
 
+def flatten(values, prefix=""):
+    """ROS parameter names of a nested ``ros__parameters`` mapping: nested keys join with dots."""
+    flat = {}
+    for key, value in values.items():
+        name = prefix + str(key)
+        if isinstance(value, dict):
+            flat.update(flatten(value, name + "."))
+        else:
+            flat[name] = value
+    return flat
+
+
+def nest(values):
+    """The nested mapping of dotted ROS parameter names (inverse of ``flatten``)."""
+    nested = {}
+    for name, value in values.items():
+        *parents, leaf = name.split(".")
+        level = nested
+        for parent in parents:
+            level = level.setdefault(parent, {})
+        level[leaf] = value
+    return nested
+
+
 class ParameterSchema:
-    def __init__(self, baseline, metadata):
-        self.defaults = yaml.safe_load(Path(baseline).read_text())["frontier_explorer"][
-            "ros__parameters"
-        ]
+    """The editable parameters of one explorer node (``node``): its Default file's ``ros__parameters`` as dotted
+    names, checked against the metadata of the same names."""
+
+    def __init__(self, baseline, metadata, node="frontier_explorer"):
+        self.node = node
+        self.defaults = flatten(
+            yaml.safe_load(Path(baseline).read_text())[node]["ros__parameters"]
+        )
         self.defaults["use_sim_time"] = True
         self.metadata = yaml.safe_load(Path(metadata).read_text())
         if set(self.metadata) != set(self.defaults):
@@ -129,13 +160,14 @@ class ParameterSchema:
             raise ValueError("Expected a nonempty ROS parameter mapping")
         values = {}
         for scope, node in data.items():
-            if scope not in ("frontier_explorer", "/frontier_explorer", "/**"):
+            if scope not in (self.node, "/" + self.node, "/**"):
                 raise ValueError(f"Unsupported parameter scope: {scope}")
             if not isinstance(node, dict) or set(node) != {"ros__parameters"}:
                 raise ValueError(f"{scope}: expected only ros__parameters")
             parameters = node["ros__parameters"]
             if not isinstance(parameters, dict):
                 raise ValueError(f"{scope}: ros__parameters must be a mapping")
+            parameters = flatten(parameters)
             if scope == "/**" and set(parameters) - {"use_sim_time"}:
                 raise ValueError("Wildcard scope supports only managed use_sim_time")
             if set(values) & set(parameters):
@@ -153,10 +185,9 @@ class ParameterSchema:
             values.update(deepcopy(overrides))
         return values
 
-    @staticmethod
-    def yaml(values):
+    def yaml(self, values):
         return yaml.safe_dump(
-            {"frontier_explorer": {"ros__parameters": values}}, sort_keys=False
+            {self.node: {"ros__parameters": nest(values)}}, sort_keys=False
         )
 
     def message(self):

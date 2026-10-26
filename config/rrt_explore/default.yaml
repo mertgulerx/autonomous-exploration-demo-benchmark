@@ -1,0 +1,19 @@
+# Benchmark Default of rrt-explore (rrt_explore): the shipped config/params.yaml of
+# github.com/acachathuranga/rrt-explore at 41054af8fb68d074ca4927773ecc96afcce8bb90 (BSD licence), unchanged except
+# where marked "benchmark" (docs/plans/EXTERNAL_EXPLORERS_RRT_TDLE.md, decisions E2 and X3). The shipped section
+# key "$(var namespace)/rrt" is the node rrt; the launch file runs it in the namespace /robot1 that
+# robot_frame_prefix and the robot ID 1 imply. use_sim_time is set by the benchmark.
+rrt:
+  ros__parameters:
+    map_topic: /map  # benchmark: the run's SLAM map (shipped /$(var namespace)/map)
+    costmap_topic: /global_costmap/costmap  # benchmark: Nav2's global costmap (shipped /$(var namespace)/global_costmap/costmap)
+    robot_base_frame: base_footprint                            # Without namespace (prefix)
+    robot_frame_prefix: robot                                   # robot is the prefix where frames are s.t. robot1/base_footprint, robot2/base_footprint
+    rate: 100.0
+    robot_count: 1
+
+    costmap_pixel_threshold: 30.0
+    info_radius: 1.0
+    hysteresis_radius: 3.0
+    hysteresis_gain: 2.0
+    eta: 1.0

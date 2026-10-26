@@ -42,6 +42,7 @@ from .gui_campaigns import (
 from .gui_controls import CountChip, Switch
 from .gui_profile_editor import Mode, ProfileEditor
 from .gui_profiles import ProfilesPage
+from .gui_profile_preview import DEFAULT_EXPLORER, default_explorer_of, with_explorer_views
 from .gui_menus import install_tooltips
 from .gui_theme import ThemeManager
 from .gui_topbar import TopBar
@@ -329,7 +330,7 @@ class Window(QtWidgets.QMainWindow):
             return
         if tag == "catalog":
             self.catalog_pending = False
-            self.catalog = result
+            self.catalog = with_explorer_views(result)
             self.fill_catalog()
         elif tag == "status":
             self.status_pending, self.status = False, result
@@ -659,12 +660,14 @@ class Window(QtWidgets.QMainWindow):
     def edit_builder_profile(self, robot: str, reference: Any) -> None:
         self.builder_profile_context = robot, reference
         self.builder_profile_tag = "builder-profile:" + uuid.uuid4().hex
+        explorer = default_explorer_of(robot, reference)
         if isinstance(reference, dict):
             self.transport.submit(self.builder_profile_tag, "parameters.resolve", reference)
-        elif reference == "Default":
-            self.transport.submit(
-                self.builder_profile_tag, "parameters.resolve", {"robot_id": robot}
-            )
+        elif explorer is not None:  # an explorer's Default: New starts from its values
+            params: dict[str, Any] = {"robot_id": robot}
+            if explorer != DEFAULT_EXPLORER:
+                params["explorer"] = explorer
+            self.transport.submit(self.builder_profile_tag, "parameters.resolve", params)
         else:
             self.transport.submit(self.builder_profile_tag, "profiles.get", {"id": reference})
 

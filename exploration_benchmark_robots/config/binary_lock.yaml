@@ -1695,6 +1695,7 @@ packages:
   ros-jazzy-parameter-traits: 0.7.6-1noble.20260911.140311
   ros-jazzy-pcl-conversions: 2.6.4-1noble.20260412.045759
   ros-jazzy-pcl-msgs: 1.0.0-9noble.20260412.035559
+  ros-jazzy-pcl-ros: 2.6.5-1noble.20260916.065720
   ros-jazzy-pendulum-control: 0.33.10-1noble.20260412.050614
   ros-jazzy-pendulum-msgs: 0.33.10-1noble.20260412.033002
   ros-jazzy-phidgets-api: 2.4.0-1noble.20260911.045430

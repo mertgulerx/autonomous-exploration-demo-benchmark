@@ -38,6 +38,14 @@ setup(
             "share/exploration_benchmark_runner/config/coverage",
             glob("config/coverage/*"),
         ),
+        (
+            "share/exploration_benchmark_runner/config/parameters",
+            glob("config/parameters/*.yaml"),
+        ),
+        (
+            "share/exploration_benchmark_runner/launch",
+            glob("launch/*.launch.py"),
+        ),
     ],
     install_requires=["setuptools"],
     zip_safe=True,
@@ -51,6 +59,7 @@ setup(
             "worker = exploration_benchmark_runner.worker:main",
             "benchmark = exploration_benchmark_runner.cli:main",
             "benchmark_reference = exploration_benchmark_runner.reference_builder:main",
+            "known_pose_odometry = exploration_benchmark_runner.known_pose_odometry:main",
         ]
     },
 )

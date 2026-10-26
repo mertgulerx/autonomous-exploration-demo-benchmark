@@ -308,6 +308,7 @@ std::shared_ptr<ParameterEditor::Service::Response> ParameterEditor::resolve(con
     auto request = std::make_shared<Service::Request>();
     request->yaml = yaml.toStdString();
     request->robot_id = full_catalog_.robot_id;
+    request->profile = full_catalog_.profile;
     if (yaml.isEmpty()) request->overrides = collect();
     if (!client_->wait_for_service(std::chrono::seconds(2)))
       throw std::runtime_error("Coordinator unavailable");

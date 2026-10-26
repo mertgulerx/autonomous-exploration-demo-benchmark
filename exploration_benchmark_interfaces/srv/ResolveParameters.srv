@@ -16,6 +16,8 @@
 string yaml
 # Robot catalog ID; empty: the catalog default robot.
 string robot_id
+# Explorer launch profile (ProfileCatalog id); empty: default.
+string profile
 rcl_interfaces/Parameter[] overrides
 ---
 bool accepted

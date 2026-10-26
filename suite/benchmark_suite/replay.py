@@ -32,7 +32,7 @@ from typing import Any
 import zlib
 
 from .contracts import canonical
-from .datasets import files
+from .datasets import explorer_profile, files
 from .protocol import MAX_MESSAGE
 from .insight import (
     CANDIDATE_VALUES,
@@ -273,6 +273,9 @@ def window(workspace: Path, attempt_id: str, start_ns: int, end_ns: int) -> dict
 
     reference = (manifest.get("coverage") or {}).get("reference") or {}
     available = bool(insight.get("started")) and bool(files(directory, "decisions"))
+    # An external explorer's run never starts the insight node (profiles.yaml ``insight: false``).
+    explorer = explorer_profile(manifest, workspace)
+    external = explorer.get("insight", True) is not True
     return dict(
         attempt_id=attempt_id,
         state="ready",
@@ -287,12 +290,17 @@ def window(workspace: Path, attempt_id: str, start_ns: int, end_ns: int) -> dict
             available=available,
             reason=None
             if available
+            else "No decision insight for "
+            + str(explorer.get("label") or explorer.get("framework") or "this explorer")
+            if external
             else insight.get("reason")
             or (
                 "No explorer analysis for this run"
                 if insight
                 else "No explorer analysis: the run predates the insight node"
             ),
+            # False: the run's explorer has no frontier insight at all (an external explorer)
+            explorer_insight=not external,
             world_placed=alignment is not None,
             rows_not_recorded=manifest.get("recording_dropped_insight"),
         ),

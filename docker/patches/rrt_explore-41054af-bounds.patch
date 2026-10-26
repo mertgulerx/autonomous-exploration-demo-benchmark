@@ -1,0 +1,100 @@
+--- a/src/functions.cpp
++++ b/src/functions.cpp
+@@ -1,4 +1,5 @@
+ #include <rrt_explore/functions.hpp>
++#include <cmath>
+ 
+ 
+ // rdm class, for gentaring random flot numbers
+@@ -77,6 +78,8 @@
+   //map data:  100 occupied      -1 unknown       0 free
+   float indx=(  floor((Xp[1]-Xstarty)/resolution)*width)+( floor((Xp[0]-Xstartx)/resolution) );
+ 
++  // Bounds check (benchmark build patch): outside the grid reads as unknown (-1).
++  if (!std::isfinite(indx) || indx < 0 || static_cast<double>(indx) >= static_cast<double>(Data.size())) return -1;
+   return Data[int(indx)];
+ }
+ 
+--- a/src/rrt.cpp
++++ b/src/rrt.cpp
+@@ -36,9 +36,21 @@
+ 
+ #include "rrt_explore/rrt.hpp"
+ 
++#include <cmath>
++
+ using namespace exploration;
+ using std::placeholders::_1;
+ 
++// Bounds check (benchmark build patch): a grid index outside the grid reads as unknown (-1), as an occupancy
++// grid treats the space beyond its extent; in-range reads are unchanged.
++static int cellOrUnknown(const nav_msgs::msg::OccupancyGrid & grid, double index)
++{
++    if (!std::isfinite(index) || index < 0.0 || index >= static_cast<double>(grid.data.size())) {
++        return -1;
++    }
++    return grid.data[static_cast<size_t>(index)];
++}
++
+ RRT::RRT() : Node("RRT_node")
+ {
+     /*------- Fetch parameters ------*/
+@@ -233,13 +245,13 @@
+ 
+             // Check surrounding cells
+             int idx = (floor((y_-mapData.info.origin.position.y)/mapData.info.resolution)*mapData.info.width)+(floor((x_+mapData.info.resolution-mapData.info.origin.position.x)/mapData.info.resolution));
+-            tempResult[0] = mapData.data[idx];
++            tempResult[0] = cellOrUnknown(mapData, idx);
+             idx = floor((y_+mapData.info.resolution-mapData.info.origin.position.y)/mapData.info.resolution)*mapData.info.width+floor((x_-mapData.info.origin.position.x)/mapData.info.resolution);
+-            tempResult[1] = mapData.data[idx];
++            tempResult[1] = cellOrUnknown(mapData, idx);
+             idx = (floor((y_-mapData.info.origin.position.y)/mapData.info.resolution)*mapData.info.width)+(floor((x_-mapData.info.resolution-mapData.info.origin.position.x)/mapData.info.resolution));
+-            tempResult[2] = mapData.data[idx];
++            tempResult[2] = cellOrUnknown(mapData, idx);
+             idx = (floor((y_-mapData.info.resolution-mapData.info.origin.position.y)/mapData.info.resolution)*mapData.info.width)+(floor((x_-mapData.info.origin.position.x)/mapData.info.resolution));
+-            tempResult[3] = mapData.data[idx];
++            tempResult[3] = cellOrUnknown(mapData, idx);
+             // if surring pixels are all unknown, elminate it.
+             if( (tempResult[0]+tempResult[1]+tempResult[2]+tempResult[3]) == -4){
+                 frontiers_.erase(frontiers_.begin() + i);
+@@ -440,10 +452,10 @@
+     {
+         float loc_x = target->x * mapData.info.resolution + mapData.info.origin.position.x;
+         float loc_y = target->y * mapData.info.resolution + mapData.info.origin.position.y;
+-        int index_costmap = (loc_y - costmapData.info.origin.position.y) / costmapData.info.resolution * costmapData.info.width +
++        double index_costmap = (loc_y - costmapData.info.origin.position.y) / costmapData.info.resolution * costmapData.info.width +
+                             (loc_x - costmapData.info.origin.position.x)/costmapData.info.resolution;
+         
+-        if (costmapData.data[index_costmap] > MAP_PIXEL_FREE) {
++        if (cellOrUnknown(costmapData, index_costmap) > MAP_PIXEL_FREE) {
+             target = target_list.erase(target);
+         } else {
+             target++;
+@@ -712,9 +724,9 @@
+ double RRT::mapValue(const nav_msgs::msg::OccupancyGrid & mapDataIn, const geometry_msgs::msg::PointStamped & point){
+     _mt.lock();
+     double tempResult;
+-    int idx;
++    double idx;
+     idx = (floor((point.point.y-mapDataIn.info.origin.position.y)/mapDataIn.info.resolution)*mapDataIn.info.width)+(floor((point.point.x-mapDataIn.info.origin.position.x)/mapDataIn.info.resolution));
+-    tempResult = mapDataIn.data[idx];
++    tempResult = cellOrUnknown(mapDataIn, idx);
+     _mt.unlock();
+     return tempResult;
+ }
+@@ -744,6 +756,7 @@
+             int endIdxCircle   = end   - temp;
+             
+             for(int j = startIdxCircle; j < endIdxCircle; j++){
++                if (j < 0) continue;  // bounds check (benchmark build patch)
+                 switch(mapDataIn.data[j]){
+                     case  -1: {infoGainValue++; break;}
+                     case 100: {infoGainValue--; break;}
+@@ -801,6 +814,7 @@
+     if((uint)last_index < mapDataIn.data.size()){
+         for(int i = 0; i < 2 * r_region + 1; i++){
+             for(int j = start; j < end; j++){
++                if (j < 0) continue;  // bounds check (benchmark build patch)
+                 switch(mapDataIn.data[j]){
+                     case  -1: {infoGainValue++; break;}
+                     case 100: {infoGainValue--; break;}

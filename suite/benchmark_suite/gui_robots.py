@@ -33,7 +33,19 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from . import gui_icons
 from .gui_controls import BadgeLook, paint_badge
 from .gui_menus import show_tooltip
-from .gui_profile_preview import BASELINE, ProfilePreview, profile_key as _key
+from .gui_marks import explorer_tag_width, paint_explorer_tag
+from .gui_profile_preview import (
+    BASELINE,
+    DEFAULT_EXPLORER,
+    EXTERNAL_BASELINE,
+    ProfilePreview,
+    default_explorer_of,
+    default_key,
+    default_reference,
+    explorer_tag,
+    profile_explorer,
+    profile_key as _key,
+)
 from .gui_style import humanize
 from .gui_support import Transport
 from .gui_theme import Mark, ThemeManager, paint_check, snap
@@ -88,8 +100,9 @@ def robot_columns(width: float) -> int:
 
 
 def _label(robot_id: str, reference: Reference) -> str:
-    if _key(robot_id, reference) == "default":
-        return "Default"
+    explorer = default_explorer_of(robot_id, reference)
+    if explorer is not None:
+        return "Default" if explorer == DEFAULT_EXPLORER else f"{explorer} Default"
     if isinstance(reference, dict):
         return str(reference.get("name") or "Campaign snapshot")
     return str(reference)
@@ -463,19 +476,21 @@ class ProfileEntry:
     key: str
     name: str
     origin: Literal["default", "library", "snapshot"]
+    # an external explorer's name, shown as a tag on its saved profiles (its Default's name holds it)
+    tag: str = ""
 
     @property
     def detail(self) -> str:
         """What the profile is, as searched: "Robot-aware baseline", "Saved profile", "Campaign snapshot"."""
         if self.origin == "default":
-            return BASELINE
+            return BASELINE if self.key == "default" else EXTERNAL_BASELINE
         if self.origin == "snapshot":
             return "Campaign snapshot"
         return "Saved profile"
 
     @property
     def search(self) -> str:
-        return (self.name + " " + self.detail).casefold()
+        return (self.name + " " + self.detail + " " + self.tag).casefold()
 
 
 class ProfileList(Themed):
@@ -718,10 +733,14 @@ class ProfileList(Themed):
         style = CURRENT_NAME if current else BODY
         baseline = entry.origin == "default"
         extra = BODY.advance("baseline") + 10 if baseline else 0.0
+        tag = "" if baseline else entry.tag
+        extra += explorer_tag_width(tag) + 8 if tag else 0.0
         name = style.elide(entry.name, max(0.0, right - 46 - extra))
         x = 46 + draw_text(painter, 46, line_top, name, style, theme.color("text.ink"))
         if baseline:
             draw_text(painter, x + 10, line_top, "baseline", BODY, theme.color("text.tertiary"))
+        elif tag:
+            paint_explorer_tag(painter, x + 8, line_top - 0.5, tag, theme)
 
 
 class ProfilesPopup(PopupCard):
@@ -1016,14 +1035,13 @@ class RobotSelector(QtWidgets.QWidget):
         current: dict[str, dict[str, Any]] = {}
         for row in rows:
             identity = str(row.get("id", ""))
-            if not identity or identity in ("Default", "default-" + robot_id):
+            if not identity or default_explorer_of(robot_id, identity) is not None:
                 continue
             current[identity] = deepcopy(row)
         selected_ids = {
             reference
             for reference in self._references.get(robot_id, [])
-            if isinstance(reference, str)
-            and reference not in ("Default", "default", "default-" + robot_id)
+            if isinstance(reference, str) and default_explorer_of(robot_id, reference) is None
         }
         # An edit saves the profile under a new ID and deletes the old row: the selection follows its family.
         families = {
@@ -1053,10 +1071,9 @@ class RobotSelector(QtWidgets.QWidget):
 
     def add_profile(self, robot_id: str, reference: Reference, name: str) -> None:
         profile_reference = deepcopy(reference)
-        if isinstance(profile_reference, str) and profile_reference not in (
-            "Default",
-            "default",
-            "default-" + robot_id,
+        if (
+            isinstance(profile_reference, str)
+            and default_explorer_of(robot_id, profile_reference) is None
         ):
             self._saved.setdefault(robot_id, {}).setdefault(
                 profile_reference, {"id": profile_reference, "name": name}
@@ -1213,15 +1230,30 @@ class RobotSelector(QtWidgets.QWidget):
     def _profile_entries(self, robot_id: str) -> list[ProfileEntry]:
         """Default, the saved profiles, then selected profiles the library does not list (campaign
         snapshots, saved profiles past the first 250)."""
-        entries = [ProfileEntry("Default", "default", "Default", "default")]
+        robot = next((r for r in self._catalog if r["id"] == robot_id), {})
+        views = robot.get("explorer_views") or {}
+        # Each explorer's Default (frontier_exploration_ros2's first), named as the engine names it.
+        entries = [
+            ProfileEntry(
+                default_reference(robot_id, explorer),
+                default_key(explorer),
+                "Default"
+                if explorer == DEFAULT_EXPLORER
+                else f"{explorer_tag(robot, explorer)} Default",
+                "default",
+            )
+            for explorer in (list(views) or [DEFAULT_EXPLORER])
+        ]
         saved = self._saved.get(robot_id, {})
         # The engine lists profiles newest first; the design lists them oldest first (04, 13).
         for identity, row in sorted(saved.items(), key=lambda item: _created(item[1])):
             key = _key(robot_id, identity)
-            if key == "default":
+            if key.startswith("default"):
                 continue
             name = str(row.get("name") or identity)
-            entries.append(ProfileEntry(identity, key, name, "library"))
+            explorer = profile_explorer(row)
+            tag = "" if explorer == DEFAULT_EXPLORER else explorer_tag(robot, explorer)
+            entries.append(ProfileEntry(identity, key, name, "library", tag))
         known = {entry.key for entry in entries}
         for reference in self._references.get(robot_id, []):
             key = _key(robot_id, reference)
@@ -1231,7 +1263,9 @@ class RobotSelector(QtWidgets.QWidget):
             if isinstance(reference, dict):
                 if name.casefold() == "default":
                     name = "Default · campaign snapshot"
-                entries.append(ProfileEntry(deepcopy(reference), key, name, "snapshot"))
+                explorer = profile_explorer(reference)
+                tag = "" if explorer == DEFAULT_EXPLORER else explorer_tag(robot, explorer)
+                entries.append(ProfileEntry(deepcopy(reference), key, name, "snapshot", tag))
             else:
                 entries.append(ProfileEntry(reference, key, name, "library"))
             known.add(key)

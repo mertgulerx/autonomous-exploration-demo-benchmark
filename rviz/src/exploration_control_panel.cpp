@@ -135,12 +135,19 @@ ExplorationControlPanel::ExplorationControlPanel(QWidget* parent) : rviz_common:
     row.label = new QLineEdit(i == 0 ? "Default" : QString("Variant %1").arg(i));
     row.label->setPlaceholderText("Configuration label");
     row.label->setObjectName(QString("benchmark_label_%1").arg(i));
+    row.explorer = new QComboBox;
+    row.explorer->setObjectName(QString("benchmark_explorer_%1").arg(i));
+    row.explorer->setToolTip("Explorer (launch profile) of this run");
     row.editor = new QPushButton("Edit Parameters (Default)");
     row.editor->setObjectName(QString("benchmark_edit_%1").arg(i));
     layout->addWidget(row.label, 0, 0);
-    layout->addWidget(row.editor, 1, 0);
+    layout->addWidget(row.explorer, 0, 1);
+    layout->addWidget(row.editor, 1, 0, 1, 2);
+    layout->setColumnStretch(0, 1);
     connect(row.editor, &QPushButton::clicked, this,
             [this, i]() { editParameters(static_cast<size_t>(i)); });
+    connect(row.explorer, QOverload<int>::of(&QComboBox::currentIndexChanged), this,
+            [this, i]() { explorerChanged(static_cast<size_t>(i)); });
     row.widget->setVisible(i == 0);
     settings->addWidget(row.widget);
     rows_.push_back(row);
@@ -242,8 +249,9 @@ ExplorationControlPanel::ExplorationControlPanel(QWidget* parent) : rviz_common:
         QMetaObject::invokeMethod(
             this, [this, message]() { scenarioReceived(*message); }, Qt::QueuedConnection);
       });
+  // The coordinator latches one ParameterCatalog per explorer profile: keep them all.
   parameter_sub_ = metrics_node_->create_subscription<interfaces::msg::ParameterCatalog>(
-      session_root_ + "/parameters", retained,
+      session_root_ + "/parameters", rclcpp::QoS(16).reliable().transient_local(),
       [this](interfaces::msg::ParameterCatalog::SharedPtr message)
       {
         QMetaObject::invokeMethod(
@@ -353,8 +361,33 @@ void ExplorationControlPanel::onInitialize()
 }
 void ExplorationControlPanel::catalogReceived(const interfaces::msg::ProfileCatalog& catalog)
 {
-  if (catalog.profiles.size() != 1 || catalog.profiles.front().id != "default")
+  profile_catalog_ = catalog;
+  if (std::none_of(catalog.profiles.begin(), catalog.profiles.end(),
+                   [](const auto& profile) { return profile.id == "default"; }))
     setStatusText("Rebuild the workspace: expected the Default frontier configuration");
+  for (size_t i = 0; i < rows_.size(); ++i)
+  {
+    auto* combo = rows_[i].explorer;
+    auto selected = combo->currentData().toString();
+    if (selected.isEmpty())
+      selected = i < catalog.default_comparison.size()
+                     ? QString::fromStdString(catalog.default_comparison[i])
+                     : QString("default");
+    combo->blockSignals(true);
+    combo->clear();
+    for (const auto& profile : catalog.profiles)
+    {
+      combo->addItem(QString::fromStdString(profile.label), QString::fromStdString(profile.id));
+      combo->setItemData(combo->count() - 1, QString::fromStdString(profile.framework),
+                         Qt::ToolTipRole);
+    }
+    combo->setCurrentIndex(std::max(0, combo->findData(selected)));
+    combo->blockSignals(false);
+    // A row whose explorer disappeared from the catalog loses its parameters.
+    if (combo->currentData().toString() != selected) rows_[i].parameters.clear();
+    updateEditorText(i);
+  }
+  stateReceived(session_state_);
 }
 void ExplorationControlPanel::scenarioReceived(const interfaces::msg::ScenarioCatalog& catalog)
 {
@@ -373,8 +406,12 @@ void ExplorationControlPanel::scenarioReceived(const interfaces::msg::ScenarioCa
 void ExplorationControlPanel::parameterCatalogReceived(
     const interfaces::msg::ParameterCatalog& catalog)
 {
-  baseline_parameter_catalog_ = catalog;
-  parameter_catalog_ = catalog;
+  // One latched catalog per explorer profile; an empty profile is the default (older coordinators).
+  const auto profile = catalog.profile.empty() ? std::string("default") : catalog.profile;
+  auto& baseline = baseline_parameter_catalogs_[profile];
+  baseline = catalog;
+  baseline.profile = profile;
+  parameter_catalogs_[profile] = baseline;
   robotChanged();
   stateReceived(session_state_);
 }
@@ -407,41 +444,81 @@ void ExplorationControlPanel::robotChanged()
                           .arg(found->max_linear_speed).arg(found->max_angular_speed)
                           .arg(found->physics_step * 1000.0)
                        : QString()) + QString::fromStdString(found->reason));
-  auto previous = parameter_catalog_;
-  parameter_catalog_ = baseline_parameter_catalog_;
-  parameter_catalog_.robot_id = found->id;
-  for (auto& definition : parameter_catalog_.parameters)
+  const auto previous = parameter_catalogs_;
+  for (auto& [profile, catalog] : parameter_catalogs_)
   {
-    // Robot-derived Defaults, as the coordinator's robot_parameter_schema sets them.
-    if (definition.name == "max_linear_speed_vmax")
-      definition.default_value.double_value = found->max_linear_speed;
-    else if (definition.name == "max_angular_speed_wmax")
-      definition.default_value.double_value = found->max_angular_speed;
-    else if (definition.name == "goal_preemption_lidar_range_m")
-      definition.default_value.double_value = found->lidar_range;
-    else
-      continue;
-    for (auto& row : rows_)
-      for (auto& parameter : row.parameters)
-        for (const auto& old : previous.parameters)
-          if (parameter.name == definition.name && old.name == definition.name &&
-              parameter.value == old.default_value)
-            parameter.value = definition.default_value;
+    catalog = baseline_parameter_catalogs_.at(profile);
+    catalog.robot_id = found->id;
   }
+  // Robot-derived Defaults belong to the Default explorer only (robot_defaults in profiles.yaml).
+  auto current = parameter_catalogs_.find("default");
+  if (current != parameter_catalogs_.end())
+  {
+    const auto& old_catalog = previous.at("default");
+    for (auto& definition : current->second.parameters)
+    {
+      // Robot-derived Defaults, as the coordinator's robot_parameter_schema sets them.
+      if (definition.name == "max_linear_speed_vmax")
+        definition.default_value.double_value = found->max_linear_speed;
+      else if (definition.name == "max_angular_speed_wmax")
+        definition.default_value.double_value = found->max_angular_speed;
+      else if (definition.name == "goal_preemption_lidar_range_m")
+        definition.default_value.double_value = found->lidar_range;
+      else
+        continue;
+      for (size_t i = 0; i < rows_.size(); ++i)
+      {
+        if (rowProfile(i) != "default") continue;
+        for (auto& parameter : rows_[i].parameters)
+          for (const auto& old : old_catalog.parameters)
+            if (parameter.name == definition.name && old.name == definition.name &&
+                parameter.value == old.default_value)
+              parameter.value = definition.default_value;
+      }
+    }
+  }
+  stateReceived(session_state_);
+}
+std::string ExplorationControlPanel::rowProfile(size_t index) const
+{
+  const auto profile = rows_.at(index).explorer->currentData().toString().toStdString();
+  return profile.empty() ? std::string("default") : profile;
+}
+const interfaces::msg::ParameterCatalog* ExplorationControlPanel::rowCatalog(size_t index) const
+{
+  auto found = parameter_catalogs_.find(rowProfile(index));
+  if (found == parameter_catalogs_.end() || found->second.parameters.empty()) return nullptr;
+  return &found->second;
+}
+void ExplorationControlPanel::updateEditorText(size_t index)
+{
+  auto& row = rows_.at(index);
+  const auto* catalog = rowCatalog(index);
+  size_t changed = 0;
+  if (catalog)
+    for (const auto& parameter : row.parameters)
+      for (const auto& definition : catalog->parameters)
+        if (parameter.name == definition.name && parameter.value != definition.default_value)
+          ++changed;
+  row.editor->setText(changed ? QString("Edit Parameters (%1 changed)").arg(changed)
+                              : "Edit Parameters (Default)");
+}
+void ExplorationControlPanel::explorerChanged(size_t index)
+{
+  // Parameters belong to one explorer's schema: a new explorer starts from its Default.
+  rows_.at(index).parameters.clear();
+  updateEditorText(index);
   stateReceived(session_state_);
 }
 void ExplorationControlPanel::editParameters(size_t index)
 {
-  ParameterEditor editor(parameter_catalog_, rows_.at(index).parameters, parameter_client_, this);
+  const auto* catalog = rowCatalog(index);
+  if (!catalog) return;
+  ParameterEditor editor(*catalog, rows_.at(index).parameters, parameter_client_, this);
+  editor.setWindowTitle("Explorer Parameters: " + rows_[index].explorer->currentText());
   if (editor.exec() != QDialog::Accepted) return;
   rows_[index].parameters = editor.parameters();
-  size_t changed = 0;
-  for (const auto& parameter : rows_[index].parameters)
-    for (const auto& definition : parameter_catalog_.parameters)
-      if (parameter.name == definition.name && parameter.value != definition.default_value)
-        ++changed;
-  rows_[index].editor->setText(changed ? QString("Edit Parameters (%1 changed)").arg(changed)
-                                       : "Edit Parameters (Default)");
+  updateEditorText(index);
 }
 void ExplorationControlPanel::startSingle()
 {
@@ -449,7 +526,7 @@ void ExplorationControlPanel::startSingle()
   message->world = world_->currentData().toString().toStdString();
   message->robot_id = robot_->currentData().toString().toStdString();
   message->simulation_time_limit = limit_->value();
-  message->spec.profile = "default";
+  message->spec.profile = rowProfile(0);
   message->spec.label = rows_[0].label->text().toStdString();
   message->spec.overrides = rows_[0].parameters;
   request<interfaces::srv::StartSingleRun>(single_client_, message);
@@ -463,7 +540,7 @@ void ExplorationControlPanel::startComparison()
   for (int i = 0; i < count_->value(); ++i)
   {
     interfaces::msg::RunSpec spec;
-    spec.profile = "default";
+    spec.profile = rowProfile(static_cast<size_t>(i));
     spec.label = rows_[i].label->text().toStdString();
     spec.overrides = rows_[i].parameters;
     message->runs.push_back(spec);
@@ -633,6 +710,9 @@ void ExplorationControlPanel::stateReceived(const interfaces::msg::SessionState&
   path_reset_button_->setEnabled(false);
   map_reset_button_->setEnabled(false);
   return_start_button_->setEnabled(live && navigate_to_pose_client_->action_server_is_ready());
+  bool rows_catalogued = true;
+  for (int i = 0; i < count_->value(); ++i)
+    rows_catalogued = rows_catalogued && rowCatalog(static_cast<size_t>(i)) != nullptr;
   const bool configured = !state.session_id.empty() &&
                           std::any_of(robot_catalog_.robots.begin(), robot_catalog_.robots.end(),
                             [this](const auto& p) {
@@ -640,11 +720,11 @@ void ExplorationControlPanel::stateReceived(const interfaces::msg::SessionState&
                                   std::find(p.worlds.begin(), p.worlds.end(), world_->currentData().toString().toStdString()) != p.worlds.end();
                             }) &&
                           !world_->currentData().toString().isEmpty() &&
-                          !parameter_catalog_.parameters.empty() && state.mode != "SWITCHING" &&
+                          rows_catalogued && state.mode != "SWITCHING" &&
                           state.mode != "STOPPING";
   comparison_button_->setEnabled(configured && !(comparison && state.busy));
   start_single_button_->setEnabled(configured && !(single && state.busy));
-  for (auto& row : rows_) row.editor->setEnabled(!parameter_catalog_.parameters.empty());
+  for (size_t i = 0; i < rows_.size(); ++i) rows_[i].editor->setEnabled(rowCatalog(i) != nullptr);
   stop_all_button_->setEnabled(comparison && state.busy);
   single_mode_button_->setEnabled(state.mode != "SWITCHING" && state.mode != "IDLE" &&
                                   state.mode != "STOPPING");

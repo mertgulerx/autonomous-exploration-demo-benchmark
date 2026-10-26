@@ -774,6 +774,14 @@ class RunCard(Card):
         self._show_body()
         self.view_changed.emit(index)
 
+    def set_decisions_shown(self, shown: bool) -> None:
+        """Leave out the Decisions view for a run whose explorer has no decision insight (an external
+        explorer); Map & metrics replaces it when it was open."""
+        if not shown and self.views.index() == self.DECISIONS:
+            self.show_view(self.MAP)
+        self.views.set_segment_shown(self.DECISIONS, shown)
+        self.relayout()
+
     def _show_body(self) -> None:
         current = self.bodies[self.views.index()]
         for body in dict.fromkeys(self.bodies):
@@ -946,6 +954,9 @@ class MonitorPage(QtWidgets.QWidget):
         self.layer_revisions: dict[str, int] = {}
         self.visible = load_visible()
         self.insight_supported = True  # False once the engine rejects the explorer insight layers
+        # "No decision insight for <label>" while the shown run's explorer has no frontier insight
+        # (profiles.yaml ``insight: false``): its analysis layers and the Decisions view are left out.
+        self.explorer_note = ""
         self.decisions_view = False
         # Replay of a finished run (screen 20): the run, its final metrics, the Results lookup.
         self.replayer = ReplayController(transport, self)
@@ -1081,6 +1092,8 @@ class MonitorPage(QtWidgets.QWidget):
             self._show_run(selected)
             if self.active_page:
                 self.inspect_selected()
+                if self.monitor_id == selected["attempt"]["id"]:
+                    self.update_explorer_note(self.explorer_note_of(selected))
         elif self.monitor_id or (self.shown_run and self.selected_attempt):
             self._run_ended()
         self._update_head()
@@ -1273,6 +1286,7 @@ class MonitorPage(QtWidgets.QWidget):
         self.layer_revisions = {}
         self.live_map.insight.clear()
         self.live_map.insight.available = None if self.insight_supported else False
+        self.set_explorer_note(self.explorer_note_of(active))
         self.refresh_decisions()
         self.reference_mismatch = False
         self.live_map.set_layers(self.live)
@@ -1284,6 +1298,43 @@ class MonitorPage(QtWidgets.QWidget):
         self.set_legend_status("Waiting for the worker", False)
         self.monitor_timer.start()
 
+    def explorer_note_of(self, run: Mapping[str, Any]) -> str:
+        """The note for a run whose explorer has no decision insight (empty when it has it): the engine names
+        the run's explorer (``explorer``, a profiles.yaml ID) and the catalog its ``insight`` flag."""
+        explorer = run.get("explorer")
+        if not isinstance(explorer, str):
+            return ""
+        entry = next(
+            (
+                e
+                for e in self.catalog.get("explorers") or []
+                if isinstance(e, dict) and e.get("id") == explorer
+            ),
+            None,
+        )
+        if entry is None or entry.get("insight") is not False:
+            return ""
+        return "No decision insight for " + str(entry.get("label") or explorer)
+
+    def set_explorer_note(self, note: str) -> None:
+        """Hide (``note``) or show the analysis layers and the Decisions view for the shown run."""
+        self.explorer_note = note
+        if note:
+            insight = self.live_map.insight
+            insight.available, insight.reason = False, note
+        self.card.set_decisions_shown(not note)
+
+    def update_explorer_note(self, note: str) -> None:
+        """Follow a changed explorer note of the inspected run (a status that named its explorer late)."""
+        if note == self.explorer_note:
+            return
+        if not note:
+            insight = self.live_map.insight
+            insight.available = None if self.insight_supported else False
+            insight.reason = ""
+        self.set_explorer_note(note)
+        self.refresh_decisions()
+
     def close_monitor(self) -> None:
         self.monitor_id = None
         self.monitor_timer.stop()
@@ -1293,7 +1344,9 @@ class MonitorPage(QtWidgets.QWidget):
             return
         layers = [
             name
-            for name in engine_layers(self.visible, self.decisions_view, self.insight_supported)
+            for name in engine_layers(
+                self.visible, self.decisions_view, self.insight_supported, not self.explorer_note
+            )
             if not (name == "explored" and self.reference_mismatch)
         ]
         self.monitor_pending = True
@@ -1357,7 +1410,9 @@ class MonitorPage(QtWidgets.QWidget):
         age = self.insight_figures().get("age_simulation_seconds")
         if live and isinstance(age, (int, float)):
             text += f" · analysis {age:.1f} s old"
-        self.set_legend_status(" · ".join([text, *notes]), live)
+        # an external explorer's note leads, so the chip never elides it
+        lead = [self.explorer_note] if self.explorer_note else []
+        self.set_legend_status(" · ".join([*lead, text, *notes]), live)
 
     # ---------- layers and explorer insight ----------
 
@@ -1366,7 +1421,9 @@ class MonitorPage(QtWidgets.QWidget):
         host = self.window().findChild(PopupHost)
         if host is None:
             return
-        disabled = disabled_layers(self.live_map.insight, self.insight_supported)
+        disabled = disabled_layers(
+            self.live_map.insight, self.insight_supported, not self.explorer_note
+        )
         menu = LayerMenu(self.themes, self.visible, disabled)
         menu.changed.connect(self.set_visible)
         controls = self.live_map.layer_controls
@@ -1453,7 +1510,7 @@ class MonitorPage(QtWidgets.QWidget):
         self.decisions_column.set_state(
             decisions, figures, status, live, insight.available, insight.reason
         )
-        disabled = disabled_layers(insight, self.insight_supported)
+        disabled = disabled_layers(insight, self.insight_supported, not self.explorer_note)
         self.legend.set_visible(self.visible - disabled.keys())
         self.decisions_column.set_marks(insight.pinned, insight.hovered)
 
@@ -1574,6 +1631,11 @@ class MonitorPage(QtWidgets.QWidget):
         available = data.analysis.get("available")
         insight.available = available if isinstance(available, bool) else None
         insight.reason = str(data.analysis.get("reason") or "")
+        if (data.analysis.get("explorer_insight") is False) != bool(self.explorer_note):
+            # an external explorer's run: the engine's reason names it
+            self.set_explorer_note(
+                insight.reason if data.analysis.get("explorer_insight") is False else ""
+            )
         self.live_map.update()
         self._update_timeline()
         elapsed = (time_ns - data.zero_ns) / 1e9
@@ -1641,15 +1703,23 @@ class MonitorPage(QtWidgets.QWidget):
             if isinstance(percent, (int, float)) and isinstance(target, (int, float)):
                 metrics["coverage_covered_m2"] = percent / 100 * target
         milestones = []
+        # The coverage sample shown: a valid one at or above a milestone means that milestone was reached by now,
+        # also when the replay's last frame precedes the sample that set it (the stop sample of coverage-stop-v2).
+        sample_percent = (
+            metrics.get("coverage_percent") if metrics.get("coverage_status") == "valid" else None
+        )
         for entry in final.get("coverage_milestones") or []:
             if not isinstance(entry, dict):
                 continue
             seconds = entry.get("simulation_elapsed")
-            reached = (
-                bool(entry.get("reached"))
-                and elapsed is not None
-                and isinstance(seconds, (int, float))
-                and seconds <= elapsed
+            share = entry.get("percent")
+            reached = bool(entry.get("reached")) and (
+                (elapsed is not None and isinstance(seconds, (int, float)) and seconds <= elapsed)
+                or (
+                    isinstance(sample_percent, (int, float))
+                    and isinstance(share, (int, float))
+                    and sample_percent >= share
+                )
             )
             milestones.append(dict(entry, reached=reached))
         metrics["coverage_milestones"] = milestones

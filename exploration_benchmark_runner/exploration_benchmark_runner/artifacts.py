@@ -195,10 +195,15 @@ class Recorder:
                 line.split("\t", 1) for line in installed.splitlines() if "\t" in line
             ),
         )
-        framework_path = Path(root) / "exploration_packages/frontier_exploration_ros2"
-        self.manifest["framework_source"] = dict(
-            path=str(framework_path), **revision(framework_path)
-        )
+        # The explorer's source: our submodule's revision, or an external explorer's pinned archive (profiles.yaml).
+        source = profile.get("source", {"path": "exploration_packages/frontier_exploration_ros2"})
+        if "path" in source:
+            framework_path = Path(root) / source["path"]
+            self.manifest["framework_source"] = dict(
+                path=str(framework_path), **revision(framework_path)
+            )
+        else:
+            self.manifest["framework_source"] = dict(source)
         result = subprocess.run(
             ["gz", "sim", "--versions"], capture_output=True, text=True, timeout=5
         )

@@ -23,9 +23,13 @@ import yaml
 GAZEBO_SEED = 1234
 
 
-def robot_parameter_schema(schema, robot):
+def robot_parameter_schema(schema, robot, profile=None):
+    """The schema with the robot-derived Defaults of explorers that use them (``robot_defaults`` in
+    ``profiles.yaml``; frontier_exploration_ros2 only); other explorers' schemas are returned unchanged."""
     from copy import deepcopy
 
+    if profile is not None and not profile.get("robot_defaults", False):
+        return schema
     schema = deepcopy(schema)
     # Robot-derived Defaults: the scoring speed estimates and the preemption gate's lidar
     # range follow the robot's catalog limits and sensor (D-07, 25 October 2026).
@@ -83,8 +87,16 @@ class Catalog:
         self.default_comparison = data["default_comparison"]
         from .parameters import ParameterSchema
 
-        baseline = self.parameters(Specification())
-        self.schema = ParameterSchema(baseline, Path(path).parent / "parameters.yaml")
+        # One schema per explorer profile: its Default file, metadata and parameter scope.
+        self.schemas = {
+            name: ParameterSchema(
+                self.parameters(Specification(profile=name)),
+                Path(path).parent / profile["metadata"],
+                profile["node"],
+            )
+            for name, profile in self.profiles.items()
+        }
+        self.schema = self.schemas["default"]
 
     def parameters(self, spec):
         if spec.parameter_file:
@@ -99,8 +111,8 @@ class Catalog:
             / profile["parameters"]
         )
 
-    def schema_for_robot(self, robot):
-        return robot_parameter_schema(self.schema, robot)
+    def schema_for_robot(self, robot, profile="default"):
+        return robot_parameter_schema(self.schemas[profile], robot, self.profiles[profile])
 
     def validate(self, specs, limit, comparison=True, robot=None):
         if comparison and not 2 <= len(specs) <= 4:
@@ -112,12 +124,16 @@ class Catalog:
                 "Simulation limit must be finite and nonnegative; zero disables it"
             )
         resolved = []
-        schema = self.schema_for_robot(robot) if robot else self.schema
         for spec in specs:
             if spec.profile not in self.profiles:
                 raise ValueError(
-                    f"Unknown profile: {spec.profile}; only default is supported"
+                    f"Unknown profile: {spec.profile}; choose {', '.join(self.profiles)}"
                 )
+            schema = (
+                self.schema_for_robot(robot, spec.profile)
+                if robot
+                else self.schemas[spec.profile]
+            )
             if len(spec.label) > 160 or "\n" in spec.label or "\r" in spec.label:
                 raise ValueError(
                     "Labels must be single-line strings of at most 160 characters"

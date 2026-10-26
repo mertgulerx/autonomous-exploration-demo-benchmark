@@ -19,6 +19,10 @@ values are kept), integer and float fields validate as before, an edit
 replaces the saved profile (the engine gives it a new ID under the same ``family_id``) while New saves another
 one, explorer YAML imports through
 ``parameters.resolve`` and exports the resolved values, and errors stay in the editor.
+
+A profile belongs to one explorer (``explorer``, a profiles.yaml ID; docs/plans/EXTERNAL_EXPLORERS.md): New
+chooses it beside the robot and the rows follow that explorer's parameter groups and Defaults; an edit keeps
+it, locked like the robot.
 """
 
 from copy import deepcopy
@@ -34,8 +38,12 @@ from .gui_cells import OverlayScrollBar
 from .gui_controls import KeySelect, Switch, UnderlineTabs
 from .gui_menus import show_tooltip
 from .gui_profile_preview import (
+    DEFAULT_EXPLORER,
+    default_title,
     editor_groups,
+    explorer_parts,
     parameter_label,
+    profile_explorer,
     value_text,
 )
 from .gui_review import first_sentence
@@ -78,15 +86,29 @@ NAME_X, DEFAULT_X, VALUE_X, RESET_X, COLUMN = 24, 682, 830, 978, 132
 ValueWidget = QtWidgets.QLineEdit | KeySelect
 
 
-class LockedField(Themed):
-    """``.input.lock``: the robot, which an edit cannot change: sunken, ``border.line``, a 14 px lock in
-    ``text.tertiary`` and the value in ``text.secondary``."""
+def nested(values: dict[str, Any]) -> dict[str, Any]:
+    """ROS parameters with dotted names as the nested mapping a parameter file holds (``ParameterSchema.yaml``)."""
+    result: dict[str, Any] = {}
+    for name, value in values.items():
+        *parents, leaf = name.split(".")
+        level = result
+        for parent in parents:
+            level = level.setdefault(parent, {})
+        level[leaf] = value
+    return result
 
-    def __init__(self, themes: ThemeManager, text: str, parent: QtWidgets.QWidget) -> None:
+
+class LockedField(Themed):
+    """``.input.lock``: the robot (or an edited profile's explorer), which an edit cannot change: sunken,
+    ``border.line``, a 14 px lock in ``text.tertiary`` and the value in ``text.secondary``."""
+
+    def __init__(
+        self, themes: ThemeManager, text: str, parent: QtWidgets.QWidget, what: str = "Robot"
+    ) -> None:
         super().__init__(themes, parent)
         self.text = text
-        self.setAccessibleName("Robot " + text)
-        self.setToolTip("The robot of a profile cannot change")
+        self.setAccessibleName(what + " " + text)
+        self.setToolTip(f"The {what.lower()} of a profile cannot change")
 
     def paintEvent(self, event: QtGui.QPaintEvent) -> None:
         painter = QtGui.QPainter(self)
@@ -102,17 +124,17 @@ class LockedField(Themed):
 
 
 class ChangeSummary(Themed, CssBox):
-    """``.efoot .sum``: "<b>3 changes</b> from <robot> Default"."""
+    """``.efoot .sum``: "<b>3 changes</b> from <robot> Default" (``title``: what follows "from")."""
 
-    def __init__(self, themes: ThemeManager, robot: str) -> None:
+    def __init__(self, themes: ThemeManager, title: str) -> None:
         super().__init__(themes)
-        self.robot, self.count = robot, 0
+        self.title, self.count = title, 0
         self.setFixedHeight(18)
 
     def parts(self) -> tuple[str, str]:
         if not self.count:
-            return "", f"No changes from {self.robot} Default"
-        return plural(self.count, "change"), f" from {self.robot} Default"
+            return "", f"No changes from {self.title}"
+        return plural(self.count, "change"), f" from {self.title}"
 
     def set_count(self, count: int) -> None:
         if count != self.count:
@@ -279,8 +301,9 @@ class RowsView(QtWidgets.QScrollArea):
 
 
 class ProfileEditor(ModalCard):
-    """``.dialog.modal`` (14), 1040×640: title, Robot (locked), Name and Description; the editor's group tabs
-    with change pills and "Changed only"; the column header (Parameter, "<robot> Default", Value); the rows;
+    """``.dialog.modal`` (14), 1040×640: title, Robot (locked), Explorer (a choice for New, locked for Edit), Name
+    and Description; the editor's group tabs with change pills and "Changed only"; the column header
+    (Parameter, "<robot> Default", Value); the rows;
     an error line when something failed; the footer with Import YAML, Export YAML, Reset to Default, the
     change count, Close and "Save changes" (Edit) or "Save profile" (New)."""
 
@@ -305,26 +328,42 @@ class ProfileEditor(ModalCard):
         robot_id = profile["robot_id"]
         robot = next(r for r in catalog["robots"] if r["id"] == robot_id)
         self.robot = robot
-        self.defaults: dict[str, Any] = robot["defaults"]
+        self.explorer = profile_explorer(profile)
+        self.defaults: dict[str, Any] = {}
         self.family_id = profile.get("family_id")
         self.error_text = ""
 
         self.title = TextLine(themes, TITLES[mode], DIALOG_TITLE, "text.ink", self)
         self.labels = [
             TextLine(themes, text, LABEL, "text.body", self)
-            for text in ("Robot", "Name", "Description")
+            for text in ("Robot", "Explorer", "Name", "Description")
         ]
         self.robot_field = LockedField(themes, robot["label"], self)
+        views = robot.get("explorer_views") or {}
+        self.explorer_ids = list(views) or [DEFAULT_EXPLORER]
+        self.explorer_field: QtWidgets.QWidget
+        if mode == "new" and len(self.explorer_ids) > 1:
+            choice = KeySelect(themes, parent=self)
+            for identity in self.explorer_ids:
+                choice.addItem(
+                    str((views.get(identity) or {}).get("framework") or identity), identity
+                )
+            choice.setCurrentIndex(max(0, self.explorer_ids.index(self.explorer)))
+            choice.setAccessibleName("Profile explorer")
+            choice.setToolTip("The explorer this profile runs; fixed once the profile is saved")
+            choice.currentIndexChanged.connect(self.choose_explorer)
+            self.explorer_field = choice
+        else:
+            framework = (views.get(self.explorer) or {}).get("framework") or self.explorer
+            self.explorer_field = LockedField(themes, str(framework), self, "Explorer")
         self.name = QtWidgets.QLineEdit(profile["name"], self)
         self.name.setAccessibleName("Profile name")
         self.description = QtWidgets.QLineEdit(profile.get("description", ""), self)
         self.description.setAccessibleName("Profile description")
+        self.description.setCursorPosition(0)  # the narrower field shows the text's start
 
-        self.groups = editor_groups(catalog["parameters"])
-        self.tabs = UnderlineTabs(
-            themes, [(g, None) for g in self.groups], self, gap=22, rule=False
-        )
-        self.tabs.changed.connect(lambda _: self.show_group())
+        self.groups: list[str] = []
+        self.tabs = UnderlineTabs(themes, [], self, gap=22, rule=False)
         self.changed_only = Switch(
             themes, "Changed only", label_token="text.secondary", parent=self
         )
@@ -334,10 +373,7 @@ class ProfileEditor(ModalCard):
         self.rows: dict[str, ParameterRow] = {}
         self.fields: dict[str, ValueWidget] = {}
         self.group_of: dict[str, str] = {}
-        for key, metadata in catalog["parameters"].items():
-            if metadata["managed"] or metadata["group"] in HIDDEN_GROUPS:
-                continue
-            self._add_row(key, metadata)
+        self._build_rows()
 
         self.footer = FlexRow(self, gap=8, left=24, right=24)
         self.import_button = Button(themes, "Import YAML", icon="upload")
@@ -346,7 +382,7 @@ class ProfileEditor(ModalCard):
         self.export_button.clicked.connect(self.export_yaml)
         reset = Button(themes, "Reset to Default", icon="reset", variant="ghost")
         reset.clicked.connect(self.reset)
-        self.summary = ChangeSummary(themes, robot["label"])
+        self.summary = ChangeSummary(themes, self.summary_title())
         close = Button(themes, "Close")
         close.clicked.connect(lambda: self.finish(False))
         self.save_button = Button(
@@ -369,6 +405,62 @@ class ProfileEditor(ModalCard):
         transport.failed.connect(self.failed)
 
     # building
+
+    def default_title(self) -> str:
+        """The column title "<robot> Default", with the explorer's name for an external explorer."""
+        return default_title(self.robot, self.explorer)
+
+    def summary_title(self) -> str:
+        """The footer's "from …": "<robot> Default", or "<explorer> Default" (the robot is in the head)."""
+        if self.explorer == DEFAULT_EXPLORER:
+            return self.default_title()
+        view = (self.robot.get("explorer_views") or {}).get(self.explorer) or {}
+        return f"{view.get('framework') or self.explorer} Default"
+
+    def _build_rows(self) -> None:
+        """The group tabs and rows of the profile's explorer (its metadata, groups and the robot's Defaults)."""
+        for row in self.rows.values():
+            row.hide()
+            row.deleteLater()
+        self.rows, self.fields, self.group_of = {}, {}, {}
+        defaults, metadata, order = explorer_parts(
+            self.robot, self.catalog.get("parameters", {}), self.explorer
+        )
+        self.defaults = defaults
+        self.groups = editor_groups(metadata, order)
+        old = self.tabs
+        self.tabs = UnderlineTabs(
+            self.themes, [(g, None) for g in self.groups], self, gap=22, rule=False
+        )
+        self.tabs.changed.connect(lambda _: self.show_group())
+        self.tabs.show()
+        old.hide()
+        old.deleteLater()
+        for key, information in metadata.items():
+            if information.get("managed") or information.get("group") in HIDDEN_GROUPS:
+                continue
+            if key not in self.defaults:
+                continue
+            self._add_row(key, information)
+
+    def choose_explorer(self, index: int) -> None:
+        """New: another explorer; the rows show its parameters at the robot's Default (requested values of the
+        previous explorer are dropped)."""
+        if not 0 <= index < len(self.explorer_ids) or self.explorer_ids[index] == self.explorer:
+            return
+        self.explorer = self.explorer_ids[index]
+        self.profile["requested"] = {}
+        self.profile.pop("explorer", None)
+        if self.explorer != DEFAULT_EXPLORER:
+            self.profile["explorer"] = self.explorer
+        self._build_rows()
+        self.summary.title = self.summary_title()
+        self.summary.updateGeometry()
+        self.summary.update()
+        self.apply_values(self.defaults)
+        self.set_error("")
+        self._layout()
+        self.update()
 
     @staticmethod
     def _style_field(field: QtWidgets.QLineEdit) -> None:
@@ -422,11 +514,13 @@ class ProfileEditor(ModalCard):
 
     def _layout(self) -> None:
         place(self.title, 25, 21, 990, 22)
-        for label, x, width in zip(self.labels, (25, 211, 487), (170, 260, 528), strict=True):
+        # Robot, Explorer, Name and Description: x and width
+        columns = ((25, 170), (211, 210), (437, 200), (653, 362))
+        for label, (x, width) in zip(self.labels, columns, strict=True):
             place(label, x, FIELDS_TOP, width, 18)
-        self.robot_field.setGeometry(25, FIELDS_TOP + 24, 170, 32)
-        self.name.setGeometry(211, FIELDS_TOP + 24, 260, 32)
-        self.description.setGeometry(487, FIELDS_TOP + 24, 528, 32)
+        fields = (self.robot_field, self.explorer_field, self.name, self.description)
+        for field, (x, width) in zip(fields, columns, strict=True):
+            field.setGeometry(x, FIELDS_TOP + 24, width, 32)
         place(self.tabs, 25, TABS_TOP, self.tabs.natural_width(), 39)
         switch = self.changed_only.natural_width()
         place(self.changed_only, WIDTH - 25 - switch, TABS_TOP + 10, switch, 18)
@@ -497,7 +591,7 @@ class ProfileEditor(ModalCard):
             for key, row in self.rows.items()
             if self.group_of[key] == group and (row.changed or not only)
         ]
-        empty = f"No changes from {self.robot['label']} Default in {group}" if only else ""
+        empty = f"No changes from {self.default_title()} in {group}" if only else ""
         self.view.show_rows(rows, empty)
 
     def reset_value(self, key: str) -> None:
@@ -518,12 +612,15 @@ class ProfileEditor(ModalCard):
                 requested.pop(key, None)
             else:
                 requested[key] = value
-        return {
+        value = {
             "robot_id": self.profile["robot_id"],
             "name": self.name.text(),
             "description": self.description.text(),
             "requested": requested,
         }
+        if self.explorer != DEFAULT_EXPLORER:
+            value["explorer"] = self.explorer
+        return value
 
     def reset(self) -> None:
         self.profile["requested"] = {}
@@ -572,19 +669,20 @@ class ProfileEditor(ModalCard):
             self.notify.emit(f"Saved “{result.get('name', '')}”", "ok")
             self.finish(True)
         elif operation == "import":
-            self.transport.submit(
-                self.tag + ":resolved",
-                "parameters.resolve",
-                {"robot_id": self.profile["robot_id"], "yaml_text": result["text"]},
-            )
+            request = {"robot_id": self.profile["robot_id"], "yaml_text": result["text"]}
+            if self.explorer != DEFAULT_EXPLORER:
+                request["explorer"] = self.explorer
+            self.transport.submit(self.tag + ":resolved", "parameters.resolve", request)
         elif operation == "resolved":
             self.profile["requested"] = result["requested"]
             self.apply_values(result["effective"])
             self.set_error("")
             self.notify.emit("Imported values accepted", "ok")
         elif operation == "export":
+            view = (self.robot.get("explorer_views") or {}).get(self.explorer) or {}
+            node = str(view.get("node") or "frontier_explorer")
             source = yaml.safe_dump(
-                {"frontier_explorer": {"ros__parameters": result["effective"]}}, sort_keys=False
+                {node: {"ros__parameters": nested(result["effective"])}}, sort_keys=False
             )
             self.transport.submit(
                 self.tag + ":written", "local.write", {"path": self.export_path, "text": source}
@@ -618,7 +716,7 @@ class ProfileEditor(ModalCard):
         secondary = self.color("text.secondary")
         top = HEADER_TOP + (33 - 18) / 2
         draw_text(painter, 25, top, "Parameter", HEADER, secondary)
-        default = f"{self.robot['label']} Default"
+        default = HEADER.elide(self.default_title(), DEFAULT_X + COLUMN - 200)
         for text, right in ((default, 1 + DEFAULT_X + COLUMN), ("Value", 1 + VALUE_X + COLUMN)):
             draw_text(painter, right - HEADER.advance(text), top, text, HEADER, secondary)
         if self.error_text:

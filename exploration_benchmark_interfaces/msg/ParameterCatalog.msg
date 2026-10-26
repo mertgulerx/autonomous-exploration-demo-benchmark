@@ -14,3 +14,5 @@
 
 ParameterDefinition[] parameters
 string robot_id
+# Explorer launch profile (ProfileCatalog id) the definitions belong to; empty: default.
+string profile

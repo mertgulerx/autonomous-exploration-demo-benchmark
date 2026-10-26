@@ -1110,11 +1110,28 @@ class SegmentedControl(Themed, CssBox):
         self.group.idToggled.connect(self._toggled)
         if self.segments:
             self.segments[0].setChecked(True)
+        self.hidden: set[int] = set()  # segments left out (``set_segment_shown``)
         self.setSizePolicy(QtWidgets.QSizePolicy.Policy.Fixed, QtWidgets.QSizePolicy.Policy.Fixed)
         self.relayout()
 
+    def shown_segments(self) -> list[Segment]:
+        return [s for index, s in enumerate(self.segments) if index not in self.hidden]
+
+    def set_segment_shown(self, index: int, shown: bool) -> None:
+        """Leave a segment out of the control (the others close up) or show it again; a hidden segment
+        cannot be the checked one, so the caller moves the selection first."""
+        if not 0 <= index < len(self.segments) or (index not in self.hidden) == shown:
+            return
+        if shown:
+            self.hidden.discard(index)
+        else:
+            self.hidden.add(index)
+        self.segments[index].setVisible(shown)
+        self.relayout()
+        self.update()
+
     def natural_width(self) -> float:
-        widths = [segment.natural_width() for segment in self.segments]
+        widths = [segment.natural_width() for segment in self.shown_segments()]
         return 2 + 4 + sum(widths) + 2 * max(0, len(widths) - 1)
 
     def sizeHint(self) -> QtCore.QSize:
@@ -1134,7 +1151,7 @@ class SegmentedControl(Themed, CssBox):
     def relayout(self) -> None:
         """Segments at their CSS boxes (1 px border, 2 px padding, 2 px gaps), edges snapped half up."""
         x = self.shift + 3
-        for segment in self.segments:
+        for segment in self.shown_segments():
             width = segment.natural_width()
             left, right = math.floor(x + 0.5), math.floor(x + width + 0.5)
             segment.shift = x - left
@@ -1172,10 +1189,13 @@ class SegmentedControl(Themed, CssBox):
         step = {QtCore.Qt.Key.Key_Left: -1, QtCore.Qt.Key.Key_Right: 1}.get(
             QtCore.Qt.Key(event.key()), 0
         )
-        if step and self.segments:
-            target = (max(0, self.index()) + step) % len(self.segments)
-            self.segments[target].setChecked(True)
-            self.segments[target].setFocus(QtCore.Qt.FocusReason.TabFocusReason)
+        shown = self.shown_segments()
+        if step and shown:
+            current = self.segments[self.index()] if self.index() >= 0 else shown[0]
+            position = shown.index(current) if current in shown else 0
+            target = shown[(position + step) % len(shown)]
+            target.setChecked(True)
+            target.setFocus(QtCore.Qt.FocusReason.TabFocusReason)
             return
         super().keyPressEvent(event)
 

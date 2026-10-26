@@ -12,8 +12,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The Profiles page (13): robots, that robot's profiles with Default pinned, and the selected profile
-compared with Default parameter by parameter.
+"""The Profiles page (13): robots, that robot's profiles with each explorer's Default pinned, and the selected
+profile compared with its explorer's Default parameter by parameter.
+
+Profiles belong to a robot and an explorer (docs/plans/EXTERNAL_EXPLORERS.md): frontier_exploration_ros2's
+Default is pinned first, the external explorers' Defaults under it, and rows of an external explorer carry its
+name as a tag.
 
 The list shows every saved profile of the robot (oldest first, as the wizard lists them), read in pages of
 250 and re-read every 2 s while the page is shown. Change counts come from each profile's snapshot
@@ -36,12 +40,20 @@ from .gui_cells import PAINTED_HEADER, PaintedColumn, PaintedTable
 from .gui_controls import KeySelect, SearchField, Switch, UnderlineTabs
 from .gui_dialogs import Consequences, ListRow, Run
 from .gui_profile_editor import Mode
+from .gui_marks import explorer_tag_width, paint_explorer_tag
 from .gui_profile_preview import (
     BASELINE,
+    DEFAULT_EXPLORER,
+    EXTERNAL_BASELINE,
     ComparedParameter,
     compared_parameters,
+    default_key,
+    default_title,
     editor_groups,
+    explorer_parts,
+    explorer_tag,
     profile_differences,
+    profile_explorer,
     signed_change,
     value_text,
 )
@@ -79,7 +91,7 @@ SECTION = TextStyle(12, 600, 18)
 CHANGE = TextStyle(13, 400, 18, tabular=True)
 LIST_PAGE, LIST_LIMIT = 250, 2000  # profiles per request; at most this many listed per robot
 SNAPSHOTS = 64  # profile snapshots kept for the comparison (a saved ID's content never changes)
-DEFAULT = "default"  # the current-row key of the robot's Default
+DEFAULT = "default"  # the current-row key of the robot's Default (frontier_exploration_ros2's)
 UNCOUNTABLE = -1  # a profile whose snapshot could not be compared (shown as "—", not read again)
 
 
@@ -254,11 +266,13 @@ class RobotsCard(Card):
 
 
 class ProfilesCard(Card):
-    """``.plist`` (13): "<robot> profiles" with a search button (it opens a search field in the head), Default
-    pinned first ("Robot-aware baseline", lock, a ``border.strong`` rule) and the saved profiles, oldest
-    first: name (600 when current), when it was created ("15 Oct 2026 · 22:43") and the change count. Rows are 52 px; when
-    they nearly fit (at least 50 px each) they share the card's height, otherwise the saved rows scroll under
-    Default. A click selects one row; Ctrl toggles a row and Shift selects a range (the rows Delete acts on)."""
+    """``.plist`` (13): "<robot> profiles" with a search button (it opens a search field in the head), the
+    explorers' Defaults pinned first ("Robot-aware baseline" for frontier_exploration_ros2, then each external
+    explorer's with its tag; lock, a ``border.strong`` rule under the last) and the saved profiles, oldest
+    first: name (600 when current) with the explorer tag of an external explorer, when it was created
+    ("15 Oct 2026 · 22:43") and the change count. Rows are 52 px; when they nearly fit (at least 50 px each)
+    they share the card's height, otherwise the saved rows scroll under the Defaults. A click selects one row;
+    Ctrl toggles a row and Shift selects a range (the rows Delete acts on)."""
 
     current_changed = QtCore.Signal()
     selection_changed = QtCore.Signal()
@@ -268,6 +282,9 @@ class ProfilesCard(Card):
         super().__init__(themes, parent)
         self.rows: list[dict[str, Any]] = []
         self.counts: dict[str, int] = {}
+        # The pinned Defaults: (row key, explorer ID), frontier_exploration_ros2's first; tags by explorer.
+        self.pinned: list[tuple[str, str]] = [(DEFAULT, DEFAULT_EXPLORER)]
+        self.tags: dict[str, str] = {}
         self.current = DEFAULT
         self.selected: set[str] = set()
         self.anchor = DEFAULT
@@ -294,6 +311,29 @@ class ProfilesCard(Card):
     def set_title(self, title: str) -> None:
         self.head.title.setText(title)
 
+    def set_explorers(self, explorers: list[str], tags: dict[str, str]) -> None:
+        """The explorers whose Defaults are pinned (frontier_exploration_ros2 first) and their tags."""
+        self.pinned = [(default_key(explorer), explorer) for explorer in explorers] or [
+            (DEFAULT, DEFAULT_EXPLORER)
+        ]
+        self.tags = dict(tags)
+        if self.is_pinned(self.current) and self.current not in self.pinned_keys():
+            self.current = DEFAULT
+        self.scroll_to(self.offset)
+        self.update()
+
+    def pinned_keys(self) -> list[str]:
+        return [key for key, _ in self.pinned]
+
+    @staticmethod
+    def is_pinned(key: str) -> bool:
+        """A pinned Default's key ("default" or "default:<explorer>"); saved profiles' keys are their IDs."""
+        return key == DEFAULT or key.startswith(DEFAULT + ":")
+
+    def current_explorer(self) -> str | None:
+        """The explorer of the current pinned Default; None for a saved profile."""
+        return next((explorer for key, explorer in self.pinned if key == self.current), None)
+
     def set_rows(self, rows: list[dict[str, Any]]) -> None:
         identities = {row["id"] for row in rows}
         # An edit saves the profile under a new ID: the current and selected rows follow its family.
@@ -313,10 +353,10 @@ class ProfilesCard(Card):
         self.rows = rows
         self.selected = {follow(identity) for identity in self.selected} & identities
         self.anchor = follow(self.anchor)
-        if self.current != DEFAULT and follow(self.current) != self.current:
+        if not self.is_pinned(self.current) and follow(self.current) != self.current:
             self.current = follow(self.current)
             self.current_changed.emit()
-        if self.current != DEFAULT and self.current not in identities:
+        if not self.is_pinned(self.current) and self.current not in identities:
             self.current = DEFAULT
             self.current_changed.emit()
         self.scroll_to(self.offset)
@@ -336,20 +376,20 @@ class ProfilesCard(Card):
 
     def selected_rows(self) -> list[dict[str, Any]]:
         """The rows Delete acts on, in list order (the current row when nothing else is selected)."""
-        chosen = self.selected or ({self.current} if self.current != DEFAULT else set())
+        chosen = self.selected or (set() if self.is_pinned(self.current) else {self.current})
         return [row for row in self.rows if row["id"] in chosen]
 
     def choose(self, key: str, modifiers: QtCore.Qt.KeyboardModifier) -> None:
-        keys = [DEFAULT] + [row["id"] for row in self.rows]
+        keys = self.pinned_keys() + [row["id"] for row in self.rows]
         if modifiers & QtCore.Qt.KeyboardModifier.ShiftModifier and self.anchor in keys:
             low, high = sorted((keys.index(self.anchor), keys.index(key)))
-            self.selected = {k for k in keys[low : high + 1] if k != DEFAULT}
+            self.selected = {k for k in keys[low : high + 1] if not self.is_pinned(k)}
         elif modifiers & QtCore.Qt.KeyboardModifier.ControlModifier:
-            if key != DEFAULT:
+            if not self.is_pinned(key):
                 self.selected ^= {key}
             self.anchor = key
         else:
-            self.selected = set() if key == DEFAULT else {key}
+            self.selected = set() if self.is_pinned(key) else {key}
             self.anchor = key
         changed = key != self.current
         self.current = key
@@ -400,14 +440,14 @@ class ProfilesCard(Card):
 
     def row_height(self) -> float:
         room = self.height() - 2 - HEAD
-        count = 1 + len(self.rows)
+        count = len(self.pinned) + len(self.rows)
         if count * PROFILE_ROW <= room:
             return float(PROFILE_ROW)
         return room / count if room / count >= MIN_PROFILE_ROW else float(PROFILE_ROW)
 
     def list_top(self) -> float:
-        """Top of the saved rows (under the pinned Default)."""
-        return 1 + HEAD + self.row_height()
+        """Top of the saved rows (under the pinned Defaults)."""
+        return 1 + HEAD + len(self.pinned) * self.row_height()
 
     def max_offset(self) -> float:
         visible = self.height() - 1 - self.list_top()
@@ -434,7 +474,8 @@ class ProfilesCard(Card):
     def key_at(self, y: float) -> str | None:
         height = self.row_height()
         if 1 + HEAD <= y < self.list_top():
-            return DEFAULT
+            index = min(len(self.pinned) - 1, int((y - 1 - HEAD) // height))
+            return self.pinned[index][0]
         if y < self.list_top() or y >= self.height() - 1:
             return None
         index = int((y - self.list_top() + self.offset) // height)
@@ -460,7 +501,7 @@ class ProfilesCard(Card):
         event.accept()
 
     def keyPressEvent(self, event: QtGui.QKeyEvent) -> None:
-        keys = [DEFAULT] + [row["id"] for row in self.rows]
+        keys = self.pinned_keys() + [row["id"] for row in self.rows]
         step = {QtCore.Qt.Key.Key_Up: -1, QtCore.Qt.Key.Key_Down: 1}.get(QtCore.Qt.Key(event.key()))
         if step is not None:
             index = keys.index(self.current) if self.current in keys else 0
@@ -483,7 +524,9 @@ class ProfilesCard(Card):
         super().paintEvent(event)
         painter = QtGui.QPainter(self)
         height = self.row_height()
-        self._paint_row(painter, None, 1 + HEAD, height)
+        for index, (key, explorer) in enumerate(self.pinned):
+            last = index == len(self.pinned) - 1
+            self._paint_row(painter, None, 1 + HEAD + index * height, height, key, explorer, last)
         top = self.list_top()
         painter.setClipRect(QtCore.QRectF(1, top, self.width() - 2, self.height() - 1 - top))
         if self.message:
@@ -499,17 +542,25 @@ class ProfilesCard(Card):
         paint_scroll_handle(painter, self, top, visible, self.offset, len(self.rows) * height)
 
     def _paint_row(
-        self, painter: QtGui.QPainter, row: dict[str, Any] | None, top: float, height: float
+        self,
+        painter: QtGui.QPainter,
+        row: dict[str, Any] | None,
+        top: float,
+        height: float,
+        pinned_key: str = DEFAULT,
+        pinned_explorer: str = DEFAULT_EXPLORER,
+        last_pinned: bool = True,
     ) -> None:
         theme = self.theme
         width = self.width() - 2
-        key = DEFAULT if row is None else row["id"]
+        key = pinned_key if row is None else row["id"]
+        explorer = pinned_explorer if row is None else profile_explorer(row)
         current = key == self.current
         content = height - 1
         if current or key in self.selected:
             painter.fillRect(QtCore.QRectF(1, top, width, height), theme.color("surface.selected"))
             painter.fillRect(QtCore.QRectF(1, top, 2, content), theme.color("text.ink"))
-        rule = "border.strong" if row is None else "border.line"
+        rule = "border.strong" if row is None and last_pinned else "border.line"
         painter.fillRect(QtCore.QRectF(1, top + content, width, 1), theme.color(rule))
         right = 1 + width - 20
         room: float
@@ -521,7 +572,8 @@ class ProfilesCard(Card):
                 QtCore.QPointF(right - 16, snap(top + (content - 16) / 2)),
             )
             room = right - 16 - 12
-            name, meta = "Default", BASELINE
+            name = "Default"
+            meta = BASELINE if explorer == DEFAULT_EXPLORER else EXTERNAL_BASELINE
         else:
             count = self.counts.get(key)
             text = "" if count is None else "—" if count == UNCOUNTABLE else plural(count, "change")
@@ -533,9 +585,12 @@ class ProfilesCard(Card):
             name, meta = str(row.get("name", "")), created_text(row)
         style = NAME_SELECTED if current else BODY_MEDIUM
         line_top = top + (content - 37) / 2
-        draw_text(
-            painter, 21, line_top, style.elide(name, room - 21), style, theme.color("text.ink")
-        )
+        tag = self.tags.get(explorer, explorer) if explorer != DEFAULT_EXPLORER else ""
+        tag_room = explorer_tag_width(tag) + 8 if tag else 0.0
+        shown = style.elide(name, max(0.0, room - 21 - tag_room))
+        draw_text(painter, 21, line_top, shown, style, theme.color("text.ink"))
+        if tag:
+            paint_explorer_tag(painter, 21 + style.advance(shown) + 8, line_top - 0.5, tag, theme)
         draw_text(
             painter,
             21,
@@ -897,11 +952,21 @@ class ProfilesPage(QtWidgets.QWidget):
     def set_catalog(self, catalog: dict[str, Any]) -> None:
         self.catalog = catalog
         self.robots.set_robots(catalog.get("robots", []))
+        self._set_explorers()
         self._layout()
         self.choose_robot(self.robots.current)
 
     def robot_info(self) -> dict[str, Any] | None:
         return next((r for r in self.catalog.get("robots", []) if r["id"] == self.robot), None)
+
+    def _set_explorers(self) -> None:
+        """Pin the current robot's Default of every explorer the catalog lists."""
+        robot = self.robot_info() or next(iter(self.catalog.get("robots", [])), None) or {}
+        views = robot.get("explorer_views") or {}
+        explorers = list(views) or [DEFAULT_EXPLORER]
+        self.profiles.set_explorers(
+            explorers, {explorer: explorer_tag(robot, explorer) for explorer in explorers}
+        )
 
     def choose_robot(self, robot_id: str) -> None:
         if robot_id == self.robot and self.loaded:
@@ -913,14 +978,16 @@ class ProfilesPage(QtWidgets.QWidget):
         self.profiles.set_title(f"{robot['label']} profiles" if robot else "Profiles")
         self.loaded = []
         self.profiles.current, self.profiles.selected, self.profiles.offset = DEFAULT, set(), 0.0
+        self._set_explorers()
         self.profiles.set_rows([])
         self.refresh()
         self.show_current()
 
     def set_library(self, robot_id: str, rows: list[dict[str, Any]], total: int) -> None:
-        """The window's ``library-<robot>`` reply: the robot's count is its saved profiles and Default."""
+        """The window's ``library-<robot>`` reply: the robot's count is its saved profiles and the explorers'
+        Defaults."""
         self.library[robot_id] = rows
-        self.robots.set_count(robot_id, total + 1)
+        self.robots.set_count(robot_id, total + len(self.catalog.get("explorers") or [None]))
 
     # the list
 
@@ -1023,20 +1090,25 @@ class ProfilesPage(QtWidgets.QWidget):
         robot = self.robot_info()
         if robot is None or not robot.get("defaults"):
             return
-        groups = editor_groups(self.catalog["parameters"])
         row = self.profiles.current_row()
+        snapshot = self.snapshots.get(row["id"]) if row is not None else None
+        explorer = self.profiles.current_explorer() or profile_explorer(snapshot or row)
+        _, metadata, order = explorer_parts(robot, self.catalog["parameters"], explorer)
+        groups = editor_groups(metadata, order)
+        # "<robot>" or "<robot> <explorer>": the comparison appends " Default"
+        label = default_title(robot, explorer).removesuffix(" Default")
         if row is None:
-            parameters = compared_parameters(robot, self.catalog["parameters"], None)
-            self.comparison.show_profile("Default", BASELINE, robot["label"], groups, parameters)
+            parameters = compared_parameters(robot, self.catalog["parameters"], None, explorer)
+            description = BASELINE if explorer == DEFAULT_EXPLORER else EXTERNAL_BASELINE
+            self.comparison.show_profile("Default", description, label, groups, parameters)
         else:
-            snapshot = self.snapshots.get(row["id"])
             if snapshot is None:
                 self.detail_tag = "profile-detail-" + uuid.uuid4().hex
                 self.transport.submit(self.detail_tag, "profiles.get", {"id": row["id"]})
                 self.comparison.show_profile(
                     row["name"],
                     "",
-                    robot["label"],
+                    label,
                     groups,
                     [],
                     "Loading parameters…",
@@ -1047,7 +1119,7 @@ class ProfilesPage(QtWidgets.QWidget):
                 self.comparison.show_profile(
                     snapshot["name"],
                     description,
-                    robot["label"],
+                    label,
                     groups,
                     parameters,
                 )
@@ -1131,7 +1203,14 @@ class ProfilesPage(QtWidgets.QWidget):
         """Ask for what the editor opens with: Default's values for New (``editor-default``), the saved
         profile for Edit (``profile-open``). Returns the editor's mode (None: Default is not editable)."""
         if operation == "new":
-            self.transport.submit("editor-default", "parameters.resolve", {"robot_id": self.robot})
+            # New starts from the chosen row's explorer (its Default or a saved profile of it)
+            explorer = self.profiles.current_explorer() or profile_explorer(
+                self.profiles.current_row()
+            )
+            params: dict[str, Any] = {"robot_id": self.robot}
+            if explorer != DEFAULT_EXPLORER:
+                params["explorer"] = explorer
+            self.transport.submit("editor-default", "parameters.resolve", params)
             return "new"
         identity = self.current_id()
         if identity is None:

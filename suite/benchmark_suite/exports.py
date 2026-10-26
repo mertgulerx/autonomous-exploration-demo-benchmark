@@ -68,6 +68,7 @@ from .run_record import (
     time_origins,
     track,
 )
+from .library import DEFAULT_EXPLORER, load_explorers
 from .schemas import SCHEMAS
 from .storage import file_hash, load_object, read_object, sync_directory
 from .store import Store, replaced_campaigns, study_campaign_rows
@@ -226,11 +227,21 @@ DESCRIPTIONS: dict[str, dict[str, tuple[str, str, str]]] = {
         "profile_id": ("", "never", ""),
         "profile_name": ("", "never", ""),
         "robot_id": ("", "never", ""),
+        "explorer_id": (
+            "",
+            "never",
+            "the profile's explorer as the run record's explorer_id (run-record-v5): its runs' value, "
+            "else its profiles.yaml explorer's package",
+        ),
         "parameter_hash": ("sha256", "never", "content hash of the effective parameters"),
         "is_baseline": ("", "no Default hash recorded", "equal to the robot's Default hash"),
         "parameter": ("", "never", ""),
         "value": ("JSON", "never", "effective value"),
-        "default_value": ("JSON", "the study has no Default profile run", ""),
+        "default_value": (
+            "JSON",
+            "the study has no Default profile of the profile's explorer",
+            "the value in the profile's explorer's Default for the robot",
+        ),
         "differs_from_default": ("", "no Default value", ""),
     },
 }
@@ -880,9 +891,17 @@ def _per_run(
 
 
 def _profile_rows(
-    workspace: Path, snap: Snapshot, defaults: dict[str, str]
+    workspace: Path,
+    snap: Snapshot,
+    defaults: dict[str, str],
+    explorers: dict[str, str],
+    packages: dict[str, str],
 ) -> list[dict[str, Any]]:
-    """Effective parameters of every profile revision (keyed by its object) against the Default."""
+    """Effective parameters of every profile revision (keyed by its object) against its explorer's Default
+    for the robot: frontier_exploration_ros2's is the profile with the robot's Default hash, an external
+    explorer's the profile ``default-<explorer>-<robot>`` (library.Explorer.default_id), when the study ran
+    it. ``explorers``: the run records' explorer_id per profile ID; ``packages``: explorer_id (package) per
+    profiles.yaml explorer ID (``Library.explorer_ids``), for profiles without a run record."""
     profiles: dict[str, dict[str, Any]] = {}
     for e in snap.experiments.values():
         profile = json.loads(e["specification"])["profile"]
@@ -890,16 +909,23 @@ def _profile_rows(
             profiles[profile["object"]] = dict(
                 load_object(workspace, profile["object"]), id=profile["id"]
             )
-    baseline = {
-        p["robot_id"]: p.get("effective", {})
-        for p in profiles.values()
-        if defaults.get(p["robot_id"]) == content_hash(p.get("effective", {}))
-    }
+    # (robot, profiles.yaml explorer ID) -> that explorer's Default values for the robot
+    baseline: dict[tuple[str, str], dict[str, Any]] = {}
+    for p in profiles.values():
+        explorer = str(p.get("explorer") or DEFAULT_EXPLORER)
+        robot = p["robot_id"]
+        if explorer == DEFAULT_EXPLORER:
+            found = defaults.get(robot) == content_hash(p.get("effective", {}))
+        else:
+            found = p["id"] == f"default-{explorer}-{robot}"
+        if found:
+            baseline[(robot, explorer)] = p.get("effective", {})
     rows = []
     for _, profile in sorted(profiles.items()):
         effective = profile.get("effective", {})
         digest = content_hash(effective)
-        default = baseline.get(profile["robot_id"])
+        explorer = str(profile.get("explorer") or DEFAULT_EXPLORER)
+        default = baseline.get((profile["robot_id"], explorer))
         robot_default = defaults.get(profile["robot_id"])
         for parameter in sorted(effective):
             known = default is not None and parameter in default
@@ -908,6 +934,7 @@ def _profile_rows(
                     profile_id=profile["id"],
                     profile_name=profile.get("name", ""),
                     robot_id=profile["robot_id"],
+                    explorer_id=explorers.get(profile["id"], packages.get(explorer, explorer)),
                     parameter_hash=digest,
                     is_baseline=None if robot_default is None else robot_default == digest,
                     parameter=parameter,
@@ -919,6 +946,15 @@ def _profile_rows(
                 )
             )
     return rows
+
+
+def _explorer_packages(workspace: Path) -> dict[str, str]:
+    """``Library.explorer_ids`` of the checkout: each profiles.yaml explorer's package (its explorer_id)."""
+    try:
+        explorers = load_explorers(_checkout(workspace))
+    except (OSError, ValueError) as exc:
+        raise Refused(f"Explorer profiles of the checkout: {exc}") from exc
+    return {identity: explorer.package for identity, explorer in explorers.items()}
 
 
 def _homogeneity(
@@ -1339,7 +1375,13 @@ def _build(workspace: Path, study_id: str, staging: Path, host_name: str) -> dic
         staging,
         "profiles",
         pa.Table.from_pylist(
-            _profile_rows(workspace, snap, defaults),
+            _profile_rows(
+                workspace,
+                snap,
+                defaults,
+                {str(row["profile_id"]): str(row["explorer_id"]) for row in run_rows},
+                _explorer_packages(workspace),
+            ),
             schema=_schema_of(
                 DESCRIPTIONS["profiles"],
                 {"is_baseline": pa.bool_(), "differs_from_default": pa.bool_()},

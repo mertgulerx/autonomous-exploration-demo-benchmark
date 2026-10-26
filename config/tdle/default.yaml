@@ -1,0 +1,114 @@
+# Benchmark Default of TDLE (tdle): the shipped tdle_ws/src/tdle/param/tdle_params.yaml of
+# github.com/SeanZsya/tdle, branch ROS2, at b5ed3cf8573cb4a2387b5434d3ec4bb782ba286e (MIT in package.xml), unchanged
+# except where marked "benchmark" (docs/plans/EXTERNAL_EXPLORERS_RRT_TDLE.md, decisions E2 and X2). The four node
+# sections sit under one parameter scope "tdle" (one editable schema); tdle.launch.py gives each node its own
+# section. use_sim_time is set by the benchmark (the nodes also force it; their timers stay wall timers).
+tdle:
+  ros__parameters:
+    fpoint_detector:
+      # RRT sampling stride (meters)
+      stride: 0.5
+
+      # Maximum number of nodes in RRT trees
+      max_tree_nodes: 1000
+
+      # Topic names
+      map_topic: "/map"
+      odom_topic: "/benchmark/known_pose_odom"  # benchmark (X2): the known-pose adapter (shipped "/odom")
+
+      # Use simulation time
+      use_sim_time: true
+
+    fpoint_filter:
+      # Maximum frontier points to keep
+      max_frontier_points: 200
+
+      # Costmap threshold (values above this are obstacles)
+      costmap_threshold: 30
+
+      # Minimum distance between frontier points (meters)
+      min_point_distance: 0.5
+
+      # Minimum unknown neighbors required
+      unknown_threshold: 5
+
+      # Publishing rate (Hz)
+      publish_rate: 10.0
+
+      # Topic names
+      map_topic: "/map"
+      costmap_topic: "/global_costmap/costmap"
+
+      # Use simulation time
+      use_sim_time: true
+
+    subregion_arrangement:
+      # Grid divisions (3x3 = 9 subregions)
+      grid_divisions: 3  # not read by the code at b5ed3cf (it declares max_subregion_size instead)
+
+      # Maximum side length of a subregion in metres; divisions grow with the map
+      max_subregion_size: 5.0  # benchmark: the code default, listed so it can be edited (not in the shipped file)
+
+      # Minimum frontier points per region to be selected
+      min_points_per_region: 3
+
+      # Unknown threshold for subregion selection
+      unknown_threshold: 80
+
+      # Unknown sampling resolution (10x10 samples per subregion)
+      unknown_sample_step: 10.0
+
+      # Publishing rate (Hz)
+      publish_rate: 10.0
+
+      # Subregion sorting strategy:
+      # - frontier_selected: ANA (adaptive simulated annealing with DTW term)
+      # - unknown_only_selected: greedy
+
+      # ANA parameters
+      ana_initial_temp: 1.0
+      ana_stop_temp: 0.001
+      ana_max_iterations: 120
+      ana_mu: 2.0
+      ana_lambda_similarity: 1.0
+      # Keep this intentionally very low: terminal-to-initial closeness is weak regularizer only
+      ana_lambda_end_to_initial: 0.01
+      ana_lambda_path_length: 0.65
+      ana_seed: 42
+
+      # Topic names
+      map_topic: "/map"
+      odom_topic: "/benchmark/known_pose_odom"  # benchmark (X2): the known-pose adapter (shipped "/odom")
+
+      # Use simulation time
+      use_sim_time: true
+
+    fpoint_selection:
+      # Goal sending interval (milliseconds)
+      goal_send_interval_ms: 700.0
+
+      # Stuck detection threshold (waypoints)
+      stuck_waypoint_threshold: 15
+
+      # Position tolerance for stuck detection (meters)
+      position_tolerance: 0.1
+
+      # Frontier point is considered reached within this radius (meters)
+      goal_reached_tolerance: 0.3
+
+      # Scoring weights
+      global_compatibility_weight: 0.5
+      info_gain_weight: 0.5
+      motion_consistency_weight: 1.0
+      distance_to_robot_weight: 0.7
+
+      # Main loop rate (Hz)
+      loop_rate: 10.0
+
+      # Topic names
+      map_topic: "/map"
+      odom_topic: "/benchmark/known_pose_odom"  # benchmark (X2): the known-pose adapter (shipped "/odom")
+      local_plan: "/local_plan"
+
+      # Use simulation time
+      use_sim_time: true

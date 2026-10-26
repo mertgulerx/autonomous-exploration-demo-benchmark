@@ -1,0 +1,198 @@
+# Parameter metadata of roadmap_explorer: one entry per Default parameter (config/roadmap_explorer/default.yaml, nested names as dotted names);
+# managed values are interface settings the benchmark fixes (docs/plans/EXTERNAL_EXPLORERS.md, E2-E4).
+use_sim_time:
+  group: Interface
+  description: Use the simulation clock; set by the benchmark.
+  managed: true
+localisation_only_mode:
+  group: Interface
+  description: Localisation-only demo mode with the sensor simulator; false (SLAM mode) in the benchmark.
+  managed: true
+frontierSearch.frontier_search_distance:
+  group: Frontier search
+  description: Initial search radius in metres around the robot for frontiers.
+  managed: false
+  exclusive_minimum: 0
+frontierSearch.max_permissable_frontier_search_distance:
+  group: Frontier search
+  description: Largest search radius in metres the search may grow to.
+  managed: false
+  exclusive_minimum: 0
+frontierSearch.plugin_name:
+  group: Frontier search
+  description: Frontier search plugin.
+  managed: true
+frontierSearch.GridBasedBFS.plugin_type:
+  group: Frontier search
+  description: Class of the grid breadth-first frontier search.
+  managed: true
+frontierSearch.GridBasedBFS.min_frontier_cluster_size:
+  group: Frontier search
+  description: Smallest frontier cluster size kept.
+  managed: false
+  minimum: 0
+frontierSearch.GridBasedBFS.max_frontier_cluster_size:
+  group: Frontier search
+  description: Largest frontier cluster size before a cluster is split.
+  managed: false
+  exclusive_minimum: 0
+frontierSearch.GridBasedBFS.lethal_threshold:
+  group: Frontier search
+  description: Costmap cost at or above which a cell counts as lethal.
+  managed: false
+  minimum: 0
+  maximum: 255
+costAssigner.information_gain_plugin_name:
+  group: Information gain
+  description: Information gain plugin.
+  managed: true
+costAssigner.CountBasedGain.plugin_type:
+  group: Information gain
+  description: Class of the count-based information gain.
+  managed: true
+costAssigner.CountBasedGain.max_camera_depth:
+  group: Information gain
+  description: Sensor depth in metres the gain counts unknown cells within.
+  managed: false
+  exclusive_minimum: 0
+costAssigner.CountBasedGain.delta_theta:
+  group: Information gain
+  description: Angular step in radians of the gain's ray casting.
+  managed: false
+  exclusive_minimum: 0
+costAssigner.CountBasedGain.camera_fov:
+  group: Information gain
+  description: Field of view in radians the gain counts within.
+  managed: false
+  exclusive_minimum: 0
+costAssigner.CountBasedGain.factor_of_max_is_min:
+  group: Information gain
+  description: Fraction of the largest gain below which frontiers are discarded (0 keeps all).
+  managed: false
+  minimum: 0
+  maximum: 1
+costAssigner.planner_plugin_name:
+  group: Roadmap planner
+  description: Path planner plugin for frontier costs.
+  managed: true
+costAssigner.FrontierRoadmap.plugin_type:
+  group: Roadmap planner
+  description: Class of the roadmap path planner.
+  managed: true
+costAssigner.FrontierRoadmap.closeness_rejection_threshold:
+  group: Roadmap planner
+  description: Frontiers closer than this in metres are rejected.
+  managed: false
+  minimum: 0
+costAssigner.FrontierRoadmap.planner_allow_unknown:
+  group: Roadmap planner
+  description: Allow roadmap paths through unknown space.
+  managed: false
+costAssigner.FrontierRoadmap.max_planning_distance_roadmap:
+  group: Roadmap planner
+  description: Largest roadmap planning distance in metres.
+  managed: false
+  exclusive_minimum: 0
+frontierRoadmap.max_graph_reconstruction_distance:
+  group: Frontier roadmap
+  description: Radius in metres within which the roadmap graph is rebuilt.
+  managed: false
+  exclusive_minimum: 0
+frontierRoadmap.grid_cell_size:
+  group: Frontier roadmap
+  description: Cell size in metres of the roadmap's spatial grid.
+  managed: false
+  exclusive_minimum: 0
+frontierRoadmap.radius_to_decide_edges:
+  group: Frontier roadmap
+  description: Nodes within this radius in metres are connected.
+  managed: false
+  exclusive_minimum: 0
+frontierRoadmap.min_distance_between_two_frontier_nodes:
+  group: Frontier roadmap
+  description: Minimum distance in metres between a new frontier node and existing nodes.
+  managed: false
+  minimum: 0
+frontierRoadmap.min_distance_between_robot_pose_and_node:
+  group: Frontier roadmap
+  description: Minimum distance in metres between a new robot-pose node and existing nodes.
+  managed: false
+  minimum: 0
+fullPathOptimizer.num_frontiers_in_local_area:
+  group: Path optimizer
+  description: Number of nearby frontiers the full-path (TSP) optimisation considers.
+  managed: false
+  exclusive_minimum: 0
+fullPathOptimizer.local_frontier_search_radius:
+  group: Path optimizer
+  description: Radius in metres of the local area for the full-path optimisation.
+  managed: false
+  exclusive_minimum: 0
+fullPathOptimizer.add_yaw_to_tsp:
+  group: Path optimizer
+  description: Include orientation changes in the TSP cost.
+  managed: false
+fullPathOptimizer.add_distance_to_robot_to_tsp:
+  group: Path optimizer
+  description: Include the distance from the robot in the TSP cost.
+  managed: false
+fullPathOptimizer.goal_hysteresis_threshold:
+  group: Path optimizer
+  description: A new goal must be this fraction better to replace the current one (0 always switches, 1 never).
+  managed: false
+  minimum: 0
+  maximum: 1
+explorationBT.bt_sleep_ms:
+  group: Exploration tree
+  description: Sleep in milliseconds between ticks of the exploration behaviour tree.
+  managed: false
+  exclusive_minimum: 0
+explorationBT.exploration_boundary:
+  group: Interface
+  description: Exploration polygon (x, y pairs); set per run to the world reference's bounds.
+  managed: true
+explorationBT.abort_exploration_on_nav2_abort:
+  group: Exploration tree
+  description: End exploration when Nav2 aborts a goal.
+  managed: false
+explorationBT.localisation_only_mode:
+  group: Interface
+  description: Localisation-only demo mode of the exploration tree; false in the benchmark.
+  managed: true
+explorationBT.increment_search_distance_by:
+  group: Exploration tree
+  description: Metres by which the frontier search radius grows when no frontier is found.
+  managed: false
+  exclusive_minimum: 0
+sensorSimulator.input_map_topic:
+  group: Interface
+  description: Sensor simulator setting (input_map_topic); unused in SLAM mode.
+  managed: true
+sensorSimulator.input_map_is_transient_local:
+  group: Interface
+  description: Sensor simulator setting (input_map_is_transient_local); unused in SLAM mode.
+  managed: true
+sensorSimulator.explored_map_topic:
+  group: Interface
+  description: Sensor simulator setting (explored_map_topic); unused in SLAM mode.
+  managed: true
+sensorSimulator.angular_resolution:
+  group: Interface
+  description: Sensor simulator setting (angular_resolution); unused in SLAM mode.
+  managed: true
+sensorSimulator.sensor_update_rate:
+  group: Interface
+  description: Sensor simulator setting (sensor_update_rate); unused in SLAM mode.
+  managed: true
+sensorSimulator.sensor_min_angle:
+  group: Interface
+  description: Sensor simulator setting (sensor_min_angle); unused in SLAM mode.
+  managed: true
+sensorSimulator.sensor_max_angle:
+  group: Interface
+  description: Sensor simulator setting (sensor_max_angle); unused in SLAM mode.
+  managed: true
+sensorSimulator.sensor_max_range:
+  group: Interface
+  description: Sensor simulator setting (sensor_max_range); unused in SLAM mode.
+  managed: true

@@ -1,0 +1,61 @@
+# Parameter metadata of explore_lite: one entry per Default parameter (config/explore_lite/default.yaml, nested names as dotted names);
+# managed values are interface settings the benchmark fixes (docs/plans/EXTERNAL_EXPLORERS.md, E2-E4).
+use_sim_time:
+  group: Interface
+  description: Use the simulation clock; set by the benchmark.
+  managed: true
+robot_base_frame:
+  group: Interface
+  description: Robot base frame used for TF lookups.
+  managed: true
+costmap_topic:
+  group: Interface
+  description: Occupancy grid the frontiers are computed from (the SLAM map).
+  managed: true
+costmap_updates_topic:
+  group: Interface
+  description: Incremental map update topic; SLAM Toolbox publishes none, so every full map is used.
+  managed: true
+transform_tolerance:
+  group: Interface
+  description: TF lookup tolerance in seconds.
+  managed: true
+  exclusive_minimum: 0
+visualize:
+  group: Behavior
+  description: Publish the frontiers as RViz markers.
+  managed: false
+return_to_init:
+  group: Behavior
+  description: Drive back to the start pose after exploration; off in the benchmark Default (shipped on).
+  managed: false
+planner_frequency:
+  group: Frontier selection
+  description: Rate in Hz at which frontiers are recomputed and the goal reconsidered.
+  managed: false
+  exclusive_minimum: 0
+progress_timeout:
+  group: Frontier selection
+  description: Seconds without progress after which the current goal is abandoned and blacklisted.
+  managed: false
+  exclusive_minimum: 0
+potential_scale:
+  group: Frontier selection
+  description: Weight of the distance to a frontier in its cost.
+  managed: false
+  minimum: 0
+orientation_scale:
+  group: Frontier selection
+  description: Weight of a frontier's orientation in its cost; the code read does not use it.
+  managed: false
+  minimum: 0
+gain_scale:
+  group: Frontier selection
+  description: Weight of a frontier's size in its cost (subtracted).
+  managed: false
+  minimum: 0
+min_frontier_size:
+  group: Frontier selection
+  description: Minimum frontier size in metres for a frontier to become a goal.
+  managed: false
+  minimum: 0
