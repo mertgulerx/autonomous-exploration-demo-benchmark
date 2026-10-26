@@ -561,7 +561,7 @@ STAT_VALUE = TextStyle(22, 600, 26, tabular=True)
 STAT_KEY = TextStyle(12.5, 400, 18)
 FAILURES_TIP = (
     "Startup, runtime, storage, engine-interruption and unresolved timing outcomes; left out of the "
-    "study's statistics and counted."
+    "study's statistics and counted. Explorer failures are reported and counted apart."
 )
 ACCOUNTING = (
     ("executed", "Attempts", "All executions, including retries and discarded attempts."),
@@ -590,6 +590,12 @@ ACCOUNTING = (
         "Final runs whose robot stayed within 0.75 m for 35 simulated seconds, or within 1 m for 60 "
         "simulated seconds while coverage gained less than 0.1 pp, below 97 % coverage (stuck-stop-v1); "
         "reported.",
+    ),
+    (
+        "explorer_failure",
+        "Explorer failures",
+        "Final runs whose explorer exited, returned an error result or refused its start protocol; "
+        "reported as unsuccessful runs of their method (reported-outcomes-v4).",
     ),
     (
         "stopped",
@@ -698,11 +704,15 @@ def campaign_facts(
         specification = json.loads(specification)
     specification = specification if isinstance(specification, dict) else {}
     concurrency = int(specification.get("concurrency", 1))
+    # explorer failures (reported-outcomes-v4) are startup or runtime failures by outcome: counted apart
+    explorer_failures = int(counters.get("explorer_failures") or 0)
     counts = {
         "completed": outcomes.get("completed", 0),
         "time_limit": outcomes.get("time_limit", 0),
         "stuck": outcomes.get("stuck", 0),
-        "failure": sum(n for key, n in outcomes.items() if report_exclusion(key) == "failure"),
+        "explorer_failure": explorer_failures,
+        "failure": sum(n for key, n in outcomes.items() if report_exclusion(key) == "failure")
+        - explorer_failures,
         "no_movement": outcomes.get("no_movement", 0),
         "stopped": sum(n for key, n in outcomes.items() if key in STOPPED_OUTCOMES),
     }
@@ -729,6 +739,7 @@ def campaign_facts(
             "discards": attempts["discards"] or 0,
             "no_movement": counts["no_movement"],
             "stuck": counts["stuck"],
+            "explorer_failure": counts["explorer_failure"],
             "stopped": counts["stopped"],
         },
     )
@@ -875,7 +886,7 @@ class CampaignCard(Card):
         place(self.bar, TRACK_LEFT, height - BAR_TOP, width - CARD_LEFT - TRACK_LEFT, 8)
 
     def stats(self) -> list[Stat]:
-        """The numbers (D9: stuck, no movement and stopped only when there are any)."""
+        """The numbers (D9: stuck, explorer failures, no movement and stopped only when there are any)."""
         counts, count = self.facts.counts, self.facts.count
         known = count is not None
         stats = [
@@ -885,6 +896,7 @@ class CampaignCard(Card):
         ]
         for key, label, token in (
             ("stuck", "Stuck", "state.warn"),
+            ("explorer_failure", "Explorer failures", "state.bad"),
             ("no_movement", "No movement", "state.neutral"),
             ("stopped", "Stopped", "state.neutral"),
         ):

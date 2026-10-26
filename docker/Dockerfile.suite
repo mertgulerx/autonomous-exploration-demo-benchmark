@@ -21,12 +21,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends python3.12-venv
     && python3 -m venv --system-site-packages /opt/benchmark-suite-env
 COPY suite/requirements-engine.lock /opt/benchmark-suite/requirements-engine.lock
 RUN /opt/benchmark-suite-env/bin/pip install --no-cache-dir -r /opt/benchmark-suite/requirements-engine.lock
+# Telemetry and insight build as Release like the runtime workspace (B3, 26 October 2026; no build type before
+# suite image version 50).
 COPY exploration_benchmark_telemetry /opt/benchmark-telemetry/source/exploration_benchmark_telemetry
 RUN /bin/bash -c 'source /opt/ros/jazzy/setup.bash && \
     CMAKE_BUILD_PARALLEL_LEVEL=2 colcon --log-base /opt/benchmark-telemetry/log build \
     --base-paths /opt/benchmark-telemetry/source --build-base /opt/benchmark-telemetry/build \
     --install-base /opt/benchmark-telemetry/install --executor sequential \
-    --cmake-args -DBUILD_TESTING=OFF -DPython3_EXECUTABLE=/usr/bin/python3'
+    --cmake-args -DBUILD_TESTING=OFF -DCMAKE_BUILD_TYPE=Release -DPython3_EXECUTABLE=/usr/bin/python3'
 # The insight node compiles the explorer's debug analysis from the base image's explorer source, so it
 # analyses with exactly the explorer the workers run (the engine hashes that source for provenance).
 ENV BENCHMARK_EXPLORER_SOURCE=/opt/benchmark_ws/exploration_packages/frontier_exploration_ros2
@@ -35,7 +37,7 @@ RUN /bin/bash -c 'source /opt/ros/jazzy/setup.bash && source /opt/benchmark_ws/i
     CMAKE_BUILD_PARALLEL_LEVEL=2 colcon --log-base /opt/benchmark-insight/log build \
     --base-paths /opt/benchmark-insight/source --build-base /opt/benchmark-insight/build \
     --install-base /opt/benchmark-insight/install --executor sequential \
-    --cmake-args -DBUILD_TESTING=OFF -DPython3_EXECUTABLE=/usr/bin/python3 \
+    --cmake-args -DBUILD_TESTING=OFF -DCMAKE_BUILD_TYPE=Release -DPython3_EXECUTABLE=/usr/bin/python3 \
     -DFRONTIER_EXPLORATION_SOURCE_DIR="$BENCHMARK_EXPLORER_SOURCE"'
 COPY suite /opt/benchmark-suite/source
 COPY exploration_benchmark_runner/exploration_benchmark_runner /opt/benchmark-suite/plugins/runner/exploration_benchmark_runner

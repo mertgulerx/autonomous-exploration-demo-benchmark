@@ -1,0 +1,19 @@
+--- a/src/common_func.cpp
++++ b/src/common_func.cpp
+@@ -1,4 +1,5 @@
+ #include <tdle/common_func.h>
++#include <cmath>
+ 
+ // euclideanDistance function:
+ // return the Euclidean distance between 2 points
+@@ -62,6 +63,10 @@
+   std::vector<signed char> Data = mapData.data;
+   float indx = (floor((Xp[1] - Xstarty) / resolution) * width) +
+                (floor((Xp[0] - Xstartx) / resolution));
++  // Bounds check (benchmark build patch): outside the grid reads as unknown (-1).
++  if (!std::isfinite(indx) || indx < 0 || static_cast<double>(indx) >= static_cast<double>(Data.size())) {
++    return -1;
++  }
+   out = Data[int(indx)];
+   return out;
+ }

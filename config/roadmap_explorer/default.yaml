@@ -10,6 +10,9 @@ roadmap_explorer_node:
     frontierSearch:
       frontier_search_distance: 25.0 # This should be equal to the parameter frontier_search_distance in frontier_roadmap_node
       max_permissable_frontier_search_distance: 140.0
+      # benchmark (B4, 26 October 2026): the shipped file sets 35.0 under explorationBT, which the code never reads
+      # (it reads frontierSearch.increment_search_distance_by, default 0.1); placed where the code reads it.
+      increment_search_distance_by: 35.0
       plugin_name: "GridBasedBFS"
       GridBasedBFS:
         plugin_type: "roadmap_explorer::FrontierBFSearch"
@@ -52,7 +55,6 @@ roadmap_explorer_node:
       exploration_boundary: [310.0, 260.0, 310.0, -120.0, -70.0, -120.0, -70.0, 260.0]
       abort_exploration_on_nav2_abort: false
       localisation_only_mode: false  # benchmark (E4)
-      increment_search_distance_by: 35.0
     
     sensorSimulator:
       input_map_topic: "/map"

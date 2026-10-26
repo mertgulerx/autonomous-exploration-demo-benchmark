@@ -12,10 +12,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Tables T1–T11, T5H and S as CSV and booktabs LaTeX (RESULTS_OVERHAUL §7; FIGURE_STYLE §9; RD-2, RD-24).
+"""Tables T1–T11, T14, T5H and S as CSV and booktabs LaTeX (T13 and T15: ``summaries``) (RESULTS_OVERHAUL §7; FIGURE_STYLE §9; RD-2, RD-24).
 
 Rows in a fixed order: strata as the study lists them, Default first, then the other profiles in the order of
-their parameter hashes; n in every row; no bold. Values without an interval keep the measurement's resolution
+their parameter hashes; in a method comparison (C2) each method's Default in registry order (ours first), then
+the variants by method and name, every profile labelled "method · profile"; n in every row; no bold. Values without an interval keep the measurement's resolution
 (coverage 0.1 pp, times 0.1 s, distance 0.01 m, CPU 0.1 % of a core); an estimate with an interval is rounded so
 the interval width has at most two significant digits, never finer than the resolution (FP-2). Median [Q1, Q3]
 uses the Hyndman–Fan type 2 quantiles; mean (SD) only for never-censored metrics. p-values appear only in the
@@ -48,16 +49,28 @@ from .data import (
     COMPLETION_SOURCES,
     COVERAGE_STOP_TEXT,
     EXCLUDED,
+    EXPLORER_FAILURE,
+    EXPLORER_FAILURE_TEXT,
     MISSING,
+    OURS,
     REPORTED,
     STUCK,
     STUCK_TEXT,
     Stratum,
     Study,
+    coverage_at,
+    difference_text,
     mapping_condition,
     outcome_rule,
 )
-from .estimates import EFFECTS, PRIMARY_TIME, UNITS, Entries, EstimateContext, time_endpoints
+from .estimates import (
+    UNITS,
+    Entries,
+    EstimateContext,
+    sensitivity_endpoints,
+    shown_effects,
+    shown_endpoints,
+)
 from .families import CONTRACT as FAMILY_CONTRACT
 from .settings import Family, Settings
 from .worlds import GROUP_ORDER, GROUP_TITLES, WorldGroup, world_groups
@@ -79,6 +92,19 @@ CATEGORY_NOTE = (
     "measurement (RD-18: stalls are described, never classified)."
 )
 WRAP_TEX = "0.45\\linewidth"  # the LaTeX width of a wrapping column
+# A6 (decision E7): which processes a method's CPU and RSS count (profiles.yaml ``executables``), by explorer_id;
+# kept equal to exploration_benchmark_runner/config/profiles.yaml
+CPU_SCOPE = {
+    OURS: "one process (frontier_explorer)",
+    "explore_lite": "one node (explore)",
+    "roadmap_explorer": (
+        "roadmap_exploration_server and its lifecycle manager; its behaviour-tree load runs inside Nav2's "
+        "bt_navigator and is not counted"
+    ),
+    "rrt_explore": "one node (rrt)",
+    "tdle": "four nodes (fpoint_selection, fpoint_detector, fpoint_filter, subregion_arrangement)",
+    "mrtsp_exploration_ros2": "one Python process (mrtsp_explorer, the interpreter included)",
+}
 
 
 @dataclass
@@ -163,6 +189,11 @@ TEX = str.maketrans(
         "·": "$\\cdot$",
     }
 )
+
+
+def capital(text: str) -> str:
+    """``text`` with its first letter upper case and the rest unchanged ("profile − Default")."""
+    return text[:1].upper() + text[1:]
 
 
 def _tex(text: str) -> str:
@@ -282,7 +313,14 @@ class Sources:
         return [p for p in self.order if p in present]
 
     def name(self, profile: str) -> str:
-        return str(self.study.profiles.get(profile, {}).get("profile_name") or profile)
+        """The profile's label: its name, or "method · profile" in a method comparison (C2)."""
+        return str(self.study.profiles.get(profile, {}).get("label") or profile)
+
+    def robot_name(self, profile: str) -> str:
+        """The profile's label with its robot when the study has several (the family tables, C6)."""
+        robot = self.study.profiles.get(profile, {}).get("robot_id")
+        several = len({s.robot_id for s in self.study.strata}) > 1
+        return f"{self.name(profile)} ({robot})" if several and robot else self.name(profile)
 
     def baseline(self, stratum: Stratum) -> str | None:
         return self.study.baselines.get(stratum.robot_id)
@@ -321,15 +359,56 @@ class Sources:
 
 
 def profile_order(study: Study) -> list[str]:
-    """Default first, then the other profiles by parameter hash (the colour order, FP-7)."""
+    """Default first, then the other profiles by parameter hash (the colour order, FP-7); in a method comparison
+    (C2, A4) each method's Default in registry order (ours first), then the variants by method, name and ID."""
     rows = sorted(study.profiles.items())
     order = [pid for pid, row in rows if row["is_baseline"]]
-    return order + [
-        pid
-        for _, pid in sorted(
-            (row["parameter_hash"], pid) for pid, row in rows if not row["is_baseline"]
-        )
+    if not study.cross_method:
+        return order + [
+            pid
+            for _, pid in sorted(
+                (row["parameter_hash"], pid) for pid, row in rows if not row["is_baseline"]
+            )
+        ]
+    rank = {identity: method.order for identity, method in study.methods.items()}
+
+    def key(item: tuple[str, Any]) -> tuple[bool, int, str, str]:
+        pid, row = item
+        return (not row["method_default"], rank[row["method"]], str(row["profile_name"]), pid)
+
+    return order + [pid for pid, _ in sorted(rows, key=key) if pid not in order]
+
+
+def scope_notes(study: Study) -> list[str]:
+    """What the CPU and memory values count for each method of the study (A6, E7)."""
+    methods = list(study.methods.values())
+    if not study.cross_method:
+        return []
+    parts = [
+        f"{m.label}: {CPU_SCOPE.get(m.id, 'the processes its registry entry lists')}"
+        for m in methods
     ]
+    return [
+        "CPU and RSS count each method's own processes: "
+        + "; ".join(parts)
+        + ". The insight node runs only "
+        "beside RADEF (its CPU, Insight CPU, has no value for the other methods: no_insight_node)."
+    ]
+
+
+def concurrency_note(study: Study) -> str | None:
+    """B8: the campaigns' highest concurrency above 1, with where the sequential-only sensitivity is."""
+    found = [
+        int(c["concurrency"])
+        for c in study.export.study.get("campaigns") or ()
+        if type(c.get("concurrency")) is int
+    ]
+    if not found or max(found) <= 1:
+        return None
+    return (
+        f"Runs ran up to {max(found)} at a time: the sequential-only sensitivity (S, column sequential only) and "
+        "the timing per mode (T8) are reported beside the primary results (B8)."
+    )
 
 
 def sources(
@@ -386,11 +465,19 @@ SOURCE_COLUMNS = {
 }
 # T1's Stuck column, after Time limit, when the export's run record knows the stuck stop (run record 6)
 STUCK_COLUMN = "Stuck"
+# T1's Explorer failure column, after No movement, from run record 7 (reported-outcomes-v4, C1)
+FAILURE_COLUMN = "Explorer failure"
 # the reported outcomes in words, by whether the export knows the stuck stop
 REPORTED_TEXT = {
     False: "completed, time limit, no movement",
     True: "completed, time limit, stuck, no movement",
 }
+
+
+def reported_text(study: Study) -> str:
+    """The reported outcomes in words (T1, T9): with explorer failures from run record 7."""
+    text = REPORTED_TEXT[study.has_stuck]
+    return f"{text}, explorer failure" if study.has_explorer_failure else text
 
 
 def accounting(study: Study) -> dict[tuple[str, str, str, str], dict[str, int]]:
@@ -434,15 +521,19 @@ def t1(src: Sources) -> Table:
         if study.has_completion_source
         else []
     )
-    others = (
+    others: tuple[str, ...] = (
         ("time_limit", STUCK, "no_movement") if study.has_stuck else ("time_limit", "no_movement")
     )
+    others += (EXPLORER_FAILURE,) if study.has_explorer_failure else ()
     columns = list(T1_COLUMNS)
     at = columns.index("Completed") + 1
     columns[at:at] = [SOURCE_COLUMNS[source] for source in sources]
     if study.has_stuck:
         at = columns.index("Time limit") + 1
         columns[at:at] = [STUCK_COLUMN]
+    if study.has_explorer_failure:
+        at = columns.index("No movement") + 1
+        columns[at:at] = [FAILURE_COLUMN]
     table = Table("T1", "Outcome accounting per stratum and profile", columns, sparse_counts=True)
     stratum_of = {(s.robot_id, s.world_id, s.spawn_id): s for s in study.strata}
     order = {profile: index for index, profile in enumerate(src.order)}
@@ -473,7 +564,7 @@ def t1(src: Sources) -> Table:
     table.attempt_ids |= {r["attempt_id"] for r in study.runs}
     table.notes = [
         "Completed counts final runs that completed within L; completion = completed / reported runs "
-        f"({REPORTED_TEXT[study.has_stuck]}), Wilson {level_text(src.level)} interval.",
+        f"({reported_text(study)}), Wilson {level_text(src.level)} interval.",
         "Missing observations and exclusions are final runs outside the reported population "
         f"({outcome_rule(study)}); replaced and discarded attempts are not final. Every planned experiment has "
         "a row, also where no run was reported.",
@@ -494,6 +585,11 @@ def t1(src: Sources) -> Table:
         table.notes.append(
             f"Stuck: {STUCK_TEXT} below 97.0 % coverage; a reported run, not completed, analysed as a "
             "time-limit run except that its coverage is carried from its end to L."
+        )
+    if study.has_explorer_failure:
+        table.notes.append(
+            f"Explorer failure: {EXPLORER_FAILURE_TEXT}. Runtime failure and Missing (startup) count only "
+            "failures of the simulation and navigation stack (failure_source stack)."
         )
     return table
 
@@ -519,11 +615,21 @@ def t2(src: Sources) -> Table:
     for stratum in study.strata:
         blocks = len({r["block_id"] for r in stratum.finals})
         add(study.stratum_label(stratum), [f"L = {stratum.limit_s:g} s, {blocks} blocks"])
+    if study.cross_method:  # C2: each method's source and build patches, ours as the reference
+        for method in study.methods.values():
+            role = "reference" if method.is_ours else "compared method"
+            add(f"Method {method.label} ({role})", [f"explorer_id {method.id}"])
+            add(f"Method {method.label}: source", list(method.sources))
+            add(
+                f"Method {method.label}: build patch",
+                list(method.build_patches),
+            )
     for profile in src.order:
         row = study.profiles[profile]
         default = " (Default)" if row["is_baseline"] else ""
+        robot = f", {row['robot_id']}" if len({s.robot_id for s in study.strata}) > 1 else ""
         add(
-            f"Profile {row['profile_name']}",
+            f"Profile {src.name(profile)}{robot}",
             [f"parameter hash {row['parameter_hash'][:12]}{default}"],
         )
     add(
@@ -581,6 +687,13 @@ def t2(src: Sources) -> Table:
     add("Mapping condition", [mapping_condition(r) or "not recorded" for r in study.finals])
     table.attempt_ids = {r["attempt_id"] for r in study.finals}
     table.notes = ["Hashes and commits shortened to 12 characters; full values in provenance.json."]
+    if study.cross_method:
+        table.notes.append(
+            "Methods: RADEF is the reference; every compared method runs from its pinned source with the listed "
+            "build patches (export 4 profiles columns explorer_source, explorer_build_patch, else the runs' "
+            "explorer_source and explorer_build_patch; a dash: none recorded, or the profile's runs differ). "
+            "Commit rows list the checkout's repositories."
+        )
     return table
 
 
@@ -604,7 +717,7 @@ def t3(src: Sources) -> Table:
     )
     for stratum in src.study.strata:
         for profile in src.profiles(stratum):
-            for endpoint in time_endpoints(src.settings):
+            for endpoint in shown_endpoints(src.settings):
                 e = src.entries.get("restricted_time", stratum, profile, endpoint=endpoint)
                 if not e:
                     continue
@@ -635,7 +748,14 @@ def t3(src: Sources) -> Table:
         "run censored at L reads > L. RMST(L) = mean of min(T, L): t interval below 10 runs, percentile "
         "bootstrap over runs from 10 (RD-5, RD-11).",
     ]
-    if src.study.has_stuck:
+    if src.study.has_explorer_failure:
+        table.notes.append(f"An {EXPLORER_FAILURE_TEXT}.")
+    if src.settings.cross_method:
+        table.notes.append(
+            "A method comparison: completion time is not shown, as what ends a run as completed differs by "
+            "method; completions are counted by source in T1 and T14 (C4)."
+        )
+    elif src.study.has_stuck:
         table.notes.append(
             f"R_completion counts every completion: the explorer's completion event, {COVERAGE_STOP_TEXT} and "
             f"the stuck stop at or above 97.0 % coverage ({STUCK_TEXT}); T1 counts them apart. A stuck run "
@@ -653,52 +773,73 @@ def t3(src: Sources) -> Table:
 # T4 Default per stratum ----------------------------------------------------------------------------------------
 
 
+T4_TITLE = "Absolute values per stratum"  # the Study tab's view title too (outputs.VIEWS)
+
+
 def t4(src: Sources) -> Table:
+    """Absolute values per stratum: our Default's, and in a method comparison every profile's (A3: the main
+    descriptive table of a method comparison, methods in the study order with ours first)."""
+    every = src.settings.cross_method
+    columns = ["Stratum", "Quantity", "n", "Median [Q1, Q3]", "Mean (SD) or estimate [CI]"]
     table = Table(
         "T4",
-        "Default per stratum",
-        ["Stratum", "Quantity", "n", "Median [Q1, Q3]", "Mean (SD) or estimate [CI]"],
+        T4_TITLE,
+        columns[:1] + (["Profile"] if every else []) + columns[1:],
     )
     for stratum in src.study.strata:
         baseline = src.baseline(stratum)
-        if baseline is None or baseline not in stratum.profiles():
+        if every:
+            chosen = src.profiles(stratum)
+        elif baseline is None or baseline not in stratum.profiles():
             continue
+        else:
+            chosen = [baseline]
         label = src.label(stratum)
         horizons = EstimateContext(src.study, src.settings).horizons(stratum)
-        for estimand, name in (("C_h", "C(h) (%)"), ("A_h", "A_h (%)"), ("D_h", "D(h) (m)")):
-            unit = UNITS[estimand]
-            for h in horizons:
-                e = src.entries.get(estimand, stratum, baseline, horizon_s=h)
+        for profile in chosen:
+            head = [label, src.name(profile)] if every else [label]
+            for estimand, name in (("C_h", "C(h) (%)"), ("A_h", "A_h (%)"), ("D_h", "D(h) (m)")):
+                unit = UNITS[estimand]
+                for h in horizons:
+                    e = src.entries.get(estimand, stratum, profile, horizon_s=h)
+                    table.rows.append(
+                        [
+                            *head,
+                            f"{name}, h = {h:g} s",
+                            str(e.get("n", 0)),
+                            median_iqr(e, unit),
+                            mean_sd(e, unit),
+                        ]
+                    )
+                    table.attempt_ids |= set(e.get("attempt_ids", []))
+            for endpoint in sensitivity_endpoints(src.settings):
+                e = src.entries.get("restricted_time", stratum, profile, endpoint=endpoint)
+                rmst = with_interval(e.get("rmst"), e.get("rmst_interval"), "s", src.level)
                 table.rows.append(
-                    [
-                        label,
-                        f"{name}, h = {h:g} s",
-                        str(e.get("n", 0)),
-                        median_iqr(e, unit),
-                        mean_sd(e, unit),
-                    ]
+                    [*head, f"RMST(L) of {endpoint} (s)", str(e.get("n", 0)), DASH, rmst]
+                )
+            for estimand, unit, name in (
+                ("gt_path_length_m", "m", "Ground-truth path length (m, moving runs)"),
+                ("cpu_per_s", "%", "Explorer CPU (% of one core, sequential runs)"),
+                ("rss_peak_mib", "MiB", "Explorer peak RSS (MiB, sequential runs)"),
+            ):
+                e = src.entries.get(estimand, stratum, profile)
+                table.rows.append(
+                    [*head, name, str(e.get("n", 0)), median_iqr(e, unit), mean_sd(e, unit)]
                 )
                 table.attempt_ids |= set(e.get("attempt_ids", []))
-        for endpoint in PRIMARY_TIME:
-            e = src.entries.get("restricted_time", stratum, baseline, endpoint=endpoint)
-            rmst = with_interval(e.get("rmst"), e.get("rmst_interval"), "s", src.level)
-            table.rows.append([label, f"RMST(L) of {endpoint} (s)", str(e.get("n", 0)), DASH, rmst])
-        for estimand, unit, name in (
-            ("gt_path_length_m", "m", "Ground-truth path length (m, moving runs)"),
-            ("cpu_per_s", "%", "Explorer CPU (% of one core, sequential runs)"),
-            ("rss_peak_mib", "MiB", "Explorer peak RSS (MiB, sequential runs)"),
-        ):
-            e = src.entries.get(estimand, stratum, baseline)
-            table.rows.append(
-                [label, name, str(e.get("n", 0)), median_iqr(e, unit), mean_sd(e, unit)]
-            )
-            table.attempt_ids |= set(e.get("attempt_ids", []))
     table.notes = [
         "C(h) and A_h hold a completed or stuck run's final coverage to L (carry-forward) and a run without "
         "movement at its pre-motion coverage; no value across a sample gap above 2 s. D(h): odometry, moving "
         "runs only, a completed or stuck run's final distance held to L.",
         "Quartiles: Hyndman–Fan type 2. Mean (SD) only for quantities never censored.",
+        "Every profile of each stratum (a method comparison, A3)."
+        if every
+        else "Our Default of each stratum.",
     ]
+    if src.study.has_explorer_failure:
+        table.notes.append(f"An {EXPLORER_FAILURE_TEXT}.")
+    table.notes += scope_notes(src.study)
     return table
 
 
@@ -708,7 +849,7 @@ def t4(src: Sources) -> Table:
 def t5(src: Sources) -> Table:
     table = Table(
         "T5",
-        "Paired differences, profile − Default",
+        f"Paired differences, {difference_text(src.study)}",
         [
             "Stratum",
             "Profile",
@@ -725,7 +866,7 @@ def t5(src: Sources) -> Table:
         for profile in src.profiles(stratum):
             if profile == baseline:
                 continue
-            for effect in EFFECTS:
+            for effect in shown_effects(src.settings):
                 horizon = None if effect.endpoint else stratum.limit_s
                 e = src.entries.get(
                     effect.estimand,
@@ -778,10 +919,19 @@ def t5(src: Sources) -> Table:
                 )
                 table.attempt_ids |= set(split.get("attempt_ids", []))
     table.notes = [
-        "Δ = profile − Default per block. Mean ΔR: exact sign-flip inversion below 10 pairs, block bootstrap "
-        "(percentile) from 10; Hodges–Lehmann: inverted signed-rank test (midranks, Pratt). Pairs censored in "
-        "both arms have Δ = 0. A level in parentheses is the highest the pairs allow. No p-values (RD-4).",
+        f"Δ = {difference_text(src.study)} per block. Mean ΔR: exact sign-flip inversion below 10 pairs, block "
+        "bootstrap (percentile) from 10; Hodges–Lehmann: inverted signed-rank test (midranks, Pratt). Pairs "
+        "censored in both arms have Δ = 0. A level in parentheses is the highest the pairs allow. No p-values "
+        "(RD-4).",
     ]
+    if src.settings.cross_method:
+        table.notes.append(
+            "A method comparison: every compared method against the reference (RADEF), RADEF's Default of the same "
+            "robot, paired by block; T95 (ΔR_95) and C(L) are the primary measures, T90, A_L and D(L) secondary "
+            "(C4, B2); completion time is not compared (T1, T14 count completions by source)."
+        )
+    if src.study.has_explorer_failure:
+        table.notes.append(f"An {EXPLORER_FAILURE_TEXT}.")
     return table
 
 
@@ -838,7 +988,7 @@ def t5_hypotheses(src: Sources) -> Table | None:
             [
                 e.get("hypothesis_id", ""),
                 where,
-                src.name(e.get("profile_id", "")),
+                src.robot_name(e.get("profile_id", "")),
                 endpoint,
                 str(e.get("n_pairs", DASH)),
                 value,
@@ -933,6 +1083,7 @@ def t6(src: Sources) -> Table:
     table.notes = [
         "CPU seconds of each scope per simulated second from activation to the end, as % of one core; runs that "
         "overlapped another attempt or lack valid explorer samples are left out and counted in stats.json.",
+        *scope_notes(src.study),
     ]
     return table
 
@@ -1043,6 +1194,9 @@ def t8(src: Sources) -> Table:
                 first = False
                 table.attempt_ids |= set(e.get("attempt_ids", []))
     table.notes = ["Median [min, max]. ΔRTF over all paired reported runs, shown once per profile."]
+    note = concurrency_note(src.study)
+    if note is not None:
+        table.notes.append(note)
     return table
 
 
@@ -1062,7 +1216,7 @@ def sensitivity(src: Sources) -> Table:
         for profile in src.profiles(stratum):
             if profile == baseline:
                 continue
-            for effect in EFFECTS:
+            for effect in shown_effects(src.settings):
                 horizon = None if effect.endpoint else stratum.limit_s
                 cells = []
                 for population in populations:
@@ -1111,6 +1265,12 @@ def sensitivity(src: Sources) -> Table:
         "C(h), A_h and D(h) no value; sequential runs only. Same estimators as T5. RMST(h) rows: the plan's "
         "horizons below L.",
     ]
+    note = concurrency_note(src.study)
+    if note is not None:
+        absent = "sequential_only" not in src.settings.sensitivity
+        table.notes.append(
+            note + (" The plan's sensitivity sets leave sequential only out." if absent else "")
+        )
     return table
 
 
@@ -1153,7 +1313,7 @@ def t9(src: Sources) -> Table | None:
     )
     table.attempt_ids = {r["attempt_id"] for runs in reported.values() for r in runs}
     table.notes = [
-        f"Reported runs ({REPORTED_TEXT[src.study.has_stuck]}) per profile over all strata, coded by the researcher "
+        f"Reported runs ({reported_text(src.study)}) per profile over all strata, coded by the researcher "
         "against the categories and definitions declared in the plan's taxonomy (hashed with the plan); per "
         "stratum in F23. The last row is each column's denominator. Coding never changes a recorded outcome; "
         f"descriptive counts, not in stats.json. {blinding_text(src.coding_record)} {CODER_NOTE} "
@@ -1340,7 +1500,7 @@ def t10(src: Sources) -> Table | None:
                     accounting[report_class] += int(count)
                 row = [
                     family,
-                    src.name(profile),
+                    src.robot_name(profile),
                     world,
                     design_label(first.get("design_point") or {}, keys),
                 ]
@@ -1359,7 +1519,7 @@ def t10(src: Sources) -> Table | None:
                 str(e["endpoint"]): e
                 for e in _family_entries(src, "family_average", family, profile_id=profile)
             }
-            row = [family, src.name(profile), "Family average", DASH]
+            row = [family, src.robot_name(profile), "Family average", DASH]
             for outcome in outcomes:
                 e = averages.get(outcome, {})
                 _, unit, scale = FAMILY_OUTCOMES[outcome]
@@ -1369,7 +1529,7 @@ def t10(src: Sources) -> Table | None:
                 row.append(text)
                 if e.get("worlds_missing"):
                     missing_notes.append(
-                        f"{family}, {src.name(profile)}, {FAMILY_OUTCOMES[outcome][0]}: {e.get('note')}."
+                        f"{family}, {src.robot_name(profile)}, {FAMILY_OUTCOMES[outcome][0]}: {e.get('note')}."
                     )
                 for world, horizons in sorted((e.get("horizons_dropped") or {}).items()):
                     if horizons and outcome == "rho":
@@ -1384,7 +1544,7 @@ def t10(src: Sources) -> Table | None:
                 for e in _family_entries(src, "family_profile_contrast", family, profile_id=profile)
             }
             if contrasts:
-                row = [family, src.name(profile), "Profile − Default", DASH]
+                row = [family, src.robot_name(profile), capital(difference_text(src.study)), DASH]
                 for outcome in outcomes:
                     e = contrasts.get(outcome, {})
                     _, unit, scale = FAMILY_OUTCOMES[outcome]
@@ -1402,7 +1562,8 @@ def t10(src: Sources) -> Table | None:
         FAMILY_INTERVAL_NOTE
         + f" Level {level_text(src.level)}; (n) = worlds with a value; {DESCRIPTIVE_MARK} descriptive, no "
         "interval.",
-        "Profile − Default: the mean over worlds of each world's mean block difference (rho, C(L), A_L in their "
+        f"{capital(difference_text(src.study))}: the mean over worlds of each world's mean block difference "
+        "(rho, C(L), A_L in their "
         "units, success in percentage points), with the t interval on the world differences where the family has "
         "one. Families are never pooled; sensitivity populations and shorter horizons are in stats.json "
         "(family-sample-v1).",
@@ -1512,7 +1673,7 @@ def t11(src: Sources) -> Table | None:
                     table.rows.append(
                         [
                             family,
-                            src.name(profile),
+                            src.robot_name(profile),
                             name,
                             effect_name(e),
                             number(e.get("estimate"), d),
@@ -1533,7 +1694,7 @@ def t11(src: Sources) -> Table | None:
                     table.rows.append(
                         [
                             family,
-                            src.name(profile),
+                            src.robot_name(profile),
                             name,
                             f"pair {second} − {first}",
                             number(e.get("estimate"), RESOLUTION[unit]),
@@ -1566,6 +1727,97 @@ def t11(src: Sources) -> Table | None:
     return table
 
 
+# T14 -------------------------------------------------------------------------------------------------------------
+
+# C4 (B6): an explorer completion below this coverage is flagged per method
+LOW_COMPLETION_PCT = 95.0
+
+
+def t14(src: Sources) -> Table | None:
+    """Completions by source per robot and profile, with the explorer completions below 95 % coverage (C4, B6):
+    their count and each one's final coverage (C(L), the last valid sample carried to L) and stratum. A
+    completion "below 95 %" did not reach T95 within L. None for an export without ``completion_source`` (run
+    record 3)."""
+    study = src.study
+    if not study.has_completion_source:
+        return None
+    sources = [s for s in COMPLETION_SOURCES if study.has_stuck or s != "stuck_stop"]
+    table = Table(
+        "T14",
+        "Completions by source and explorer completions below 95 % coverage",
+        [
+            "Robot",
+            "Profile",
+            "Reported",
+            *(SOURCE_COLUMNS[source] for source in sources),
+            "Explorer completions below 95 %",
+            "Their coverage (%)",
+            "Where",
+        ],
+    )
+    robots = list(dict.fromkeys(s.robot_id for s in study.strata))
+    unknown: list[str] = []
+    for robot in robots:
+        strata = [s for s in study.strata if s.robot_id == robot]
+        for profile in src.order:
+            runs = [(s, r) for s in strata for r in s.reported if r["profile_id"] == profile]
+            if not runs:
+                continue
+            completed = [
+                (s, r) for s, r in runs if r["outcome"] == "completed" and r["completion_event"]
+            ]
+            by_explorer = [(s, r) for s, r in completed if r[COMPLETION_SOURCE] == "explorer"]
+            # a null T95 event (not recorded, or no eligible coverage) is unknown, not below 95 %
+            low = [(s, r) for s, r in by_explorer if r["t95_event"] is False]
+            missing = sum(1 for _, r in by_explorer if r["t95_event"] is None)
+            if missing:
+                unknown.append(f"{robot} · {src.name(profile)}: {missing}")
+            values = []
+            for stratum, run in low:
+                value = coverage_at(study, run, stratum.limit_s, stratum.limit_s)
+                values.append(DASH if value.value is None else number(value.value, 1))
+            table.rows.append(
+                [
+                    robot,
+                    src.name(profile),
+                    str(len(runs)),
+                    *(
+                        str(sum(1 for _, r in completed if r[COMPLETION_SOURCE] == source))
+                        for source in sources
+                    ),
+                    f"{len(low)}/{len(by_explorer)}",
+                    ", ".join(values) or DASH,
+                    "; ".join(sorted({src.label(s) for s, _ in low})) or DASH,
+                ]
+            )
+            table.attempt_ids |= {r["attempt_id"] for _, r in runs}
+    table.notes = [
+        "Reported runs over the robot's strata; completed within L by what ended the run: the explorer's "
+        f"completion, {COVERAGE_STOP_TEXT}"
+        + (
+            f", or the stuck stop at or above 97.0 % ({STUCK_TEXT})"
+            if "stuck_stop" in sources
+            else ""
+        )
+        + "."
+        + (
+            " Completion time is not compared across methods (C4)."
+            if src.settings.cross_method
+            else ""
+        ),
+        "Explorer completions below 95 %: completions by the explorer's own signal that had not reached 95 % "
+        "coverage (T95) within L, k of the explorer completions; their coverage is C(L), the last valid sample "
+        "carried to L (a dash without one). Flagged, not excluded: they stay completed runs (B6).",
+    ]
+    if unknown:
+        table.notes.append(
+            "Explorer completions whose T95 is unknown (null event), not counted as below 95 %: "
+            + "; ".join(unknown)
+            + "."
+        )
+    return table
+
+
 def tables(src: Sources) -> list[Table]:
     grouped = src.with_groups
     built = [t1(src), t2(src), grouped(t3(src)), grouped(t4(src)), grouped(t5(src))]
@@ -1575,7 +1827,7 @@ def tables(src: Sources) -> list[Table]:
     built += [grouped(t6(src)), grouped(t7(src)), t8(src), grouped(sensitivity(src))]
     codebook = t9(src)
     built += [] if codebook is None else [codebook]
-    return built + [t for t in (t10(src), t11(src)) if t is not None]
+    return built + [t for t in (t10(src), t11(src), t14(src)) if t is not None]
 
 
 def write(table: Table, directory: Path) -> list[Path]:

@@ -20,9 +20,10 @@
 # (multirobot_map_merge, roadmap_explorer_rviz_plugins, TDLE's bcr_bot demo workspaces) are left out.
 # Two build-only edits: roadmap_explorer builds its gtests whenever ament_cmake_gtest is found, ignoring
 # BUILD_TESTING, so they are gated on BUILD_TESTING as well (the image build skips them); tdle installs a
-# launch/ directory its repository does not have, so an empty one is created. Two patches to methods, each
+# launch/ directory its repository does not have, so an empty one is created. Three patches to methods, each
 # checked by its SHA-256 as profiles.yaml records it: rrt_explore gets
-# docker/patches/rrt_explore-41054af-bounds.patch (decision X5: grid reads outside the grid read as unknown) and
+# docker/patches/rrt_explore-41054af-bounds.patch (decision X5: grid reads outside the grid read as unknown),
+# tdle docker/patches/tdle-b5ed3cf-bounds.patch (decision B5, the same rule for its gridValue) and
 # mrtsp_exploration_ros2 docker/patches/mrtsp_exploration_ros2-d9bc180-benchmark.patch (decision M1: its
 # completion is published on /exploration_complete; occ_threshold defaults to 60, maintainer 26 October 2026). mrtsp_exploration_ros2's tests are left out.
 # Usage: fetch_external_explorers.sh SOURCE_DIR
@@ -47,6 +48,8 @@ MRTSP_PATCH_SHA256="c998dc09178c49d0d63dbf7fd376086610440edd66b5249f3200d3317ecc
 TDLE_COMMIT="b5ed3cf8573cb4a2387b5434d3ec4bb782ba286e"
 TDLE_URL="https://codeload.github.com/SeanZsya/tdle/tar.gz/${TDLE_COMMIT}"
 TDLE_SHA256="197f15e4d0e738af5657da715b56aad5718a680db67586fe094d8b1e5a196b7f"
+TDLE_PATCH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/patches/tdle-b5ed3cf-bounds.patch"
+TDLE_PATCH_SHA256="46bc72e212c9dc270aa5607d178c5b6eff3dc1574e9f5066618a638eea014c93"
 
 if [[ $# -ne 1 ]]; then
   echo "usage: $0 SOURCE_DIR" >&2
@@ -98,6 +101,8 @@ tdle_package="${work}/tdle/tdle"
 grep -qx 'install(DIRECTORY launch/' "${tdle_package}/CMakeLists.txt"
 [[ ! -e "${tdle_package}/launch" ]]
 mkdir "${tdle_package}/launch"
+echo "${TDLE_PATCH_SHA256}  ${TDLE_PATCH}" | sha256sum -c --quiet -
+patch -d "${tdle_package}" -p1 --forward --quiet < "${TDLE_PATCH}"
 
 mkdir -p "$1"
 for name in m-explore-ros2 roadmap-explorer rrt-explore tdle mrtsp_exploration_ros2; do
@@ -106,5 +111,5 @@ for name in m-explore-ros2 roadmap-explorer rrt-explore tdle mrtsp_exploration_r
 done
 echo "explore_lite ${EXPLORE_LITE_COMMIT:0:7} in $1/m-explore-ros2," \
   "roadmap_explorer ${ROADMAP_COMMIT:0:7} in $1/roadmap-explorer," \
-  "rrt_explore ${RRT_EXPLORE_COMMIT:0:7} with $(basename "${RRT_EXPLORE_PATCH}") in $1/rrt-explore, tdle ${TDLE_COMMIT:0:7} in $1/tdle," \
+  "rrt_explore ${RRT_EXPLORE_COMMIT:0:7} with $(basename "${RRT_EXPLORE_PATCH}") in $1/rrt-explore, tdle ${TDLE_COMMIT:0:7} with $(basename "${TDLE_PATCH}") in $1/tdle," \
   "mrtsp_exploration_ros2 ${MRTSP_COMMIT:0:7} with $(basename "${MRTSP_PATCH}") in $1/mrtsp_exploration_ros2"

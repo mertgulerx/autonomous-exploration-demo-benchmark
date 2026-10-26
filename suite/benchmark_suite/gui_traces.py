@@ -13,15 +13,17 @@
 # limitations under the License.
 
 """The Study tab's coverage traces (27; RESULTS_STUDY.md decision 5, RD-6): every reported run of one stratum as a
-raw line, Default in ink; the one view the GUI draws itself, with no band and no statistic."""
+raw line, our explorer in ink and every compared method in its own colour (contract C2); the one view the GUI draws
+itself, with no band and no statistic."""
 
-from collections.abc import Callable, Mapping, Sequence
+from collections import defaultdict
+from collections.abc import Callable, Iterable, Mapping, Sequence
 import math
 from typing import Any
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
-from .contracts import GAP_S
+from .contracts import GAP_S, OUR_EXPLORER, measured_as
 from .gui_marks import CHART_LABEL
 from .gui_menus import show_tooltip
 from .gui_run_detail import TimeAxis, carries_forward
@@ -29,8 +31,10 @@ from .gui_style import duration, number
 from .gui_theme import ThemeManager
 from .gui_widgets import TextStyle, Themed, paint_glyphs
 
-# Default in ink; the other profiles in the Okabe–Ito order of their parameter hashes (FP-7), lighter in the
-# dark theme. The GUI draws this view, so it uses the GUI's colours (RESULTS_STUDY.md batch 2).
+# Colours by explorer (contract C2): frontier_exploration_ros2 in ink, each external explorer one fixed Okabe–Ito
+# hue in registry order (profiles.yaml after ours: blue, vermilion, bluish green, reddish purple, orange), the
+# same in every robot and study, lighter in the dark theme. The GUI draws this view, so it uses the GUI's colours
+# (RESULTS_STUDY.md batch 2).
 TRACE_COLOURS = (
     ("#0072B2", "#5FA8DE"),
     ("#D55E00", "#E58448"),
@@ -38,26 +42,61 @@ TRACE_COLOURS = (
     ("#CC79A7", "#D99CC0"),
     ("#E69F00", "#EDB33F"),
 )
+# Variants of one method (contract C2): its Default profile solid, its other profiles in these dash patterns
+# (px at width 1; scaled by the pen), in (parameter hash, profile ID) order per explorer and robot.
+VARIANT_DASHES: tuple[tuple[float, ...], ...] = ((), (6.0, 2.5), (6.0, 2.0, 1.5, 2.0), (11.0, 3.0))
 TRACE_LEFT, TRACE_RIGHT, TRACE_TOP, TRACE_BOTTOM = 44, 14, 14, 30
+Style = tuple[int, int]  # (colour index, -1 for ink; dash index)
+
+
+def trace_styles(runs: Iterable[Mapping[str, Any]], explorers: Sequence[str]) -> dict[str, Style]:
+    """Each profile's (colour, dash) by its explorer (contract C2). ``explorers``: the catalog's run-record
+    explorer IDs in registry order; frontier_exploration_ros2 is ink (-1), an external explorer its position
+    among the others, one the catalog does not list after them. Within an explorer and robot the Default profile
+    (``default-…`` or the baseline) is solid, the others take the dash patterns in (parameter hash, ID) order."""
+    external = [explorer for explorer in explorers if explorer != OUR_EXPLORER]
+    members: dict[tuple[str, str], set[tuple[bool, str, str]]] = defaultdict(set)
+    for run in runs:
+        profile = str(run.get("profile_id"))
+        default = bool(run.get("is_baseline")) or profile.startswith("default-")
+        members[(str(run.get("explorer_id") or OUR_EXPLORER), str(run.get("robot_id")))].add(
+            (not default, str(run.get("parameter_hash")), profile)
+        )
+    unlisted = sorted({e for e, _ in members if e != OUR_EXPLORER and e not in external})
+    styles: dict[str, Style] = {}
+    for (explorer, _), found in members.items():
+        colour = (
+            -1
+            if explorer == OUR_EXPLORER
+            else external.index(explorer)
+            if explorer in external
+            else len(external) + unlisted.index(explorer)
+        )
+        for dash, (_, _, profile) in enumerate(sorted(found)):
+            styles[profile] = (colour, dash)
+    return styles
 
 
 def run_end(run: Mapping[str, Any]) -> float:
-    """When a run stops exploring on the axis: its completion, a stuck run's stop (stuck-stop-v1), else its
-    limit (a run that never moved never explored)."""
-    if run.get("outcome") == "no_movement":
+    """When a run stops exploring on the axis: its completion, a stuck run's stop (stuck-stop-v1; an explorer
+    failure's after movement onset, ``contracts.measured_as``), else its limit (a run that never moved never
+    explored)."""
+    outcome = measured_as(run.get("outcome"), run.get("failure_source"), run.get("motion_started"))
+    if outcome == "no_movement":
         return 0.0
     completion = number(run.get("completion_s"))
-    if run.get("outcome") == "completed" and completion is not None:
+    if outcome == "completed" and completion is not None:
         return completion
     stopped = number(run.get("elapsed_s"))
-    if run.get("outcome") == "stuck" and stopped is not None:
+    if outcome == "stuck" and stopped is not None:
         return stopped
     return number(run.get("time_limit_s")) or 0.0
 
 
 class TracesChart(Themed):
-    """Every reported run's coverage in one stratum as a raw line (no band, no statistic), Default in ink and
-    the other profiles in their colours, completed and stuck runs carried forward to L dashed; the axis of the run view
+    """Every reported run's coverage in one stratum as a raw line (no band, no statistic), our explorer in ink and
+    each compared method in its colour, variants of a method in dash patterns (contract C2), completed and stuck
+    runs (and explorer failures after movement onset) carried forward to L dashed; the axis of the run view
     (linear past the last end, compressed to L). Hovering names a run, a click opens it (``opened``)."""
 
     opened = QtCore.Signal(str)  # attempt id
@@ -65,38 +104,36 @@ class TracesChart(Themed):
     def __init__(self, themes: ThemeManager, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(themes, parent)
         self.runs: list[dict[str, Any]] = []
-        self.colours: dict[str, int] = {}  # profile id -> colour index (-1: Default)
+        self.styles: dict[str, Style] = {}  # profile id -> (colour index, -1: ink; dash index)
+        # the catalog's run-record explorer IDs in registry order (StudyTab.set_explorers)
+        self.explorers: list[str] = []
         self.hovered = -1
         self.describe: Callable[[dict[str, Any]], str] = lambda run: str(run.get("attempt_id"))
         self.setMouseTracking(True)
 
     def set_runs(
-        self, runs: Sequence[dict[str, Any]], profiles: Sequence[str] | None = None
+        self, runs: Sequence[dict[str, Any]], styles: Mapping[str, Style] | None = None
     ) -> None:
-        """``profiles``: the study's other profiles in F1's colour order (by parameter hash), so a profile keeps
-        its colour in every world; without it, this reply's."""
+        """``styles``: the study's profiles' styles (``trace_styles`` of its final runs), so a profile keeps its
+        colour and dash in every world; without it, this reply's."""
         self.runs = list(runs)
-        if profiles is None:
-            profiles = [
-                profile
-                for _, profile in sorted(
-                    {
-                        (str(r.get("parameter_hash")), str(r.get("profile_id")))
-                        for r in runs
-                        if not r.get("is_baseline")
-                    }
-                )
-            ]
-        self.colours = {profile: index for index, profile in enumerate(profiles)}
+        self.styles = {**trace_styles(runs, self.explorers), **(styles or {})}
         self.hovered = -1
         self.update()
 
+    def trace_style(self, run: Mapping[str, Any]) -> Style:
+        return self.styles.get(str(run.get("profile_id")), (-1, 0))
+
     def colour(self, run: Mapping[str, Any]) -> QtGui.QColor:
-        if run.get("is_baseline"):
+        index = self.trace_style(run)[0]
+        if index < 0:
             return self.color("text.ink")
-        index = self.colours.get(str(run.get("profile_id")), 0) % len(TRACE_COLOURS)
-        light, dark = TRACE_COLOURS[index]
+        light, dark = TRACE_COLOURS[index % len(TRACE_COLOURS)]
         return QtGui.QColor(dark if self.theme.name == "dark" else light)
+
+    def dashes(self, run: Mapping[str, Any]) -> tuple[float, ...]:
+        """The run's variant dash pattern in px (empty: solid)."""
+        return VARIANT_DASHES[self.trace_style(run)[1] % len(VARIANT_DASHES)]
 
     def limit(self) -> float | None:
         limits = [number(r.get("time_limit_s")) for r in self.runs]
@@ -142,8 +179,12 @@ class TracesChart(Themed):
 
     @staticmethod
     def held(run: Mapping[str, Any]) -> float | None:
-        """A reported run that never moved: its pre-motion coverage, held (no line of its own otherwise)."""
-        if run.get("outcome") != "no_movement" or run.get("samples"):
+        """A reported run that never moved (an explorer failure before movement onset too): its pre-motion
+        coverage, held (no line of its own otherwise)."""
+        outcome = measured_as(
+            run.get("outcome"), run.get("failure_source"), run.get("motion_started")
+        )
+        if outcome != "no_movement" or run.get("samples"):
             return None
         return number(run.get("pre_motion_coverage_pct"))  # unavailable stays unavailable, never 0
 
@@ -239,8 +280,11 @@ class TracesChart(Themed):
             colour.setAlphaF(1.0 if hovered else 0.55)
             pen = QtGui.QPen(colour, 2.6 if hovered else 1.2)
             pen.setJoinStyle(QtCore.Qt.PenJoinStyle.RoundJoin)
+            width = pen.widthF()
             if self.held(run) is not None:
                 pen.setDashPattern([1, 2.5])  # dotted: held, not recorded progress (F1)
+            elif dashes := self.dashes(run):
+                pen.setDashPattern([value / width for value in dashes])  # a variant (C2)
             painter.setPen(pen)
             painter.setBrush(QtCore.Qt.BrushStyle.NoBrush)
             for segment in segments:

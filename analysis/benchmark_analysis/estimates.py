@@ -25,6 +25,11 @@ times, compute and RTF, the geometric-mean ratio for compute, the discordant spl
 only for a confirmatory study's hypotheses, Holm-adjusted over the plan's whole list (RD-15). The sensitivity
 populations repeat the paired effects. Every entry lists the attempts behind it.
 
+In a method comparison (cross-method readiness C2–C4) every compared method's profiles are paired with our Default of
+the same robot, the reference ("method − RADEF"; ``comparison`` names both profile IDs), ΔR_95 and ΔC(L) lead the
+shown effects (``shown_effects``) and completion time is computed but not shown; a reported explorer failure
+enters every estimand as ``data`` defines (C1).
+
 An entry's ID (``entry_id``) joins estimand, endpoint, robot, world, spawn, profile, horizon, population and
 variant (the estimator of a paired entry, or a hypothesis ID) with ``|``; IDs are unique.
 """
@@ -40,6 +45,7 @@ import numpy as np
 from . import stats, worlds
 from .data import (
     EXCLUDED,
+    EXPLORER_FAILURE,
     REPORTED,
     STUCK,
     TIME_ENDPOINTS,
@@ -51,6 +57,8 @@ from .data import (
     coverage_auc,
     distance_at,
     idle_tail,
+    is_external,
+    never_moved,
     restricted_time,
 )
 from .settings import (
@@ -97,11 +105,31 @@ EFFECTS = (
         "R_completion (s)",
     ),
     Effect("dR_90", "delta_restricted_time", "R_90", "ΔR_90 (s)", "s", "mean", "R_90 (s)"),
+    # the primary time measure of a method comparison (C4, B2); shown only there (``shown_effects``)
+    Effect("dR_95", "delta_restricted_time", "R_95", "ΔR_95 (s)", "s", "mean", "R_95 (s)"),
     Effect("dC_L", "delta_C_h", None, "ΔC(L) (pp)", "pp", "hodges_lehmann", "C(L) (%)"),
     Effect("dA_L", "delta_A_h", None, "ΔA_L (pp)", "pp", "hodges_lehmann", "A_L (%)"),
     Effect("dD_L", "delta_D_h", None, "ΔD(L) (m)", "m", "hodges_lehmann", "D(L) (m)"),
 )
-PRIMARY_TIME = tuple(e.endpoint for e in EFFECTS if e.endpoint)  # the sensitivity endpoints
+# The effects each kind of study shows (T5, S, F3, F13): a comparison of profiles of one explorer as before; a
+# method comparison (C4, B2) leads with its primary measures, T95 and C(L), and leaves out the completion time,
+# whose meaning differs by method (shown only split by completion_source, T1 and T14).
+PROFILE_EFFECTS = ("dR_completion", "dR_90", "dC_L", "dA_L", "dD_L")
+METHOD_EFFECTS = ("dR_95", "dC_L", "dR_90", "dA_L", "dD_L")
+EFFECT_BY_NAME = {e.name: e for e in EFFECTS}
+
+
+def shown_effects(settings: Settings) -> tuple[Effect, ...]:
+    """The paired effects a study shows, in display order (C4)."""
+    names = METHOD_EFFECTS if settings.cross_method else PROFILE_EFFECTS
+    return tuple(EFFECT_BY_NAME[name] for name in names)
+
+
+def sensitivity_endpoints(settings: Settings) -> list[str]:
+    """The restricted-time endpoints of the shown effects: the sensitivity populations' and T4's."""
+    return [e.endpoint for e in shown_effects(settings) if e.endpoint]
+
+
 # The primary estimator of each paired estimand (RD-13), from EFFECTS; restricted times also get the other one as
 # the secondary estimate, and every effect at a plan horizon uses its estimand's estimator.
 PRIMARY_ESTIMATOR = {e.estimand: e.estimator for e in EFFECTS}
@@ -111,16 +139,24 @@ OTHER_ESTIMATOR = {"mean": "hodges_lehmann", "hodges_lehmann": "mean"}
 
 
 def time_endpoints(settings: Settings) -> list[str]:
-    """The restricted-time endpoints a study reports: completion, the plan's milestones and every milestone an
-    effect of EFFECTS needs (ΔR_90 is always shown), in milestone order."""
+    """The restricted-time endpoints a study reports in ``stats.json``: completion, the plan's milestones and
+    every milestone a shown effect needs (ΔR_90 always; ΔR_95 in a method comparison), in milestone order."""
     needed = {
         MILESTONE_OF_ENDPOINT[e.endpoint]
-        for e in EFFECTS
+        for e in shown_effects(settings)
         if e.endpoint and e.endpoint != "R_completion"
     }
     return [
         "R_completion",
         *(milestone_endpoint(m) for m in sorted(set(settings.milestones) | needed)),
+    ]
+
+
+def shown_endpoints(settings: Settings) -> list[str]:
+    """The restricted-time endpoints shown as tables and figures (T3, F2): ``time_endpoints`` without completion
+    in a method comparison, where completion time is shown only split by completion_source (C4)."""
+    return [
+        e for e in time_endpoints(settings) if not (settings.cross_method and e == "R_completion")
     ]
 
 
@@ -131,7 +167,7 @@ class EstimateContext:
 
     def horizons(self, stratum: Stratum) -> list[float]:
         """The plan's horizons of this world below L, then L itself."""
-        declared = self.settings.horizons_s.get(stratum.world_id, ())
+        declared = self.settings.horizons(stratum.world_id, stratum.robot_id)
         return sorted({h for h in declared if 0 < h < stratum.limit_s} | {stratum.limit_s})
 
     def milestones(self) -> list[str]:
@@ -196,6 +232,14 @@ class Entries:
     ) -> dict[str, Any]:
         """The entry, or an empty mapping when the study has none (for example no Default in a stratum)."""
         key = entry_id(estimand, stratum, profile, endpoint, horizon_s, population, variant)
+        return self._by_id.get(key, {})
+
+    def subset(self, **fields: Any) -> "Entries":
+        """The entries whose fields equal all the given values (``where``) as an ``Entries`` of their own."""
+        return Entries(self.where(**fields))
+
+    def by_id(self, key: str) -> dict[str, Any]:
+        """The entry with this ID, or an empty mapping."""
         return self._by_id.get(key, {})
 
     def where(self, **fields: Any) -> Iterator[dict[str, Any]]:
@@ -266,12 +310,17 @@ def horizon_value(study: Study, run: Row, estimand: str, horizon: float, limit: 
     return HORIZON_ESTIMANDS[estimand](study, run, horizon, limit)
 
 
+INSIGHT_CPU = "cpu_s_insight"
+
+
 def cpu_per_s(field: str) -> Callable[[Row], Value]:
     """CPU s of one ``resources`` scope per simulated s from activation to the end, as % of one core
     (sequential runs with valid explorer samples; RESULTS_OVERHAUL §7 F5/T6). The scope's CPU counts from its
     process start, so time before activation is in the numerator but not the denominator."""
 
     def read(run: Row) -> Value:
+        if field == INSIGHT_CPU and is_external(run):
+            return Value(None, "no_insight_node")  # the insight node runs only beside ours (B7)
         if not run["resource_valid"] or run[field] is None:
             return Value(None, "resource_samples_missing")
         if run["concurrent_wall_fraction"] != 0:
@@ -288,7 +337,7 @@ def cpu_per_s(field: str) -> Callable[[Row], Value]:
 
 def field_value(name: str, *, moving_only: bool = False) -> Callable[[Row], Value]:
     def read(run: Row) -> Value:
-        if moving_only and run["outcome"] == "no_movement":
+        if moving_only and never_moved(run):
             return Value(None, "no_movement")  # RD-8: efficiency and paths of runs that moved
         value = run[name]
         return Value(None, "not_recorded") if value is None else Value(float(value), "observed")
@@ -306,7 +355,7 @@ def _sequential(read: Callable[[Row], Value]) -> Callable[[Row], Value]:
 METRICS: dict[str, Callable[[Row], Value]] = {
     "cpu_per_s": cpu_per_s("explorer_cpu_s"),
     "instrumentation_cpu_per_s": cpu_per_s("cpu_s_instrumentation"),
-    "insight_cpu_per_s": cpu_per_s("cpu_s_insight"),
+    "insight_cpu_per_s": cpu_per_s(INSIGHT_CPU),
     "rss_peak_mib": _sequential(field_value("explorer_rss_peak_mib")),
     "gt_path_length_m": field_value("gt_path_length_m", moving_only=True),
     "rtf_mean": field_value("rtf_mean"),
@@ -386,6 +435,11 @@ def _restricted(
         n_events=sum(events),
         not_reached_by_limit=len(usable) - sum(events),
         no_movement=sum(1 for _, v in usable if v.reason == "no_movement"),
+        explorer_failure=sum(1 for _, v in usable if v.reason == EXPLORER_FAILURE),
+        # explorer failures whose milestones were read from their valid samples (data._failure_milestones)
+        milestones_from_samples=sum(
+            1 for run, _ in usable if run.get("milestone_source") == "samples"
+        ),
         completed_below_m=sum(1 for _, v in usable if v.reason == "completed_below_m"),
         no_value=_reasons(found),
         final_runs=stratum.counts(profile),
@@ -416,7 +470,8 @@ def _restricted(
         profile,
         attempt_ids=(run["attempt_id"] for run, _ in usable),
         endpoint=endpoint,
-        censoring="right-censored at L; no movement never reaches (RD-8, RD-10); stuck as time limit",
+        censoring="right-censored at L; no movement never reaches (RD-8, RD-10); stuck as time limit; an "
+        "explorer failure censored at L (never reaching when it ended before movement)",
         **document,
     )
 
@@ -630,6 +685,12 @@ def _paired_document(
     return document
 
 
+def comparison(profile: str, baseline: str) -> str:
+    """A paired entry's ``comparison``: both profile IDs, "<profile> − <reference>" (C2: the reference is our
+    Default of the profile's robot)."""
+    return f"{profile} − {baseline}"
+
+
 def _paired_entry(
     estimand: str,
     stratum: Stratum,
@@ -638,6 +699,7 @@ def _paired_entry(
     method: str,
     settings: Settings,
     *,
+    baseline: str,
     role: str,
     population: str = "primary",
     endpoint: str | None = None,
@@ -652,7 +714,7 @@ def _paired_entry(
         population=population,
         endpoint=endpoint,
         horizon_s=horizon_s,
-        comparison=f"{profile} − Default",
+        comparison=comparison(profile, baseline),
         role=role,
         **extra,
         **_paired_document(found, method, settings, test=False),
@@ -668,7 +730,9 @@ def paired(
         return []
     limit = stratum.limit_s
     entries = []
-    endpoints = context.milestones() if population == "primary" else list(PRIMARY_TIME)
+    endpoints = (
+        context.milestones() if population == "primary" else sensitivity_endpoints(context.settings)
+    )
     for endpoint in endpoints:
 
         def read(run: Row, endpoint: str = endpoint) -> Value:
@@ -694,6 +758,7 @@ def paired(
                     found,
                     method,
                     settings,
+                    baseline=baseline,
                     role=role,
                     population=population,
                     endpoint=endpoint,
@@ -718,6 +783,7 @@ def paired(
                     found,
                     PRIMARY_ESTIMATOR[f"delta_{estimand}"],
                     settings,
+                    baseline=baseline,
                     role="primary",
                     population=population,
                     horizon_s=h,
@@ -739,6 +805,7 @@ def paired(
                         found,
                         method,
                         settings,
+                        baseline=baseline,
                         role="primary" if method == "hodges_lehmann" else "secondary",
                     )
                 )
@@ -777,7 +844,7 @@ def _success_split(
         stratum,
         profile,
         attempt_ids=attempts,
-        comparison=f"{profile} − Default",
+        comparison=comparison(profile, baseline),
         role="primary",
         **counts,
         split_interval=interval_document(
@@ -923,7 +990,7 @@ def _hypothesis_entry(context: EstimateContext, hypothesis: Hypothesis) -> dict[
             hypothesis.profile,
             attempt_ids=attempts,
             endpoint="success",
-            comparison=f"{hypothesis.profile} − Default",
+            comparison=comparison(hypothesis.profile, baseline),
             **base,
             **totals,
             testable=totals["n_pairs"] > 0,
@@ -962,7 +1029,7 @@ def _hypothesis_entry(context: EstimateContext, hypothesis: Hypothesis) -> dict[
         attempt_ids=found.attempt_ids,
         endpoint=hypothesis.endpoint,
         horizon_s=hypothesis.horizon_s,
-        comparison=f"{hypothesis.profile} − Default",
+        comparison=comparison(hypothesis.profile, baseline),
         testable=document.get("p_value") is not None,
         note=note,
         **{**document, **base},
@@ -1103,7 +1170,7 @@ def _shorter(context: EstimateContext, stratum: Stratum, profile: str) -> list[d
     runs = runs_for(stratum, profile, "primary")
     out = []
     for h in context.horizons(stratum)[:-1]:
-        for endpoint in PRIMARY_TIME:
+        for endpoint in sensitivity_endpoints(context.settings):
             found = [(run, time_value(run, endpoint, stratum.limit_s)) for run in runs]
             usable = [(run, v) for run, v in found if v.value is not None]
             times = [min(float(v.value), h) for _, v in usable if v.value is not None]

@@ -22,7 +22,8 @@
 - F2 (one per restricted-time endpoint): attainment 1 − Ŝ(t) as upward steps, Wilson intervals at the plan's
   horizons (from ``stats.json``), the at-risk table whose last column is "k/n not reached by L" (FP-3); the time
   axis as F1's.
-- F3 (one per paired effect of ``estimates.EFFECTS``): forest plot, profile − Default, with "n pairs" and
+- F3 (one per shown paired effect, ``estimates.shown_effects``): forest plot, profile − Default (method − ours in
+  a method comparison), with "n pairs" and
   "estimate [lo, hi]" columns, and a pooled diamond for a pre-specified pooled hypothesis on the same scale.
 - F5: compute, F6: reliability; every run as a point, a box from ``min_n`` runs and a violin from 30 (type 2
   quartiles, Tukey whiskers), runs not reaching by L as triangles at L, success as a dot with its interval; F5 (c)
@@ -84,6 +85,7 @@ import yaml
 
 from . import stats
 from .data import (
+    EXPLORER_FAILURE_TEXT,
     GAP_S,
     STUCK_TEXT,
     TIME_EPSILON,
@@ -91,20 +93,23 @@ from .data import (
     Stratum,
     Study,
     Value,
+    difference_text,
     idle_tail,
     TIME_ENDPOINTS,
+    never_moved,
     outcome_rule,
+    reference_text,
     restricted_time,
     run_end,
 )
 from .estimates import (
-    EFFECTS,
     METRICS,
     PRIMARY_ESTIMATOR,
     Effect,
     Entries,
     pairs,
-    time_endpoints,
+    shown_effects,
+    shown_endpoints,
     time_value,
 )
 from .export import Export
@@ -124,7 +129,7 @@ from .style import (
     figure,
     profile_styles,
 )
-from .tables import level_text, with_interval
+from .tables import level_text, scope_notes, with_interval
 from .worlds import WorldGroup, world_groups
 
 TIME_LABEL = "Simulated time since first movement (s)"
@@ -164,6 +169,8 @@ class FigureContext:
     styles: dict[str, ProfileStyle]
     order: list[str]
     groups: tuple[WorldGroup, ...] = ()  # ``tables.world_groups``
+    # where an encoding repeats (``style.profile_styles``): added to every figure's notes by ``outputs``
+    style_notes: tuple[str, ...] = ()
     # the whole study when ``study`` holds only one group's page (``grouped``): labels stay the study's
     whole: Study | None = None
 
@@ -210,15 +217,17 @@ def context(
         )
         for attempt, rows in collected.items()
     }
+    styles = profile_styles(study)
     return FigureContext(
         study,
         settings,
         entries,
         preset,
         grid,
-        profile_styles(study.profiles),
+        styles.by_profile,
         order,
         world_groups(study),
+        style_notes=styles.notes,
     )
 
 
@@ -353,20 +362,38 @@ def legend(
     *,
     max_columns: int = 4,
 ) -> None:
-    """One legend under the figure: the profiles' encodings, then ``extra``, in at most ``max_columns`` columns."""
-    handles = [
-        Line2D(
-            [],
-            [],
-            color=ctx.styles[p].color,
-            marker=ctx.styles[p].marker,
-            linestyle=ctx.styles[p].linestyle,
-            label=ctx.styles[p].name,
+    """One legend under the figure: the profiles' encodings (one entry per encoding and label: the same profile
+    of several robots once), then ``extra``, in at most ``max_columns`` columns."""
+    seen: set[tuple[str, str, str, str]] = set()
+    handles = []
+    for p in profiles:
+        style = ctx.styles[p]
+        key = (style.name, style.color, style.marker, str(style.linestyle))
+        if key in seen:
+            continue
+        seen.add(key)
+        handles.append(
+            Line2D(
+                [],
+                [],
+                color=style.color,
+                marker=style.marker,
+                linestyle=style.linestyle,
+                label=style.name,
+            )
         )
-        for p in profiles
-    ]
     columns = min(max_columns, len(handles) + len(extra))
     fig.legend(handles=[*handles, *extra], loc="outside lower center", ncols=columns)
+
+
+def short_name(ctx: FigureContext, profile: str) -> str:
+    """A profile's name in a narrow column: a method's Default by the method alone in a method comparison
+    ("m-explore-ros2", "RADEF"), else its label."""
+    row = ctx.study.profiles.get(profile, {})
+    method = ctx.study.method(profile)
+    if ctx.study.cross_method and method is not None and row.get("method_default"):
+        return method.label
+    return ctx.styles[profile].name
 
 
 def study_profiles(ctx: FigureContext) -> list[str]:
@@ -696,7 +723,7 @@ class Trace:
 def coverage_trace(ctx: FigureContext, run: Row, stratum: Stratum) -> Trace:
     """One run's recorded steps, broken where valid samples are more than 2 s apart (nothing bridges a gap)."""
     limit = stratum.limit_s
-    if run["outcome"] == "no_movement":
+    if never_moved(run):
         return Trace([], None, ctx.study.pre_motion.get(run["attempt_id"]))
     series = ctx.study.coverage.get(run["attempt_id"])
     if series is None or not series.t.size:
@@ -748,7 +775,7 @@ def coverage_band(ax: Any, ctx: FigureContext, runs: list[Row], style: ProfileSt
     if not cells:
         return Band(None, 0, False, False)
     grid_t = cells[0][0]  # one grid per stratum: every run shares its L
-    moved = [r for r in runs if r["outcome"] != "no_movement"]
+    moved = [r for r in runs if not never_moved(r)]
     drawn = moved_median = False
     for selection, primary in ((runs, True), (moved, False)):
         if not primary and len(moved) == len(runs):
@@ -804,12 +831,18 @@ def coverage_panel(
 
 def coverage_notes(ctx: FigureContext) -> list[str]:
     """How to read a coverage panel (F1, F21)."""
+    failure = (
+        " An explorer failure after movement onset is carried like a stuck run, one before it held like a run "
+        "that never moved (C1)."
+        if ctx.study.has_explorer_failure
+        else ""
+    )
     return [
         "Thin steps: runs, broken where valid samples are more than 2 s apart; dashed: a completed or stuck run's "
         "final coverage carried to L (RD-6); dotted at a constant: a run that never moved, held at its pre-motion "
         "coverage (RD-8). Band: pointwise median and IQR (type 2), descriptive, only where at least "
         f"{ctx.settings.min_n} runs have a value under the gap rule; a dotted median: runs that moved only (RD-8, "
-        "secondary). Strip: runs still running.",
+        f"secondary). Strip: runs still running.{failure}",
         AXIS_NOTE,
     ]
 
@@ -833,7 +866,8 @@ def f1(ctx: FigureContext) -> FigureOut:
         width,
         attempts,
         f"Coverage over time for every reported run in {len(ctx.study.strata)} strata, with the pointwise median "
-        f"and interquartile band of each profile where at least {ctx.settings.min_n} runs have a value.",
+        f"and interquartile band of each {'method and profile' if ctx.study.cross_method else 'profile'} where "
+        f"at least {ctx.settings.min_n} runs have a value.",
         coverage_notes(ctx),
         {"axis_end_s": {ctx.label(s): time_axis_end(s) for s in ctx.study.strata}},
     )
@@ -937,8 +971,13 @@ def attainment_notes(ctx: FigureContext) -> list[str]:
     """How to read an attainment panel (F2, F21)."""
     return [
         f"Steps: 1 − Ŝ(t) (all censoring at L, so the share of runs). Points: Wilson {ctx.level_label} intervals at "
-        "the horizons. Runs without movement count as never reaching (RD-8); failures and stopped runs are "
-        "excluded and counted in T1. At-risk counts at 0, 1/4, 1/2 and 3/4 of the axis end and, in the last "
+        "the horizons. Runs without movement count as never reaching (RD-8); "
+        + (
+            "explorer failures as not reaching after their end (C1); stack failures"
+            if ctx.study.has_explorer_failure
+            else "failures"
+        )
+        + " and stopped runs are excluded and counted in T1. At-risk counts at 0, 1/4, 1/2 and 3/4 of the axis end and, in the last "
         "column, at L (k/n not reached by L). The latest horizon beyond the axis end (L) is drawn there: no run "
         "is still running after the axis end, so the share and its interval are those at L; earlier horizons "
         "beyond it have the same share and are not drawn.",
@@ -1009,7 +1048,7 @@ def _forest_rows(ctx: FigureContext, effect: Effect) -> list[tuple[str, dict[str
                 rows.append((f"{ctx.label(stratum)} · {style.name}", e, style.color, "s"))
     pooled = _pooled_row(ctx, effect)
     if pooled is not None:
-        name = ctx.study.profiles[pooled["profile_id"]]["profile_name"]
+        name = ctx.study.profiles[pooled["profile_id"]]["label"]
         rows.append((f"pooled ({pooled['hypothesis_id']}) · {name}", pooled, "#000000", "D"))
     return rows
 
@@ -1055,11 +1094,12 @@ def f3(ctx: FigureContext, effect: Effect) -> FigureOut:
     ax.axvline(0, color=GREY, lw=0.6)
     ax.set_yticks(range(len(rows)), [label for label, *_ in reversed(rows)])
     ax.set_ylim(-0.6, len(rows) - 0.4)
-    ax.set_xlabel(f"{effect.label}, profile − Default")
+    ax.set_xlabel(f"{effect.label}, {difference_text(ctx.study)}")
     lower, higher = ("shorter", "longer") if effect.unit == "s" else ("lower", "higher")
+    side = "the method" if ctx.study.cross_method else "the profile"
     for x, words, align in (
-        (0.0, f"← {lower} with the profile", "left"),
-        (1.0, f"{higher} with the profile →", "right"),
+        (0.0, f"← {lower} with {side}", "left"),
+        (1.0, f"{higher} with {side} →", "right"),
     ):
         ax.annotate(
             words,
@@ -1085,7 +1125,9 @@ def f3(ctx: FigureContext, effect: Effect) -> FigureOut:
         fig,
         "double",
         attempts,
-        f"Paired differences {effect.label} between each profile and Default per stratum, with intervals.",
+        f"Paired differences {effect.label} between each "
+        f"{'compared method' if ctx.study.cross_method else 'profile'} and the {reference_text(ctx.study)} per "
+        "stratum, with intervals.",
         [
             f"Squares: the {estimator} estimate; lines: its {ctx.level_label} interval (a level in parentheses when "
             f"fewer pairs allow less), by {methods} (stats.json interval.method). Rows in study order; a diamond "
@@ -1163,17 +1205,28 @@ def _member(
 DISTRIBUTION_FLAT = 5  # strata whose labels sit side by side under a distribution panel
 
 
-def _distribution(ax: Any, ctx: FigureContext, groups: Sequence[Group]) -> None:
+def _distribution(ax: Any, ctx: FigureContext, groups: Sequence[Group]) -> list[str]:
     """Every run as a point; a box from ``min_n`` runs and a violin from 30, over all values (a run not
-    reaching by L counts at R = L); those runs as triangles at L; n per profile under each stratum."""
+    reaching by L counts at R = L); those runs as triangles at L; n per profile under each stratum, or, when
+    the count lines would not fit (many profiles, a method comparison), in the returned note lines instead."""
     rng = stats.random_stream(ctx.settings.seed, stats.JITTER_STREAM)
-    labels = []
+    widest = max((len(members) for _, members in groups), default=0)
+    # more profiles than count lines fit under a stratum: the counts go to the notes
+    compact = len(groups) * widest > 2 * DISTRIBUTION_FLAT
+    labels, notes = [], []
     for index, (name, members) in enumerate(groups):
         counts = [
             str(_member(ax, ctx, index + (slot - (len(members) - 1) / 2) * 0.34, member, rng))
             for slot, member in enumerate(members)
         ]
-        labels.append(f"{name}\nn = {' / '.join(counts)}")
+        if compact:
+            labels.append(wrap_text(name, 14))
+            names = [ctx.styles[profile].name for profile, _, _ in members]
+            notes.append(
+                f"{name}: " + ", ".join(f"{n} {c}" for n, c in zip(names, counts, strict=True))
+            )
+        else:
+            labels.append(f"{name}\nn = {' / '.join(counts)}")
     # more strata than horizontal labels fit side by side (a world group of up to 10): labels upright
     upright = len(groups) > DISTRIBUTION_FLAT
     ax.set_xticks(range(len(groups)), labels, fontsize=8, rotation=90 if upright else 0)
@@ -1190,6 +1243,7 @@ def _distribution(ax: Any, ctx: FigureContext, groups: Sequence[Group]) -> None:
             color=GREY,
         )
         ax.set_yticks([])
+    return notes
 
 
 def _groups(ctx: FigureContext, read: Callable[[Row, Stratum], Value]) -> list[Group]:
@@ -1217,6 +1271,8 @@ def _cpu_ratios(ax: Any, ctx: FigureContext) -> tuple[set[str], int, list[dict[s
     rng = stats.random_stream(ctx.settings.seed, stats.JITTER_STREAM)
     several = len({profile for _, profile, _ in paired_strata(ctx)}) > 1
     labels: list[str] = []
+    short: list[str] = []  # per column: the profile's short name and n, for many columns
+    spans: dict[str, list[int]] = {}  # stratum label -> its columns
     attempts: set[str] = set()
     drawn = 0
     entries: list[dict[str, Any]] = []
@@ -1249,6 +1305,10 @@ def _cpu_ratios(ax: Any, ctx: FigureContext) -> tuple[set[str], int, list[dict[s
         dropped = len(found.differences) - len(ratios)  # a CPU value of 0: no ratio
         name = f"\n{style.name}" if several else ""
         level = interval_level(entry, 1 - ctx.settings.alpha)
+        short.append(
+            f"{short_name(ctx, profile)}, n = {len(ratios)}" + (f" ({level})" if level else "")
+        )
+        spans.setdefault(ctx.label(stratum), []).append(x)
         labels.append(
             f"{ctx.label(stratum)}{name}\nn = {len(ratios)}"
             + (f" (+{dropped} at 0)" if dropped else "")
@@ -1260,9 +1320,34 @@ def _cpu_ratios(ax: Any, ctx: FigureContext) -> tuple[set[str], int, list[dict[s
     ax.yaxis.set_major_formatter(FuncFormatter(lambda value, _: f"{value:g}"))
     ax.yaxis.set_minor_formatter(NullFormatter())
     ax.axhline(1, color=GREY, lw=0.6)
-    ax.set_xticks(range(len(labels)), labels, fontsize=8)
+    # many columns (a method comparison): each column's short name upright, each stratum's name over its columns
+    upright = len(labels) > DISTRIBUTION_FLAT
+    ax.set_xticks(
+        range(len(labels)),
+        short if upright else labels,
+        fontsize=6 if upright else 8,
+        rotation=90 if upright else 0,
+    )
+    if upright:
+        for text, columns in spans.items():
+            ax.text(
+                (min(columns) + max(columns)) / 2,
+                0.02,
+                wrap_text(text, 14),
+                transform=ax.get_xaxis_transform(),
+                ha="center",
+                va="bottom",
+                fontsize=6,
+                color=GREY,
+                bbox=dict(facecolor="#FFFFFF", edgecolor="none", pad=0.5),
+                zorder=4,
+            )
+            if min(columns) > 0:
+                ax.axvline(min(columns) - 0.5, color=GREY, lw=0.4, ls=":")
     ax.set_xlim(-0.6, max(len(labels), 1) - 0.4)
-    ax.set_ylabel("CPU ratio, profile / Default")
+    ax.set_ylabel(
+        "CPU ratio, method / RADEF" if ctx.study.cross_method else "CPU ratio, profile / Default"
+    )
     if not attempts:
         ax.set_ylim(0.5, 2)
         ax.text(
@@ -1284,11 +1369,16 @@ def f5(ctx: FigureContext) -> FigureOut:
         ctx.preset, "double", aspect=0.4, ncols=3, gridspec_kw={"width_ratios": [1, 1, 1.1]}
     )
     attempts: set[str] = set()
+    count_notes: list[str] = []
     for index, (metric, label) in enumerate(
         (("cpu_per_s", "Explorer CPU (% of one core)"), ("rss_peak_mib", "Explorer peak RSS (MiB)"))
     ):
         read = METRICS[metric]
-        _distribution(axes[0][index], ctx, _groups(ctx, lambda run, _s: read(run)))  # noqa: B023
+        counted = _distribution(axes[0][index], ctx, _groups(ctx, lambda run, _s: read(run)))  # noqa: B023
+        if counted and index == 0:
+            count_notes.append("n per stratum and profile, (a): " + "; ".join(counted) + ".")
+        elif counted:
+            count_notes.append("(b): " + "; ".join(counted) + ".")
         attempts |= {
             r["attempt_id"]
             for s in ctx.study.strata
@@ -1318,10 +1408,17 @@ def f5(ctx: FigureContext) -> FigureOut:
         "ratio against Default, sequential runs only.",
         [
             f"Points: runs; box (median, IQR type 2, whiskers 1.5 IQR) from {ctx.settings.min_n} runs; violin "
-            f"from {VIOLIN_MIN}. Explorer process only; runs that overlapped another attempt or lack samples are "
-            "left out and counted in stats.json. (c) one point per block whose two runs both ran alone with "
-            "positive CPU values (a pair at 0 is counted under its column), log axis, line at 1; "
-            + ratio_text,
+            f"from {VIOLIN_MIN}. "
+            + (
+                "Each method's own processes (scopes below); "
+                if ctx.study.cross_method
+                else "Explorer process only; "
+            )
+            + "runs that overlapped another attempt or lack samples are left out and counted in stats.json. (c) "
+            "one point per block whose two runs both ran alone with positive CPU values (a pair at 0 is counted "
+            "under its column), log axis, line at 1; " + ratio_text,
+            *scope_notes(ctx.study),
+            *count_notes,
         ],
         {"cpu_ratio_pairs": cpu_pairs},
     )
@@ -1404,7 +1501,14 @@ def outcome_note(study: Study) -> str:
         if study.has_stuck
         else ""
     )
-    return f"Outcome classes follow {outcome_rule(study)} (greys and hatches, FP-4).{stuck}"
+    failure = (
+        f" Explorer failure (light grey, cross-hatched): {EXPLORER_FAILURE_TEXT}."
+        if study.has_explorer_failure
+        else ""
+    )
+    return (
+        f"Outcome classes follow {outcome_rule(study)} (greys and hatches, FP-4).{stuck}{failure}"
+    )
 
 
 def _outcomes(ax: Any, labels: list[str], counts: list[dict[str, int]]) -> None:
@@ -1464,13 +1568,15 @@ def f6(ctx: FigureContext) -> FigureOut:
         success += found.success
     _outcomes(axes[0][0], labels, counts)
     _success(axes[0][1], ctx, success)
-    _distribution(
-        axes[1][0], ctx, _groups(ctx, lambda run, s: time_value(run, "R_completion", s.limit_s))
+    # a method comparison shows its primary time measure, T95, not the completion time (C4)
+    time_endpoint = "R_95" if ctx.settings.cross_method else "R_completion"
+    counted = _distribution(
+        axes[1][0], ctx, _groups(ctx, lambda run, s: time_value(run, time_endpoint, s.limit_s))
     )
-    axes[1][0].set_ylabel("R_completion (s)")
-    panel_title(axes[1][0], 2, "R_completion (△: not reached by L, at L)")
+    axes[1][0].set_ylabel(f"{time_endpoint} (s)")
+    panel_title(axes[1][0], 2, f"{time_endpoint} (△: not reached by L, at L)")
     delta = ctx.settings.stall_delta_pp
-    _distribution(
+    counted_tail = _distribution(
         axes[1][1], ctx, _groups(ctx, lambda run, s: idle_tail(ctx.study, run, s.limit_s, delta))
     )
     axes[1][1].set_ylabel("Idle tail (s)")
@@ -1482,11 +1588,16 @@ def f6(ctx: FigureContext) -> FigureOut:
         fig,
         "double",
         attempts,
-        "Outcomes, success with Wilson intervals, restricted completion times and idle tails per profile and "
-        "stratum.",
+        "Outcomes, success with Wilson intervals, restricted "
+        + ("times to 95 % coverage" if ctx.settings.cross_method else "completion times")
+        + " and idle tails per profile and stratum.",
         [
-            f"{outcome_note(ctx.study)} Triangles: runs that did not complete by L, drawn at L; boxes over all restricted "
-            f"times. Idle tail: min(T_end, L) − last gain (stall-v1, δ = {delta:g} pp)."
+            f"{outcome_note(ctx.study)} Triangles: runs that did not "
+            + ("reach 95 % coverage" if ctx.settings.cross_method else "complete")
+            + " by L, drawn at L; boxes over all restricted times. Idle tail: min(T_end, L) − last gain "
+            f"(stall-v1, δ = {delta:g} pp).",
+            *(["n per stratum and profile, (c): " + "; ".join(counted) + "."] if counted else []),
+            *(["(d): " + "; ".join(counted_tail) + "."] if counted_tail else []),
         ],
     )
 
@@ -1566,11 +1677,11 @@ def representatives(ctx: FigureContext, stratum: Stratum) -> list[tuple[Row, str
     # SEL-3 (FIGURE_STYLE §8, the most adverse Default run that moved): when the SEL-1 run moved, a second run
     # only when one that moved is strictly longer (never the same run twice, never a shorter one); when the SEL-1
     # run never moved, the run that moved with the longest restricted time
-    chosen_moved = chosen["outcome"] != "no_movement"
+    chosen_moved = not never_moved(chosen)
     moved = [
         r
         for r in defaults
-        if r["outcome"] != "no_movement"
+        if not never_moved(r)
         and r["attempt_id"] != chosen["attempt_id"]
         and (not chosen_moved or restricted(r) > restricted(chosen) + TIME_EPSILON)
     ]
@@ -1580,7 +1691,7 @@ def representatives(ctx: FigureContext, stratum: Stratum) -> list[tuple[Row, str
         if chosen_moved and chosen_tie:
             # tied at L and the most adverse: one label for both rules, with SEL-3's k over the runs that moved
             at_limit = [r for r in defaults if restricted(r) >= limit - TIME_EPSILON]
-            k, k_moved = len(at_limit), sum(r["outcome"] != "no_movement" for r in at_limit)
+            k, k_moved = len(at_limit), sum(not never_moved(r) for r in at_limit)
             of_moved = "" if k_moved == k else f", {k_moved} of them moved"
             note = f"SEL-1 and SEL-3, one of {k} Default runs tied at L{of_moved} (hash tie-break)"
     picked = [(chosen, note)]
@@ -1890,9 +2001,9 @@ def figures(ctx: FigureContext) -> Iterator[FigureOut]:
     """F1–F8, each built when the caller asks for it, so the caller saves and closes one before the next; F1, F2,
     F3, F5, F6 and F8 once per world group and page (``grouped``; F8's panels are its picks)."""
     yield from grouped(ctx, f1, grid_fits)
-    for endpoint in time_endpoints(ctx.settings):
+    for endpoint in shown_endpoints(ctx.settings):
         yield from grouped(ctx, partial(f2, endpoint=endpoint), grid_fits)
-    for effect in EFFECTS:
+    for effect in shown_effects(ctx.settings):
         yield from grouped(ctx, partial(f3, effect=effect), partial(_f3_fits, effect=effect))
     yield from grouped(ctx, f5)
     yield from grouped(ctx, f6)

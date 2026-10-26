@@ -47,7 +47,18 @@ from matplotlib.lines import Line2D
 from matplotlib.ticker import MaxNLocator
 import numpy as np
 
-from .data import GAP_S, STUCK, TIME_EPSILON, Row, Stratum, run_end
+from .data import (
+    EXPLORER_FAILURE,
+    GAP_S,
+    STUCK,
+    TIME_EPSILON,
+    Row,
+    Stratum,
+    is_external,
+    never_moved,
+    run_end,
+    stopped_early,
+)
 from .figures import (
     AXIS_NOTE,
     GREY,
@@ -91,6 +102,8 @@ GATE_RESULTS = (
 GATE_LABELS = {"keep_small_cluster": "keep (small)"}
 NOT_RECORDED = "explorer log format 1: not recorded"
 NO_LOG = "no explorer-log rows"
+# A6: the explorer log of an external method is not parsed (docs/EXPLORERS.md)
+NOT_PARSED = "explorer log not parsed (external method)"
 # the timeline's own marks, drawn and listed in the legend with one look; lanes report the keys they drew
 MARKS: dict[str, dict[str, Any]] = {
     "milestone": dict(marker="o", ms=3, mfc="#FFFFFF", mec="#000000", mew=0.5, ls="none"),
@@ -130,6 +143,7 @@ class RunStreams:
         str, int
     ]  # rows per stream left out: no mapped time, before 0 or after the run's end
     log_format: int | None
+    external: bool = False  # a run of an external method, whose explorer log is not parsed (A6)
 
 
 def _in_range(rows: list[tuple[float | None, Any]], end: float) -> tuple[list[Any], int]:
@@ -197,12 +211,15 @@ def _read_streams(
             rtf,
             dict(gate=gate_out, decisions=decision_out, rtf=rtf_out),
             formats.get(attempt),
+            external=is_external(run),
         )
     return found
 
 
 def _log_note(streams: RunStreams) -> str | None:
     """Why a lane fed by the explorer log is empty, or None when the run wrote format 2."""
+    if streams.external:
+        return NOT_PARSED
     if streams.log_format == 1:
         return NOT_RECORDED
     return NO_LOG if streams.log_format is None else None
@@ -256,7 +273,7 @@ def _coverage_lane(
         drawn.add(outcome)
     words = (
         f"{OUTCOMES[outcome]['label'].lower()}, T_end = {run['elapsed_s']:.1f} s"
-        if outcome in ("completed", STUCK) and end < limit
+        if (outcome == "completed" or stopped_early(run)) and end < limit
         else f"{OUTCOMES[outcome]['label'].lower()} at L"
     )
     ax.text(0.99, 0.04, words, transform=ax.transAxes, ha="right", va="bottom", fontsize=7)
@@ -352,7 +369,7 @@ def _run_lanes(
     """Draw one run's lanes; returns its sidecar entry (descriptive) and the marks drawn."""
     cover, goals_ax, gate_ax, decision_ax, rtf_ax = cells
     style, attempt = ctx.styles[run["profile_id"]], run["attempt_id"]
-    if run["outcome"] == "no_movement":
+    if never_moved(run):
         for ax in cells:
             panel_message(ax, "never moved: no movement-relative times", boxed=True)
         return dict(pre_motion_coverage_pct=ctx.study.pre_motion.get(attempt)), set()
@@ -518,6 +535,7 @@ def f15(
             "Gate and decision times are explorer-log stamps mapped to simulated time through the 1 Hz quality "
             "rows (time_mapped): estimates. Goal and coverage times are recorded on the simulation clock. "
             "Explorer log format 1 records no gate rows, cancel reasons or decision counts; such lanes say so. "
+            "The explorer logs of external methods are not parsed: their gate and decision lanes say so. "
             f"{AXIS_NOTE} Counts in the sidecar are descriptive.",
         ],
         dict(
@@ -630,6 +648,8 @@ def _end_look(outcome: str, colour: str, marker: str) -> dict[str, Any]:
         return dict(marker="^", ms=4, mfc="#FFFFFF", mec=colour, mew=0.8, ls="none")
     if outcome == STUCK:
         return dict(marker="v", ms=4, mfc="#FFFFFF", mec=colour, mew=0.8, ls="none")
+    if outcome == EXPLORER_FAILURE:  # after movement onset; one before it is drawn as no movement
+        return dict(marker="D", ms=3.5, mfc="#FFFFFF", mec=colour, mew=0.8, ls="none")
     return dict(marker="x", ms=4, mec=colour, mew=0.8, ls="none")
 
 
@@ -637,6 +657,7 @@ END_LABELS = {
     "completed": "completed",
     "time_limit": "time limit (at L)",
     STUCK: "stuck (at its end)",
+    EXPLORER_FAILURE: "explorer failure (at its end)",
     "no_movement": "no movement",
 }
 
@@ -656,7 +677,8 @@ def _distance_panel(
     for profile in ctx.profiles(stratum):
         style = ctx.styles[profile]
         for run in stratum.runs_of(profile):
-            attempt, outcome = run["attempt_id"], run["outcome"]
+            attempt = run["attempt_id"]
+            outcome = "no_movement" if never_moved(run) else run["outcome"]
             look = _end_look(outcome, style.color, style.marker)
             if outcome == "no_movement":
                 held = ctx.study.pre_motion.get(attempt)

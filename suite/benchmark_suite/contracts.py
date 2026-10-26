@@ -41,12 +41,40 @@ HIDDEN_GROUPS = frozenset({"Suppression", "QoS", "Visualization", "Benchmark Int
 CAMPAIGN_DELETION_LIMIT = 100
 PROFILE_DELETION_LIMIT = 250
 # The final outcomes counted as reported (reported-outcomes-v3, docs/MEASUREMENTS.md "Reported population": the
-# v1 classes plus stuck, stuck-stop-v1); run records apply it in run_record.report_class.
+# v1 classes plus stuck, stuck-stop-v1); run records apply it in run_record.report_class, which adds the explorer
+# failures of reported-outcomes-v4 (explorer_failure below).
 REPORTED_OUTCOMES = frozenset({"completed", "time_limit", "no_movement", "stuck"})
 # Outcomes whose run was measured to its end (eligibility, completion and milestone censoring, C(L)); the same set
 # as exploration_benchmark_runner.coverage.MEASURED_OUTCOMES (this module stays free of runner imports).
 MEASURED_OUTCOMES = frozenset({"completed", "time_limit", "stuck"})
 STOPPED_OUTCOMES = frozenset({"manual_stop"})
+# Failure sources (contract C1, decision B1; run-record-v7): the worker names what caused a startup or runtime
+# failure in the manifest's failure_source, "explorer" (the explorer process exited, returned an error result
+# or refused its start protocol) or "stack" (simulation, Nav2, SLAM, streams, readiness). reported-outcomes-v4:
+# a final explorer failure is a reported, unsuccessful outcome of its method (EXPLORER_FAILURE); a stack
+# failure, or one whose manifest names no source, keeps its v3 class.
+EXPLORER_SOURCE = "explorer"
+# Our explorer's package, the explorer_id of its runs (run-record-v5).
+OUR_EXPLORER = "frontier_exploration_ros2"
+FAILURE_SOURCES = frozenset({EXPLORER_SOURCE, "stack"})
+SOURCED_FAILURES = frozenset({"startup_failure", "runtime_failure"})
+EXPLORER_FAILURE = "explorer_failure"
+
+
+def explorer_failure(outcome: str | None, failure_source: object) -> bool:
+    """A startup or runtime failure the worker attributed to the explorer (reported-outcomes-v4)."""
+    return outcome in SOURCED_FAILURES and failure_source == EXPLORER_SOURCE
+
+
+def measured_as(outcome: str | None, failure_source: object, motion_started: object) -> str:
+    """The reported outcome whose measurement rules a run follows (C1): an explorer failure after movement
+    onset as ``stuck`` (censored at L, coverage carried from its end to L), one before movement onset as
+    ``no_movement`` (RD-8: pre-motion coverage held, R = L); every other outcome as itself."""
+    if explorer_failure(outcome, failure_source):
+        return "stuck" if motion_started is True else "no_movement"
+    return outcome or ""
+
+
 # RD-6's gap rule: a longer stretch without a valid coverage sample breaks a line and gives no value across it
 # (the analysis package keeps its own copy, analysis/benchmark_analysis/data.py, with a 1e-9 float tolerance).
 GAP_S = 2.0
@@ -401,6 +429,10 @@ class CampaignSpec:
     debug_streams: bool = False
     # The Default profile's parameter hash per robot, set at submission (``is_baseline`` in run records).
     default_parameter_hashes: tuple[tuple[str, str], ...] = ()
+    # Each external explorer's Default parameter hash per robot, set at submission for the explorers the campaign
+    # runs on that robot (profiles.yaml explorer ID -> robot -> hash; A7: a study's campaigns are compared by it).
+    # Campaigns accepted before it have none.
+    explorer_default_hashes: tuple[tuple[str, tuple[tuple[str, str], ...]], ...] = ()
     # ``time_limit_rule`` and its stored inputs (canonical JSON, world -> robot -> RULE_VALUE_FIELDS; I4 §3.3):
     # set at submission and kept as stored by a restarted copy.
     time_limit_rule: str | None = None
@@ -424,6 +456,7 @@ class CampaignSpec:
                 "study",
                 "debug_streams",
                 "default_parameter_hashes",
+                "explorer_default_hashes",
                 "time_limit_rule",
                 "time_limit_inputs",
             },
@@ -473,6 +506,15 @@ class CampaignSpec:
                 raise ContractError(
                     "default_parameter_hashes." + robot_id, "Expected a SHA-256 hex digest"
                 )
+        explorer_hashes = []
+        for explorer, by_robot in mapping(
+            value.get("explorer_default_hashes", {}), "explorer_default_hashes"
+        ).items():
+            field = "explorer_default_hashes." + explorer
+            for robot_id, digest in mapping(by_robot, field).items():
+                if not isinstance(digest, str) or not SHA256.match(digest):
+                    raise ContractError(f"{field}.{robot_id}", "Expected a SHA-256 hex digest")
+            explorer_hashes.append((explorer, tuple(sorted(by_robot.items()))))
         description = value.get("description", "")
         if not isinstance(description, str) or len(description) > 10000:
             raise ContractError("description", "Use at most 10000 characters")
@@ -508,6 +550,7 @@ class CampaignSpec:
             else None,
             debug_streams=debug_streams,
             default_parameter_hashes=tuple(sorted(hashes.items())),
+            explorer_default_hashes=tuple(sorted(explorer_hashes)),
             time_limit_rule=rule,
             time_limit_inputs_json=resolve_time_limit_inputs(
                 value.get("time_limit_inputs"), limits, retained, rule=rule
@@ -545,6 +588,15 @@ class CampaignSpec:
             **(
                 {"default_parameter_hashes": dict(self.default_parameter_hashes)}
                 if self.default_parameter_hashes
+                else {}
+            ),
+            **(
+                {
+                    "explorer_default_hashes": {
+                        explorer: dict(hashes) for explorer, hashes in self.explorer_default_hashes
+                    }
+                }
+                if self.explorer_default_hashes
                 else {}
             ),
             **(

@@ -20,4 +20,4 @@ The package reads only the export: its tables, ``study.yaml`` (with the plan's `
 settings and the attempts behind it. Methods: docs/research/METHODOLOGY.md; figures: FIGURE_STYLE.md.
 """
 
-__version__ = "1.7.0"
+__version__ = "1.8.0"

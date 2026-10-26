@@ -634,6 +634,7 @@ class Library:
             "debug_streams",
             # an accepted campaign (Validate, then Add to queue; exported YAML) carries it: recomputed below
             "default_parameter_hashes",
+            "explorer_default_hashes",
             "time_limit_rule",
             # recomputed below with the rule; without it CampaignSpec refuses the key
             "time_limit_inputs",
@@ -747,6 +748,25 @@ class Library:
             )
             for robot_id in accepted["robots"]
         }
+        # Every external explorer's Default hash on each robot whose profiles run it (A7; ``studies.homogeneity``
+        # compares them per explorer and robot across a study's campaigns).
+        external: dict[str, dict[str, str]] = {}
+        for robot_id, selected in accepted["robots"].items():
+            for identity in sorted(
+                {
+                    str(p["explorer"])
+                    for p in selected
+                    if p.get("explorer", DEFAULT_EXPLORER) != DEFAULT_EXPLORER
+                }
+            ):
+                explorer = self.explorer(identity)
+                default = {"id": explorer.default_id(robot_id), "explorer": identity}
+                external.setdefault(identity, {})[robot_id] = content_hash(
+                    self.resolve_profile(robot_id, default)["effective"]
+                )
+        accepted.pop("explorer_default_hashes", None)
+        if external:
+            accepted["explorer_default_hashes"] = external
         spec = CampaignSpec.accepted(accepted)
         exclusions = set(spec.exclusions)
         # Worlds outermost: each world's full reference is loaded at most once here (the LRU holds only
@@ -894,7 +914,12 @@ class Library:
         plan = plan_parts(path.read_text(encoding="utf-8"))
         confirmatory = study.evidence_level == "confirmatory"
         if plan.block is not None:
-            validate(plan.block, confirmatory=confirmatory, worlds=self.world_facts())
+            validate(
+                plan.block,
+                confirmatory=confirmatory,
+                worlds=self.world_facts(),
+                robots=set(self.robots),
+            )
         elif confirmatory:
             raise ContractError(
                 "study.plan", "A confirmatory plan holds an analysis block (docs/MEASUREMENTS.md)"

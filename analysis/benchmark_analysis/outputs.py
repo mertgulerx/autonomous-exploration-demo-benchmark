@@ -22,7 +22,8 @@ as it uses them, runs and for paired outputs pairs, and what it leaves out) and,
 result and the alt text. Nothing written holds a time, a path or a host name, so two runs on one
 export give byte-identical files.
 
-``stats.json`` holds ``estimates.estimates`` and, when the analysis block declares families or density
+``stats.json`` holds ``estimates.estimates``, for a method comparison the ``method-summaries-v1`` entries of
+``summaries`` (C5), every entry of a profile with its ``method`` (explorer_id, C2), and, when the analysis block declares families or density
 contrasts, the ``family-sample-v1`` entries of ``families.family_estimates`` (plans/worlds/I6 §3.8), with Holm
 over the plan's whole hypothesis list (``families.merge_hypotheses``); the export files the family estimates read
 (the ``worlds`` table, experiments, provenance and the runs' manifests) are hashed in the sidecars of
@@ -59,6 +60,7 @@ from . import (
     schematic,
     sheets,
     style,
+    summaries,
     tables,
     taxonomy,
 )
@@ -80,7 +82,7 @@ INPUTS = {
     # ordered and headed by world group (plans/worlds/I8 §3.1): the worlds table too, when exported
     **{
         name: (*STATS_INPUTS, "worlds.parquet")
-        for name in ("T3", "T4", "T5", "T6", "T7", "S", "T12")
+        for name in ("T3", "T4", "T5", "T6", "T7", "S", "T12", "T13", "T15")
     },
 }
 
@@ -164,7 +166,7 @@ VIEWS: tuple[View, ...] = (
         "F14", "Paired gap at equal coverage", "chart", "chart", ("figures/F14.pdf",), grouped=True
     ),
     View("F16", "Coverage against distance", "chart", "chart", ("figures/F16.pdf",), grouped=True),
-    View("T4", "Default per stratum", "table", "table", ("tables/T4.pdf",)),
+    View("T4", tables.T4_TITLE, "table", "table", ("tables/T4.pdf",)),
     View("T5", "Paired differences", "table", "table", ("tables/T5.pdf", "tables/T5H.pdf")),
     View("S", "Sensitivity", "table", "table", ("tables/S.pdf",)),
     View("T6", "Compute cost", "table", "table", ("tables/T6.pdf",)),
@@ -178,6 +180,8 @@ VIEWS: tuple[View, ...] = (
     View(
         "F27/T12", "Region map", "chart", "chart", variants="figures/F27_", then=("tables/T12.pdf",)
     ),
+    # C4: completions by source and the explorer completions below 95 %
+    View("T14", "Completions by source", "table", "table", ("tables/T14.pdf",)),
     View("T8", "Timing validity", "table", "table", ("tables/T8.pdf",)),
     View("F11", "RTF distribution", "chart", "chart", ("figures/F11.pdf",)),
     View("F18", "Decision timing", "chart", "chart", ("figures/F18.pdf",), grouped=True),
@@ -217,6 +221,26 @@ VIEWS: tuple[View, ...] = (
     ),
     # one per density contrast: the labels come from the figures' sidecars (``label``)
     View("F28", "Density contrast", "chart", "chart", variants="figures/F28_"),
+    # method-summaries-v1 (cross-method readiness C5): a method comparison's cross-world summaries
+    View(
+        "F29/T15",
+        "Data profile",
+        "chart",
+        "chart",
+        ("figures/F29.pdf",),
+        then=("tables/T15.pdf",),
+        grouped=True,
+    ),
+    View("F30", "Dolan–Moré profile", "chart", "chart", ("figures/F30.pdf",), grouped=True),
+    View(
+        "F31/T13",
+        "Wins and improvement",
+        "chart",
+        "chart",
+        ("figures/F31.pdf",),
+        then=("tables/T13.pdf",),
+        grouped=True,
+    ),
     # the coding sheet's pages (FIGURE_EXTENSION FX-19); their number depends on the study
     View("F23 sheet", "Coding sheet", "chart", "chart", variants="figures/F23_sheet_"),
     View("stats", "Statistics", "data", "braces", ("stats.json",)),
@@ -390,7 +414,7 @@ def confirmatory_checks(study: Study, settings: Settings) -> list[dict[str, Any]
 
 
 # Outputs whose n is pairs of runs (block × profile against Default), besides their runs.
-PAIRED = ("T5", "S", "F3_", "F13_", "F14", "F24b")
+PAIRED = ("T5", "S", "F3_", "F13_", "F14", "F24b", "T13", "F31")
 
 
 def _pairs(study: Study, used: set[str]) -> int:
@@ -514,6 +538,11 @@ def write_all(
     study = study or load(export)
     family = family if family is not None else families.family_estimates(study, settings)
     entries = families.merge_hypotheses(estimates(study, settings) + family.entries, settings)
+    entries += summaries.summary_entries(study, settings)
+    for entry in entries:  # C2: every entry of a profile names its method (explorer_id)
+        row = study.profiles.get(str(entry.get("profile_id")))
+        if row is not None:
+            entry["method"] = row["method"]
     family_inputs = sorted(family.inputs)
     checks_found = confirmatory_checks(study, settings)
     warnings = [
@@ -574,7 +603,7 @@ def write_all(
         family_inputs,
     )
     table_directory = directory / "tables"
-    for table in chain(tables.tables(source), regionmaps.tables(source)):
+    for table in chain(tables.tables(source), regionmaps.tables(source), summaries.tables(source)):
         tables.write(table, table_directory)
         sheet_path = table_directory / f"{table.name}.pdf"
         with style.context(preset, sans):
@@ -626,6 +655,7 @@ def write_all(
             decisions,
             schematic,
             composites,
+            summaries,
         )
         # every module yields its figures one at a time: each is saved and closed before the next is drawn
         built_all = chain(
@@ -657,7 +687,8 @@ def write_all(
                     with_counts=with_runs,
                     output=f"{built.name}.pdf",
                     alt_text=built.alt_text,
-                    caption_notes=built.notes,
+                    # where an encoding repeats (style.profile_styles): said on every figure with runs
+                    caption_notes=[*built.notes, *(context.style_notes if with_runs else ())],
                     check_pdf=result,
                     contact_sheet=dict(file=f"contact_sheets/{built.name}.png", views=views),
                     **built.extra,

@@ -119,7 +119,10 @@ def run(
 def _analyse(
     export: Export, out: Path | None, *, preset: str, sans: bool, coding_file: Path | None
 ) -> Path:
-    config = settings(export.study)
+    study = load(export)
+    # a method comparison (the profiles of several explorers) sets the method defaults (C4)
+    config = settings(export.study, cross_method=study.cross_method)
+    config.check_robot_horizons({pid: str(row["robot_id"]) for pid, row in study.profiles.items()})
     coding = None if coding_file is None else read_coding(coding_file, config)
     target = (out or default_out(export, coding)).resolve()
     if target.is_relative_to(export.directory):
@@ -127,7 +130,6 @@ def _analyse(
             "the output directory cannot be inside the export (it would break SHA256SUMS)",
             kept=False,
         )
-    study = load(export)
     # the family estimates' refusals (plans/worlds/I6 §3.8) are the study's, as data.load's: no directory is made
     family = family_estimates(study, config)
     if coding is not None:

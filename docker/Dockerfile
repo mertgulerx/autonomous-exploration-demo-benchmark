@@ -14,6 +14,8 @@
 
 FROM docker.io/osrf/ros@sha256:ce169d5e9c87bcbddf01685366184671f8d6d6329893456cc14ae1ab6c062eb2
 LABEL org.benchmark.multi_robot="1"
+# C++ build type of the colcon workspace (B3); the build step below checks it.
+LABEL org.benchmark.build-type="Release"
 
 ENV DEBIAN_FRONTEND=noninteractive \
     ROS_DISTRO=jazzy \
@@ -89,7 +91,18 @@ RUN bash docker/fetch_slam_toolbox.sh ${WORKSPACE_DIR}/vendor_src && \
     bash docker/fetch_external_explorers.sh ${WORKSPACE_DIR}/vendor_src
 
 RUN /bin/bash -lc "source /opt/ros/${ROS_DISTRO}/setup.bash && \
-    CMAKE_BUILD_PARALLEL_LEVEL=2 colcon build --symlink-install --executor sequential --cmake-args -DBUILD_TESTING=OFF"
+    CMAKE_BUILD_PARALLEL_LEVEL=2 colcon build --symlink-install --executor sequential \
+    --cmake-args -DBUILD_TESTING=OFF -DCMAKE_BUILD_TYPE=Release"
+# Every explorer package installed and every CMake package configured as Release (B3, 26 October 2026; the
+# images had no build type before runtime version 14).
+RUN cd ${WORKSPACE_DIR} && \
+    for package in frontier_exploration_ros2 explore_lite_msgs explore_lite roadmap_explorer_msgs roadmap_explorer \
+        rrt_explore tdle mrtsp_exploration_ros2; do \
+      test -f install/${package}/share/${package}/package.xml || { echo "not installed: ${package}"; exit 1; }; \
+    done && \
+    for cache in build/*/CMakeCache.txt; do \
+      grep -qx 'CMAKE_BUILD_TYPE:STRING=Release' "${cache}" || { echo "not Release: ${cache}"; exit 1; }; \
+    done
 # Mark the patched SLAM Toolbox build with its patch hash; the worker refuses any other build
 # (mapping-known-pose-v3, plans/worlds/I10).
 RUN sha256sum docker/patches/slam_toolbox-2.8.5-grid-extent.patch | cut -d' ' -f1 \

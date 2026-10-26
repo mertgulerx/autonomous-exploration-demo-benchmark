@@ -59,7 +59,7 @@ from matplotlib.ticker import FuncFormatter, LogLocator, MaxNLocator, NullFormat
 import numpy as np
 
 from . import stats
-from .data import Row, Stratum, run_end
+from .data import Row, Stratum, is_external, run_end
 from .figures import (
     GREY,
     TIME_LABEL,
@@ -361,6 +361,8 @@ def f18(ctx: FigureContext) -> FigureOut:
         "concurrency_unknown": unknown,
         "sequential_log_format_1": len(format_one),
         "sequential_without_log": len(sequential) - len(format_one) - len(usable),
+        # A6: of those, runs of external methods, whose explorer logs are not parsed
+        "sequential_external": sum(1 for r in sequential if is_external(r)),
     }
     population = (
         f"{len(reported)} reported runs: {len(sequential)} sequential "
@@ -430,7 +432,9 @@ def f18(ctx: FigureContext) -> FigureOut:
             f"Points: the {len(drawn)} explorer_decisions rows with both timings and a candidate count of "
             f"{len(usable_ids)} sequential reported runs with log format 2 ({population}; {len(format_one)} "
             f"sequential runs with explorer log format 1: not recorded; {counts['sequential_without_log']} "
-            f"sequential runs without explorer-log rows; rows without timings: {untimed}, rows without a "
+            f"sequential runs without explorer-log rows ({counts['sequential_external']} of them of external "
+            "methods, whose explorer logs are not parsed); rows without timings: "
+            f"{untimed}, rows without a "
             f"candidate count: {uncounted}, not drawn). y: search_ms + ordering_ms, the explorer's own wall-clock "
             "times (log scale); x: the unsuppressed candidates ordered, jittered by up to ±0.3 for display. "
             "The candidate count is the decision's input size (Kulich et al. 2019, Fig. 10b); the pool size is "

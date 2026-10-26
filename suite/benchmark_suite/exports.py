@@ -52,11 +52,13 @@ import yaml
 
 from .analysis_block import WorldFacts, plan_parts, validate
 from .contracts import (
+    EXPLORER_FAILURE,
     NO_MOVEMENT_LIMIT,
     REPORTED_OUTCOMES,
     ContractError,
     canonical,
     content_hash,
+    explorer_failure,
     milestone_key,
 )
 from .datasets import files, iter_rows, materialize_manifest, stream_relation
@@ -75,7 +77,7 @@ from .run_record import (
     time_origins,
     track,
 )
-from .library import DEFAULT_EXPLORER, load_explorers
+from .library import DEFAULT_EXPLORER, Explorer, load_explorers
 from .schemas import SCHEMAS
 from .storage import file_hash, load_object, read_object, sync_directory
 from .store import Store, replaced_campaigns, study_campaign_rows
@@ -88,7 +90,10 @@ if TYPE_CHECKING:
 # 2 (world integration, plans/worlds/I2 §3.10, R-1): the ``worlds`` table, the registry hash and each campaign's
 # time-limit rule and inputs in study.yaml, and descriptors.json and regions.png per reference. Additive.
 # 3 (stuck-stop-v1, run-record-v6): the accounting count final_stuck and the endpoint end reason stuck.
-EXPORT_VERSION = 3
+# 4 (contract C1 and C2, run-record-v7): runs.failure_source, the accounting count final_explorer_failure, the
+# endpoint end reason explorer_failure, the profiles columns explorer_label, explorer_order, explorer_source and
+# explorer_build_patch, and explorer_default_hashes in study.yaml. Additive.
+EXPORT_VERSION = 4
 LOGS = ("explorer", "insight", "navigation", "robot", "simulation", "worker")
 ARROW = {
     "text": pa.string(),
@@ -126,8 +131,10 @@ DESCRIPTIONS: dict[str, dict[str, tuple[str, str, str]]] = {
         "end_reason": (
             "",
             "never",
-            "RD-27 end reasons, plus coverage_ineligible, not_recorded, completion_without_motion and "
-            "stuck (censored at L as time_limit; export-v3)",
+            "RD-27 end reasons, plus coverage_ineligible, not_recorded, completion_without_motion, "
+            "stuck (censored at L as time_limit; export-v3) and explorer_failure (a reported explorer "
+            "failure, reported-outcomes-v4: censored at L as stuck after movement onset, never reached as "
+            "no_movement before it; movement onset censored at the failure; export-v4)",
         ),
         "limit_s": (
             "sim s",
@@ -159,7 +166,7 @@ DESCRIPTIONS: dict[str, dict[str, tuple[str, str, str]]] = {
         "odom_distance_m": ("m", "no odometry yet", "cumulative raw-odometry distance"),
     },
     # One row per robot, world, spawn and profile (RD-33): the group's identity, then counts
-    # (reported-outcomes-v3 report classes, run_record.report_class).
+    # (reported-outcomes-v4 report classes, run_record.report_class).
     "accounting": {
         "robot_id": ("", "never", "the group's robot"),
         "world_id": ("", "never", "the group's world"),
@@ -182,6 +189,13 @@ DESCRIPTIONS: dict[str, dict[str, tuple[str, str, str]]] = {
             "never",
             f"reported final runs stopped stuck below {STUCK_COMPLETION_PERCENT:g} % coverage "
             f"({STUCK_RULE}; export-v3)",
+        ),
+        "final_explorer_failure": (
+            "count",
+            "never",
+            "reported final runs that ended in a startup or runtime failure the worker attributed to the "
+            "explorer (failure_source explorer; reported-outcomes-v4, export-v4); stack failures stay in "
+            "missing_startup and excluded_runtime_failure",
         ),
         "reported": ("count", "never", "final runs of report class reported"),
         "coverage_ineligible": ("count", "never", "reported final runs not eligible for coverage"),
@@ -248,6 +262,29 @@ DESCRIPTIONS: dict[str, dict[str, tuple[str, str, str]]] = {
             "the profile's explorer as the run record's explorer_id (run-record-v5): its runs' value, "
             "else its profiles.yaml explorer's package",
         ),
+        "explorer_label": (
+            "",
+            "the profile's explorer is not in the checkout's profiles.yaml",
+            "the explorer's registry label (profiles.yaml label; export-v4)",
+        ),
+        "explorer_order": (
+            "",
+            "the profile's explorer is not in the checkout's profiles.yaml",
+            "the explorer's position in profiles.yaml, frontier_exploration_ros2 0 (the method order of "
+            "every output; export-v4)",
+        ),
+        "explorer_source": (
+            "",
+            "the profile has no full run record, its runs name no source, or they differ (warning)",
+            "the source its runs were built from (their explorer_source): '<pinned URL>@<commit>' of an external "
+            "explorer, '<submodule path>@<commit>' of frontier_exploration_ros2 (export-v4)",
+        ),
+        "explorer_build_patch": (
+            "",
+            "no build patch listed for its runs, no full run record, or its runs differ (warning)",
+            "the build patch its runs' explorer profile listed (their explorer_build_patch): the listed change "
+            "to the pinned source (export-v4)",
+        ),
         "parameter_hash": ("sha256", "never", "content hash of the effective parameters"),
         "is_baseline": ("", "no Default hash recorded", "equal to the robot's Default hash"),
         "parameter": ("", "never", ""),
@@ -270,6 +307,7 @@ ACCOUNTING_COUNTS = (
     "final_time_limit",
     "final_no_movement",
     "final_stuck",
+    "final_explorer_failure",
     "reported",
     "coverage_ineligible",
     "missing_startup",
@@ -695,16 +733,23 @@ def _end_reason(record: dict[str, Any], report: str, endpoint: str) -> str:
     if report != "reported":
         return report
     outcome = record["outcome"]
+    # A reported explorer failure (reported-outcomes-v4) ends every endpoint it did not reach: measured as stuck
+    # after movement onset, as no_movement before it (contracts.measured_as).
+    failed = explorer_failure(outcome, record["failure_source"])
     if endpoint == "movement_onset":
-        return "event" if record["motion_started"] else "no_movement"
-    if outcome == "no_movement":
-        return "no_movement"
+        return (
+            "event" if record["motion_started"] else EXPLORER_FAILURE if failed else "no_movement"
+        )
+    if outcome == "no_movement" or failed and not record["motion_started"]:
+        return EXPLORER_FAILURE if failed else "no_movement"
     if outcome == "completed" and not record["motion_started"]:
         return "completion_without_motion"
     event = record[f"{endpoint}_event"]
     if event:
         return "event"
     if event is False:
+        if failed:
+            return EXPLORER_FAILURE  # censored at L as a stuck run (contract C1)
         if outcome == "stuck":
             return "stuck"  # censored at L as a time_limit run (stuck-stop-v1)
         return (
@@ -849,6 +894,8 @@ def _accounting_rows(
             continue
         if record["outcome"] in REPORTED_OUTCOMES:
             counts[group][f"final_{record['outcome']}"] += 1
+        elif explorer_failure(record["outcome"], record["failure_source"]):
+            counts[group][f"final_{EXPLORER_FAILURE}"] += 1
         if record["coverage_eligible"] is False:
             counts[group]["coverage_ineligible"] += 1
         if record["comparison_key"]:
@@ -913,13 +960,19 @@ def _profile_rows(
     snap: Snapshot,
     defaults: dict[str, str],
     explorers: dict[str, str],
-    packages: dict[str, str],
+    registry: dict[str, Explorer],
+    built: dict[str, dict[str, set[str | None]]],
+    warnings: list[str],
 ) -> list[dict[str, Any]]:
     """Effective parameters of every profile revision (keyed by its object) against its explorer's Default
     for the robot: frontier_exploration_ros2's is the profile with the robot's Default hash, an external
     explorer's the profile ``default-<explorer>-<robot>`` (library.Explorer.default_id), when the study ran
-    it. ``explorers``: the run records' explorer_id per profile ID; ``packages``: explorer_id (package) per
-    profiles.yaml explorer ID (``Library.explorer_ids``), for profiles without a run record."""
+    it. ``explorers``: the run records' explorer_id per profile ID; ``registry``: the checkout's profiles.yaml
+    explorers in file order (``load_explorers``), which give the package of profiles without a run record and
+    the method's label and order (contract C2); ``built``: per profile ID the run records' ``explorer_source`` and
+    ``explorer_build_patch`` values, which give its source and build patch (what its runs were built from, not
+    the checkout's file at export time). A profile whose runs disagree gets null and a warning."""
+    order = {identity: position for position, identity in enumerate(registry)}
     profiles: dict[str, dict[str, Any]] = {}
     for e in snap.experiments.values():
         profile = json.loads(e["specification"])["profile"]
@@ -945,6 +998,16 @@ def _profile_rows(
         explorer = str(profile.get("explorer") or DEFAULT_EXPLORER)
         default = baseline.get((profile["robot_id"], explorer))
         robot_default = defaults.get(profile["robot_id"])
+        entry = registry.get(explorer)
+        identity = method_identity(entry, order.get(explorer))
+        recorded = built.get(profile["id"], {})
+        for column in ("explorer_source", "explorer_build_patch"):
+            values = recorded.get(column, set())
+            if len(values) > 1:
+                warnings.append(
+                    f"{column} differs between the runs of profile {profile['id']}: the column is null"
+                )
+            identity[column] = next(iter(values)) if len(values) == 1 else None
         for parameter in sorted(effective):
             known = default is not None and parameter in default
             rows.append(
@@ -952,7 +1015,10 @@ def _profile_rows(
                     profile_id=profile["id"],
                     profile_name=profile.get("name", ""),
                     robot_id=profile["robot_id"],
-                    explorer_id=explorers.get(profile["id"], packages.get(explorer, explorer)),
+                    explorer_id=explorers.get(
+                        profile["id"], entry.package if entry is not None else explorer
+                    ),
+                    **identity,
                     parameter_hash=digest,
                     is_baseline=None if robot_default is None else robot_default == digest,
                     parameter=parameter,
@@ -966,13 +1032,52 @@ def _profile_rows(
     return rows
 
 
-def _explorer_packages(workspace: Path) -> dict[str, str]:
-    """``Library.explorer_ids`` of the checkout: each profiles.yaml explorer's package (its explorer_id)."""
+def _built_from(run_rows: list[dict[str, Any]]) -> dict[str, dict[str, set[str | None]]]:
+    """Per profile ID, the explorer sources and build patches its full run records name (export-v4); stubs
+    record neither and are left out."""
+    built: dict[str, dict[str, set[str | None]]] = defaultdict(lambda: defaultdict(set))
+    for row in run_rows:
+        if row.get("record_kind") == "full":
+            for column in ("explorer_source", "explorer_build_patch"):
+                built[str(row["profile_id"])][column].add(row.get(column))
+    return built
+
+
+def method_identity(entry: Explorer | None, position: int | None) -> dict[str, Any]:
+    """The ``profiles`` table's method columns of a profiles.yaml explorer (export-v4, contract C2): its label,
+    its position in the file (frontier_exploration_ros2 0), its source as "<URL>@<commit>" or the submodule path,
+    and its listed build patch; all null for an explorer the checkout no longer lists."""
+    if entry is None:
+        return dict(
+            explorer_label=None,
+            explorer_order=None,
+            explorer_source=None,
+            explorer_build_patch=None,
+        )
+    source = entry.source
+    url, commit, path = source.get("url"), source.get("commit"), source.get("path")
+    where = (
+        f"{url}@{commit}"
+        if isinstance(url, str) and isinstance(commit, str)
+        else path
+        if isinstance(path, str)
+        else None
+    )
+    patch = source.get("build_patch")
+    return dict(
+        explorer_label=entry.label,
+        explorer_order=position,
+        explorer_source=where,
+        explorer_build_patch=patch if isinstance(patch, str) and patch else None,
+    )
+
+
+def _explorer_registry(workspace: Path) -> dict[str, Explorer]:
+    """The checkout's profiles.yaml explorers in file order (frontier_exploration_ros2 first)."""
     try:
-        explorers = load_explorers(_checkout(workspace))
+        return load_explorers(_checkout(workspace))
     except (OSError, ValueError) as exc:
         raise Refused(f"Explorer profiles of the checkout: {exc}") from exc
-    return {identity: explorer.package for identity, explorer in explorers.items()}
 
 
 def _homogeneity(
@@ -1145,6 +1250,12 @@ def _study_files(
                     # The world registry the export read (worlds table, descriptor pins); I1 R-3.
                     world_registry_sha256=registry_sha256,
                     default_parameter_hashes=dict(sorted(defaults.items())),
+                    # export-v4: each external explorer's Default hash per robot as the campaigns recorded
+                    # it (A7; a later campaign's value wins, as for default_parameter_hashes)
+                    explorer_default_hashes={
+                        explorer: dict(sorted(hashes.items()))
+                        for explorer, hashes in sorted(explorer_defaults(snap.campaigns).items())
+                    },
                     attempts=len(snap.attempts),
                     experiments=len(snap.experiments),
                     final_runs=len(finals),
@@ -1180,6 +1291,17 @@ def _study_files(
         )
     )
     (staging / "LICENSE").write_text(LICENSE)
+
+
+def explorer_defaults(campaigns: Iterable[dict[str, Any]]) -> dict[str, dict[str, str]]:
+    """The campaigns' ``explorer_default_hashes`` merged (explorer -> robot -> hash)."""
+    merged: dict[str, dict[str, str]] = defaultdict(dict)
+    for campaign in campaigns:
+        for explorer, hashes in (
+            campaign["specification"].get("explorer_default_hashes") or {}
+        ).items():
+            merged[explorer].update(hashes)
+    return dict(merged)
 
 
 def _texts(path: Path) -> Iterator[str]:
@@ -1389,6 +1511,7 @@ def _build(workspace: Path, study_id: str, staging: Path, host_name: str) -> dic
     defaults: dict[str, str] = {}
     for campaign in snap.campaigns:
         defaults.update(campaign["specification"].get("default_parameter_hashes") or {})
+    profile_warnings: list[str] = []
     tables["profiles"] = _write(
         staging,
         "profiles",
@@ -1398,11 +1521,17 @@ def _build(workspace: Path, study_id: str, staging: Path, host_name: str) -> dic
                 snap,
                 defaults,
                 {str(row["profile_id"]): str(row["explorer_id"]) for row in run_rows},
-                _explorer_packages(workspace),
+                _explorer_registry(workspace),
+                _built_from(run_rows),
+                profile_warnings,
             ),
             schema=_schema_of(
                 DESCRIPTIONS["profiles"],
-                {"is_baseline": pa.bool_(), "differs_from_default": pa.bool_()},
+                {
+                    "explorer_order": pa.int64(),
+                    "is_baseline": pa.bool_(),
+                    "differs_from_default": pa.bool_(),
+                },
             ),
         ),
         pairs,
@@ -1421,7 +1550,7 @@ def _build(workspace: Path, study_id: str, staging: Path, host_name: str) -> dic
         pairs,
         facts,
     )
-    homogeneity["warnings"] += plan_warnings
+    homogeneity["warnings"] += plan_warnings + profile_warnings
     _study_files(
         staging,
         study_id,

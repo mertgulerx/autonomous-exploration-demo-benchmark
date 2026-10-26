@@ -29,7 +29,7 @@ import time
 from typing import TYPE_CHECKING, Any
 import uuid
 
-from .contracts import UNASSIGNED, canonical
+from .contracts import OUR_EXPLORER, UNASSIGNED, canonical
 from .run_record import (
     ELIGIBILITY_VERSION,
     INDEX_COLUMNS,
@@ -49,7 +49,7 @@ if TYPE_CHECKING:
 # The explorer of profiles without ``explorer`` (frontier_exploration_ros2's profiles.yaml ID) and its
 # run-record explorer_id (its package, as in run-record-v4).
 DEFAULT_EXPLORER = "default"
-EXPLORER_ID = "frontier_exploration_ros2"
+EXPLORER_ID = OUR_EXPLORER
 EXPLORER_LABEL = (
     "org.benchmark.runtime.repository.exploration_packages.frontier_exploration_ros2.commit"
 )

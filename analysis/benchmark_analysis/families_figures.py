@@ -35,13 +35,16 @@ nothing statistical; a study without family entries gets none of them. The sidec
 IDs (``entries``), so every value is a ``stats.json#<id>``.
 """
 
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from dataclasses import replace
+from functools import partial
 from typing import Any
 
 from matplotlib.lines import Line2D
 from matplotlib.transforms import blended_transform_factory
 import numpy as np
 
+from .data import difference_text
 from .families import CONTRACT
 from .figures import (
     GREY,
@@ -89,6 +92,18 @@ ROW_IN, FRAME_IN = (
     0.24,
     1.1,
 )  # a forest or dot-plot row; axes, titles, legend and the evidence label
+
+
+def with_robots(ctx: FigureContext) -> FigureContext:
+    """``ctx`` with every profile's label followed by its robot when the study has several (C6: a family unit is
+    one family and robot, so one family figure holds a unit per robot); ``ctx`` itself otherwise."""
+    if len({s.robot_id for s in ctx.full_study.strata}) < 2:
+        return ctx
+    styles = {
+        profile: replace(style, name=f"{style.name} ({ctx.study.profiles[profile]['robot_id']})")
+        for profile, style in ctx.styles.items()
+    }
+    return replace(ctx, styles=styles)
 
 
 def _entries(
@@ -397,21 +412,24 @@ def f24b(ctx: FigureContext, inputs: Iterable[str]) -> FigureOut | None:
         ax.set_yticks(range(len(rows)), list(reversed(labels)))
         ax.set_ylim(-0.6, len(rows) - 0.4)
         unit = "" if outcome == "rho" else " (pp)"
-        ax.set_xlabel(f"Δ{name.split(' (')[0]}, profile − Default{unit}")
+        ax.set_xlabel(f"Δ{name.split(' (')[0]}, {difference_text(ctx.study)}{unit}")
         note = "descriptive, no interval" if outcome == "success" else f"t interval, {APPROXIMATE}"
         panel_title(ax, index, f"{name.split(' (')[0]} · {note}", wrap=48)
     profiles = list(dict.fromkeys(p for _, p in rows))
     extra = [
         Line2D([], [], ls="none", marker="o", ms=4, mfc="white", mec=GREY, label="without interval")
     ]
-    legend(fig, ctx, profiles, extra)
+    # long labels (a robot after each, C6): fewer columns
+    robots = len({s.robot_id for s in ctx.full_study.strata})
+    legend(fig, ctx, profiles, extra, max_columns=2 if robots > 1 else 4)
     finish(fig, ctx)
     return FigureOut(
         "F24b",
         fig,
         "double",
         _attempts(found),
-        "Family profile contrasts, profile − Default, per family and outcome, with their intervals.",
+        f"Family profile contrasts, {difference_text(ctx.study)}, per family and outcome, with their "
+        "intervals.",
         [
             "Rows: one family and profile each, never pooled across families. Markers: the family profile "
             "contrast, the mean over the family's worlds of each world's mean block difference (profile − "
@@ -738,20 +756,49 @@ def f28(ctx: FigureContext, contrast: str, inputs: Iterable[str]) -> FigureOut:
     )
 
 
+def per_robot(
+    ctx: FigureContext, unit: str, kind: str, build: Callable[[FigureContext], FigureOut | None]
+) -> Iterator[FigureOut]:
+    """A family's or contrast's figure once per robot with its entries (C6: a unit is one family and robot),
+    ``<name>_<robot>`` with the robot in its group title or label when the study has several robots; once
+    otherwise."""
+    robots = sorted(
+        {str(e["robot_id"]) for e in ctx.entries.where(contract=CONTRACT, **{kind: unit})}
+    )
+    if len(robots) < 2:
+        built = build(ctx)
+        if built is not None:
+            yield built
+        return
+    for robot in robots:
+        built = build(replace(ctx, entries=ctx.entries.subset(robot_id=robot)))
+        if built is None:
+            continue
+        built.name += f"_{robot}"
+        group = built.extra.get("group")
+        if isinstance(group, dict):
+            group["title"] = f"{group['title']} · {robot}"
+        if "label" in built.extra:
+            built.extra["label"] = f"{built.extra['label']} · {robot}"
+        built.extra["robot_id"] = robot
+        yield built
+
+
 def figures(ctx: FigureContext, inputs: Iterable[str] = ()) -> Iterator[FigureOut]:
     """F24 per family, F24b, F25 per family with effects or pairs, F28 per density contrast, each built when the
-    caller asks for it; nothing for a study without family entries. ``inputs``: the export files the family
-    estimates read (``families.FamilyResult.inputs``), hashed in every sidecar."""
+    caller asks for it; nothing for a study without family entries. With several robots, F24, F25 and F28 are
+    drawn per robot and F24b names each row's robot (C6). ``inputs``: the export files the family estimates read
+    (``families.FamilyResult.inputs``), hashed in every sidecar."""
     read = sorted(set(inputs))
     families = family_ids(ctx.entries)
     for family in families:
-        yield f24(ctx, family, read)
-    contrasts_figure = f24b(ctx, read)
+        yield from per_robot(ctx, family, "world_family", partial(f24, family=family, inputs=read))
+    contrasts_figure = f24b(with_robots(ctx), read)
     if contrasts_figure is not None:
         yield contrasts_figure
     for family in families:
-        built = f25(ctx, family, read)
-        if built is not None:
-            yield built
+        yield from per_robot(ctx, family, "world_family", partial(f25, family=family, inputs=read))
     for contrast in family_ids(ctx.entries, "density_contrast"):
-        yield f28(ctx, contrast, read)
+        yield from per_robot(
+            ctx, contrast, "density_contrast", partial(f28, contrast=contrast, inputs=read)
+        )

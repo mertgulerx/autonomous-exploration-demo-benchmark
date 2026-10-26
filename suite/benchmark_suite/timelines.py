@@ -287,6 +287,8 @@ TRACE_FIELDS = (
     "completion_s",
     "completion_event",
     "elapsed_s",  # a stuck run's stop (stuck-stop-v1), where its carry-forward starts
+    "explorer_id",  # the trace's colour (contract C2)
+    "failure_source",  # an explorer failure is drawn as stuck or no_movement (contract C1)
     "coverage_final_pct",
     "coverage_at_limit_pct",
     "time_limit_s",

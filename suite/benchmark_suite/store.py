@@ -25,6 +25,8 @@ from typing import Any, Iterator
 import uuid
 
 from .contracts import (
+    EXPLORER_SOURCE,
+    SOURCED_FAILURES,
     UNASSIGNED,
     CampaignSpec,
     ContractError,
@@ -475,7 +477,24 @@ class Store:
             "FROM attempts WHERE campaign_id=?",
             (campaign_id,),
         )
-        return {"states": states, "outcomes": outcomes, "attempts": attempts}
+        # Final startup and runtime failures the worker attributed to the explorer (their run records'
+        # failure_source, run-record-v7): reported (reported-outcomes-v4), so the Campaigns card counts them
+        # apart from the excluded failures; 0 until their records are built. As in run_record.report_class, a
+        # run whose insight node did not start or exited before the stop is a platform invalidation instead.
+        explorer_failures = self.one(
+            "SELECT COUNT(*) n FROM experiments e WHERE e.campaign_id=? AND e.outcome IN "
+            f"({','.join('?' * len(SOURCED_FAILURES))}) AND EXISTS (SELECT 1 FROM run_records r "
+            "WHERE r.attempt_id=e.final_attempt_id AND json_extract(r.record,'$.failure_source')=? "
+            "AND COALESCE(json_extract(r.record,'$.insight_started'),1)!=0 "
+            "AND COALESCE(json_extract(r.record,'$.insight_exited_before_stop'),0)!=1)",
+            (campaign_id, *sorted(SOURCED_FAILURES), EXPLORER_SOURCE),
+        )
+        return {
+            "states": states,
+            "outcomes": outcomes,
+            "attempts": attempts,
+            "explorer_failures": explorer_failures["n"] if explorer_failures else 0,
+        }
 
     def query(
         self,

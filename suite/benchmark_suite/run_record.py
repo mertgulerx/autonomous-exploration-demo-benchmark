@@ -12,9 +12,9 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""The run record ``run-record-v5``: its field registry and the facts measured from an attempt's files.
+"""The run record ``run-record-v7``: its field registry and the facts measured from an attempt's files.
 
-Contract: docs/MEASUREMENTS.md, "Run record run-record-v5". ``measure`` runs in a spawned job (``jobs.py``)
+Contract: docs/MEASUREMENTS.md, "Run record run-record-v7". ``measure`` runs in a spawned job (``jobs.py``)
 and reads the manifest, the streams and the explorer log; ``run_records.RunRecords`` adds the engine's
 facts and stores the record once. Read-time fields (finality, report class) are derived from the store
 by ``read_time_fields``. Null never means zero.
@@ -33,10 +33,15 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 
 from .contracts import (
+    FAILURE_SOURCES,
     MEASURED_OUTCOMES,
+    OUR_EXPLORER,
     REPORTED_OUTCOMES,
+    SOURCED_FAILURES,
     average_speed,
     content_hash,
+    explorer_failure,
+    measured_as,
     milestone_key,
 )
 from .datasets import (
@@ -69,9 +74,11 @@ from .strata import COMPARISON_KEY_VERSION, comparison_key
 # run's explorer (the package of its profiles.yaml entry) and explorer_source its source;
 # explorer CPU and memory of an external explorer sum its listed processes (E7). 6 (stuck-stop-v1, 26 October
 # 2026): the outcome stuck (reported-outcomes-v3; censored as time_limit, its coverage carried forward to L as
-# for completed), the completion_source stuck_stop and the fields coverage_stop_rule and stuck_rule. Older records stay beside the rebuilt ones
-# (run_records.py).
-RUN_RECORD_VERSION = 6
+# for completed), the completion_source stuck_stop and the fields coverage_stop_rule and stuck_rule. 7 (contract C1,
+# decision B1, 26 October 2026): failure_source (the manifest's "explorer" or "stack" for a startup or runtime
+# failure); reported-outcomes-v4 reports an explorer failure, measured as stuck after movement onset and as
+# no_movement before it (contracts.measured_as), and explorer_build_patch (the run's listed build patch). Older records stay beside the rebuilt ones (run_records.py).
+RUN_RECORD_VERSION = 7
 ELIGIBILITY_VERSION = "eligibility-v2"
 DERIVED_VERSION = 1
 # Goal statuses the explorer itself causes (a cancel request or a replacement goal).
@@ -81,7 +88,7 @@ STALL_DELTA_PP = 0.1  # stall-v1 (RESULTS_RESEARCH RD-18)
 MOTION_GAP_NS = 500_000_000  # eligibility-v2: largest interval between valid trajectory rows
 RESOURCE_CHAIN_NS = 2_500_000_000  # RD-20: valid resource samples at most 2.5 s apart
 # Where every field is defined; the study export's codebook cites it (R4).
-DEFINITION = "docs/MEASUREMENTS.md, Results overhaul contracts, Run record run-record-v5"
+DEFINITION = "docs/MEASUREMENTS.md, Results overhaul contracts, Run record run-record-v7"
 # The explorer resource fields' definition: frontier_exploration_ros2 is its one process, an external
 # explorer the sum over the processes its profiles.yaml entry lists (``executables``; decision E7).
 RESOURCE_DEFINITION = (
@@ -136,6 +143,14 @@ FIELDS: tuple[Field, ...] = (
     *_fields("text", "", "never", "explorer_id"),
     *_fields("text", "", "runtime image unlabelled, or an external explorer", "explorer_version"),
     *_fields("text", "", "stub, or no framework_source in the manifest", "explorer_source"),
+    # The build patch the run's explorer profile lists (profiles.yaml source.build_patch, as the engine read it
+    # for the run; run-record-v7): the listed change to the pinned source the image was built with.
+    *_fields(
+        "text",
+        "",
+        "stub, frontier_exploration_ros2, or no build patch listed in the run's explorer profile",
+        "explorer_build_patch",
+    ),
     *_fields("int", "", "never", "campaign_position", "block_position"),
     *_fields("int", "UTC ns", "attempt never started", "wall_start_ns", "wall_end_ns"),
     *_fields("int", "", "never", "worker_slot"),
@@ -143,6 +158,15 @@ FIELDS: tuple[Field, ...] = (
     *_fields("text", "", "never", "outcome"),
     *_fields("text", "", "never", "outcome_detail"),
     *_fields("text", "", "outcome not a failure", "outcome_detail_code"),
+    # What caused a startup or runtime failure (run-record-v7, contract C1): "explorer" or "stack", from the
+    # manifest; an explorer failure is reported (reported-outcomes-v4), a stack failure is not.
+    *_fields(
+        "text",
+        "",
+        "outcome not a startup or runtime failure, or its manifest names no source (written before "
+        "run-record-v7, or the engine ended the attempt)",
+        "failure_source",
+    ),
     # What ended a completed run (coverage-stop-v1): "explorer", "coverage_stop" or (run-record-v6,
     # stuck-stop-v1) "stuck_stop". A manifest written before coverage-stop-v1 has no completion_source; its
     # completed runs are "explorer" (no other source existed).
@@ -340,13 +364,17 @@ def report_class(
     insight_started: bool | None,
     insight_exited_before_stop: bool | None,
     experiment_state: str | None,
+    failure_source: str | None,
 ) -> str:
-    """``reported-outcomes-v3`` (RD-9, RD-17; v3 adds ``stuck`` to the reported outcomes): rows tried in the
-    contract's order."""
+    """``reported-outcomes-v4`` (RD-9, RD-17; v3 adds ``stuck`` to the reported outcomes, v4 a startup or
+    runtime failure whose ``failure_source`` is the explorer, contract C1): rows tried in the contract's
+    order."""
     if not is_final:
         return "not_final"
     if insight_started is False or insight_exited_before_stop is True:
         return "missing_platform"
+    if explorer_failure(outcome, failure_source):
+        return "reported"
     if outcome == "startup_failure":
         return "missing_startup"
     if outcome == "storage_failure" or (
@@ -390,6 +418,7 @@ def read_time_fields(
             record["insight_started"],
             record["insight_exited_before_stop"],
             experiment.get("state"),
+            record["failure_source"],
         ),
         superseded_by_campaign_id=superseded_by,
     )
@@ -408,7 +437,8 @@ NOT_APPLICABLE = Censored(None, None, None)
 
 def completion(outcome: str, elapsed: float | None, limit: float | None) -> Censored:
     """Completion (RD-7, RD-10): an event only when observed within L; competing outcomes have none. A
-    ``stuck`` run (stuck-stop-v1) never completed: censored at L, as a ``time_limit`` run."""
+    ``stuck`` run (stuck-stop-v1), and an explorer failure after movement onset measured as one
+    (``contracts.measured_as``), never completed: censored at L, as a ``time_limit`` run."""
     if outcome == "completed" and elapsed is None:
         return Censored(
             None, False, None
@@ -421,6 +451,16 @@ def completion(outcome: str, elapsed: float | None, limit: float | None) -> Cens
 
 
 COMPLETION_SOURCES = frozenset({"explorer", "coverage_stop", "stuck_stop"})
+
+
+def failure_source(outcome: str, manifest: dict[str, Any]) -> str | None:
+    """What caused a startup or runtime failure (run-record-v7): the manifest's ``failure_source`` when it is
+    one of ``FAILURE_SOURCES``; null for other outcomes, a manifest without the key (written before contract
+    C1, or finished by the engine) and an unknown value."""
+    if outcome not in SOURCED_FAILURES:
+        return None
+    source = manifest.get("failure_source")
+    return source if isinstance(source, str) and source in FAILURE_SOURCES else None
 
 
 def rule_name(value: Any) -> str | None:
@@ -465,7 +505,9 @@ def coverage_at_limit(
     sample: tuple[float, float] | None,
 ) -> tuple[float | None, float | None, str | None]:
     """C(L) with its sample time and source (RO-2); defined only for the reported outcomes. A run that
-    completed or stopped ``stuck`` (stuck-stop-v1) within L holds its final value to L (RD-6)."""
+    completed or stopped ``stuck`` (stuck-stop-v1) within L holds its final value to L (RD-6). ``outcome`` is
+    the one the run is measured as (``contracts.measured_as``: an explorer failure as ``stuck`` or
+    ``no_movement``)."""
     if limit is None:
         return None, None, None
     if outcome == "no_movement":
@@ -895,8 +937,15 @@ def _goal_rows(
     return rows
 
 
-OUR_PACKAGE = "frontier_exploration_ros2"
+OUR_PACKAGE = OUR_EXPLORER
 OUR_SOURCE: dict[str, Any] = {"path": "exploration_packages/frontier_exploration_ros2"}
+
+
+def explorer_build_patch(profile: dict[str, Any]) -> str | None:
+    """The ``source.build_patch`` of the run's explorer profile (run-record-v7), None when it lists none."""
+    source = profile.get("source")
+    patch = source.get("build_patch") if isinstance(source, dict) else None
+    return patch if isinstance(patch, str) and patch else None
 
 
 def explorer_source(framework: Any, profile: dict[str, Any], runtime: dict[str, Any]) -> str | None:
@@ -966,7 +1015,10 @@ def measure(payload: dict[str, Any]) -> dict[str, Any]:
     coverage = _coverage(list(iter_rows(directory, "coverage")), limit, elapsed)
     deadline = finite(policy.get("no_movement_simulation_seconds"))
     waited = finite(metrics.get("pre_motion_simulation_elapsed"))
-    finished = completion(outcome, elapsed, limit)
+    # An explorer failure is measured as stuck after movement onset, as no_movement before it (C1).
+    source = failure_source(outcome, manifest)
+    measured = measured_as(outcome, source, moved)
+    finished = completion(measured, elapsed, limit)
     if outcome == "completed" and elapsed is None:
         quality_flags.add("completion_without_motion")
     profile = (manifest.get("robot_configuration") or {}).get("comparison_profile") or {}
@@ -993,6 +1045,7 @@ def measure(payload: dict[str, Any]) -> dict[str, Any]:
         completion_event=finished.event,
         completion_censor_s=finished.censor_s,
         completion_source=completion_source(outcome, manifest),
+        failure_source=source,
         coverage_stop_rule=rule_name(policy.get("coverage_stop_rule")),
         stuck_rule=rule_name(policy.get("stuck_rule")),
     )
@@ -1003,7 +1056,7 @@ def measure(payload: dict[str, Any]) -> dict[str, Any]:
     }
     for percent in MILESTONES:
         value = milestone(
-            milestones.get(float(percent)), outcome, coverage_eligible, limit, elapsed
+            milestones.get(float(percent)), measured, coverage_eligible, limit, elapsed
         )
         key = milestone_key(percent)
         record.update(
@@ -1016,7 +1069,7 @@ def measure(payload: dict[str, Any]) -> dict[str, Any]:
     final_pct = finite(metrics.get("coverage_percent")) if coverage_valid else None
     at_limit = (
         coverage_at_limit(
-            outcome, elapsed, limit, final_pct, coverage["pre_motion"], coverage["at_limit"]
+            measured, elapsed, limit, final_pct, coverage["pre_motion"], coverage["at_limit"]
         )
         if coverage_valid
         else (None, None, None)
@@ -1134,6 +1187,7 @@ def measure(payload: dict[str, Any]) -> dict[str, Any]:
             explorer,
             runtime_document if isinstance(runtime_document, dict) else {},
         ),
+        explorer_build_patch=explorer_build_patch(explorer),
         comparison_key=comparison_key(manifest, runtime_document) if complete else None,
         comparison_key_version=COMPARISON_KEY_VERSION,
         parameter_hash=content_hash(manifest.get("effective_parameters", {})),

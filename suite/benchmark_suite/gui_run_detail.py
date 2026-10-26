@@ -35,7 +35,7 @@ import numpy as np
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import gui_tokens
-from .contracts import GAP_S, milestone_key
+from .contracts import GAP_S, OUR_EXPLORER, explorer_failure, measured_as, milestone_key
 from .gui_cells import MONO_TEXT, OverlayScrollBar
 from .gui_controls import StatusBadge
 from .gui_maps import LiveLayers, WorldMap, decode_grey
@@ -87,10 +87,12 @@ def carries_forward(
     record: Mapping[str, Any], last_sample_s: float | None, limit_s: float | None
 ) -> bool:
     """RD-6's carry-forward as the run view and the traces draw it: a run that completed by L (``completion_event``)
-    or stopped stuck before L (stuck-stop-v1, ``elapsed_s``) holds its final value to L from its last sample,
-    never across a final gap (F1, ``data.run_end`` in the analysis package, and C(L) in ``run_record`` apply the
-    same rule)."""
-    outcome = record.get("outcome")
+    or stopped stuck before L (stuck-stop-v1, ``elapsed_s``; an explorer failure after movement onset too,
+    ``contracts.measured_as``) holds its final value to L from its last sample, never across a final gap (F1,
+    ``data.run_end`` in the analysis package, and C(L) in ``run_record`` apply the same rule)."""
+    outcome = measured_as(
+        record.get("outcome"), record.get("failure_source"), record.get("motion_started")
+    )
     end = (
         number(record.get("completion_s"))
         if outcome == "completed" and record.get("completion_event") is True
@@ -958,8 +960,11 @@ class RunCharts(Themed):
             dashed.setCapStyle(QtCore.Qt.PenCapStyle.FlatCap)
             painter.setPen(dashed)
             painter.drawLine(end, QtCore.QPointF(axis.x(axis.limit), end.y()))
-            stuck = self.record.get("outcome") == "stuck"
-            stop = number(self.record.get("elapsed_s" if stuck else "completion_s"))
+            record = self.record
+            failed = explorer_failure(record.get("outcome"), record.get("failure_source"))
+            stuck = failed or record.get("outcome") == "stuck"
+            stop = number(record.get("elapsed_s" if stuck else "completion_s"))
+            word = "Explorer failure" if failed else "Stuck" if stuck else "Completed"
             painter.setClipping(
                 False
             )  # the label may reach past the plot's edge, as before the clip
@@ -967,7 +972,7 @@ class RunCharts(Themed):
                 painter,
                 end.x() + 8,
                 end.y() + 16,
-                f"{'Stuck' if stuck else 'Completed'} {duration(stop)}",
+                f"{word} {duration(stop)}",
                 "text.secondary",
             )
         card = self.color("surface.card")
@@ -1229,9 +1234,32 @@ class Context:
     """What the provenance card shows beyond the record: names and the replies of its own reads."""
 
     profile: str = "—"
+    explorer: str = "—"  # the run's explorer by name (``explorer_id``; contract C2)
     differences: str = "—"
     partners: str = "—"
     experiments: int | None = None
+
+
+def explorer_row(
+    record: Mapping[str, Any], repositories: Mapping[str, Any], name: str, style: TextStyle
+) -> KeyValue:
+    """Code and images' "Explorer": the run's own explorer (contract C2). frontier_exploration_ros2 by the
+    submodule's commit and state in the provenance document; an external explorer by its name and the pinned
+    commit of its ``explorer_source`` ("<URL>@<commit>", the tooltip)."""
+    if record.get("explorer_id") in (OUR_EXPLORER, None):
+        return KeyValue(
+            "Explorer",
+            repository_text(repositories.get("exploration_packages/frontier_exploration_ros2")),
+            value_style=style,
+        )
+    source = record.get("explorer_source")
+    commit = str(source).rpartition("@")[2] if isinstance(source, str) and "@" in source else ""
+    return KeyValue(
+        "Explorer",
+        f"{name} · {commit[:7]}" if commit else name,
+        tooltip=str(source or ""),
+        value_style=style,
+    )
 
 
 def provenance_columns(
@@ -1298,11 +1326,7 @@ def provenance_columns(
     engine_host = host.get("engine") if isinstance(host, Mapping) else None
     code = [
         KeyValue("Checkout", repository_text(repositories.get("checkout")), value_style=mono),
-        KeyValue(
-            "Explorer",
-            repository_text(repositories.get("exploration_packages/frontier_exploration_ros2")),
-            value_style=mono,
-        ),
+        explorer_row(record, repositories, context.explorer, mono),
         KeyValue("Suite image", suite_text if suite.get("id") else "—", value_style=mono),
         KeyValue(
             "Runtime image",
@@ -1669,6 +1693,7 @@ class RunView(QtWidgets.QScrollArea):
         )
         self.context = Context(
             profile=self.names("profile", record.get("profile_id")),
+            explorer=self.names("explorer", record.get("explorer_id")),
             differences="None" if baseline else "—",
         )
         self._head()
@@ -1725,10 +1750,16 @@ class RunView(QtWidgets.QScrollArea):
         record = self.record
         self.head.title.setText(self.names("robot", record.get("robot_id")))
         repetition = record.get("repetition")
+        profile = self.names("profile", record.get("profile_id"))
+        # an external run's explorer (contract C2), unless the profile's name already starts with it ("TDLE
+        # Default"); ours and records without an explorer show the profile alone, as the traces do
+        identity = record.get("explorer_id")
+        explorer = "" if identity in (OUR_EXPLORER, None) else self.names("explorer", identity)
         parts = [
             self.names("world", record.get("world_id")),
             self.names("spawn", record.get("spawn_id")) + " spawn",
-            self.names("profile", record.get("profile_id")),
+            "" if not explorer or profile.startswith(explorer) else explorer,
+            profile,
             f"rep {repetition + 1}" if isinstance(repetition, int) else "",
             self.names("campaign", record.get("campaign_id")),
         ]

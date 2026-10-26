@@ -32,12 +32,18 @@ from .errors import Refused
 
 # 2 adds the worlds table and per-reference descriptors and region rasters (plans/worlds/I2 §3.10); optional
 # for readers, so a version-1 export analyses as before. 3 (stuck-stop-v1, run record 6) adds the accounting
-# count final_stuck and the endpoint end reason stuck, neither read here (the analysis counts from runs).
-EXPORT_VERSIONS = (1, 2, 3)
+# count final_stuck and the endpoint end reason stuck, neither read here (the analysis counts from runs). 4
+# (cross-method readiness C1, C2) adds ``runs.failure_source`` (read through the runs' report class), the
+# accounting count final_explorer_failure and the endpoint end reason explorer_failure (neither read here), and
+# to ``profiles`` the method's registry label and position (``explorer_label``, ``explorer_order``), its source
+# and build patch (``explorer_source``, ``explorer_build_patch``).
+EXPORT_VERSIONS = (1, 2, 3, 4)
 # 5 (external explorers): explorer_source; 2 (I10): mapping_condition; 3 (coverage-stop-v1):
 # completion_source and the T99 fields; 4 (coverage-stop-v2): T99.9 in place of T99; 6 (stuck-stop-v1): the
-# outcome stuck and the completion_source stuck_stop (reported-outcomes-v3)
-RUN_RECORD_VERSIONS = (1, 2, 3, 4, 5, 6)
+# outcome stuck and the completion_source stuck_stop (reported-outcomes-v3); 7 (cross-method readiness C1):
+# failure_source ("explorer" or "stack") of a runtime or startup failure, whose explorer-caused final runs are
+# reported (reported-outcomes-v4)
+RUN_RECORD_VERSIONS = (1, 2, 3, 4, 5, 6, 7)
 CHUNK = 1 << 20
 
 

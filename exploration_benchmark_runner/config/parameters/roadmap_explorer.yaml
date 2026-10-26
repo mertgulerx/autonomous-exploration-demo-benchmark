@@ -18,6 +18,11 @@ frontierSearch.max_permissable_frontier_search_distance:
   description: Largest search radius in metres the search may grow to.
   managed: false
   exclusive_minimum: 0
+frontierSearch.increment_search_distance_by:
+  group: Frontier search
+  description: Metres by which the frontier search radius grows after a tick without frontiers (reset after a success); 35.0 placed where the code reads it (B4; the shipped file sets it under explorationBT, which is not read).
+  managed: false
+  exclusive_minimum: 0
 frontierSearch.plugin_name:
   group: Frontier search
   description: Frontier search plugin.
@@ -159,11 +164,6 @@ explorationBT.localisation_only_mode:
   group: Interface
   description: Localisation-only demo mode of the exploration tree; false in the benchmark.
   managed: true
-explorationBT.increment_search_distance_by:
-  group: Exploration tree
-  description: Metres by which the frontier search radius grows when no frontier is found.
-  managed: false
-  exclusive_minimum: 0
 sensorSimulator.input_map_topic:
   group: Interface
   description: Sensor simulator setting (input_map_topic); unused in SLAM mode.

@@ -41,8 +41,18 @@ from matplotlib.patches import Patch
 import numpy as np
 
 from . import stats
-from .data import REPORTED, TIME_EPSILON, Row, Stratum, Value, run_end
-from .estimates import EFFECTS, Effect, Pairs, horizon_value, pairs, time_value
+from .data import (
+    REPORTED,
+    TIME_EPSILON,
+    Row,
+    Stratum,
+    Study,
+    Value,
+    difference_text,
+    never_moved,
+    run_end,
+)
+from .estimates import Effect, Pairs, horizon_value, pairs, shown_effects, time_value
 from .figures import (
     GREY,
     FigureContext,
@@ -75,6 +85,16 @@ SUPPORT = (  # F14's support classes in stacking order: key, legend text
     ("neither", "neither (incl. no movement)"),
 )
 NO_PAIRS = "No profile to compare with Default in any stratum."
+
+
+def support_text(study: Study, key: str, text: str) -> str:
+    """An F14 support class in the study's vocabulary: "only RADEF" and "only the method" in a method comparison
+    (C2)."""
+    if not study.cross_method:
+        return text
+    return {"default": "only RADEF", "profile": "only the method"}.get(key, text)
+
+
 LEFT_OUT = {  # F14's blocks left out, by reason (``Gaps.left_out``), as the strip's label words them
     "not_both_reported": "not both reported",
     "no_coverage_value": "no coverage value",
@@ -104,7 +124,8 @@ def _censored(
     }
 
 
-def _marks(ax: Any, xs: Any, ys: Any, hollow: list[bool], style: Any, size: float) -> None:
+def marks(ax: Any, xs: Any, ys: Any, hollow: list[bool], style: Any, size: float) -> None:
+    """Per-block marks in the profile's colour and marker, open where a value is censored at L (F13, F21)."""
     for x, y, empty in zip(xs, ys, hollow, strict=True):
         ax.scatter(
             [x],
@@ -131,7 +152,7 @@ def _scatter(
     pad = 0.06 * (high - low or abs(high) or 1.0)
     bounds = (low - pad, high + pad)
     ax.plot(bounds, bounds, color=GREY, lw=0.6, ls="--", zorder=1)
-    _marks(ax, theirs, mine, hollow, ctx.styles[profile], 14)
+    marks(ax, theirs, mine, hollow, ctx.styles[profile], 14)
     ax.set(xlim=bounds, ylim=bounds)
     ax.set_aspect("equal", adjustable="box")
 
@@ -147,7 +168,7 @@ def _differences(
 ) -> None:
     """The differences (jittered), the estimate and its interval; the achieved level under "estimate" when fewer
     pairs allow less than the requested one."""
-    _marks(
+    marks(
         ax, rng.uniform(-0.12, 0.12, len(differences)), differences, hollow, ctx.styles[profile], 12
     )
     ax.axhline(0, color=GREY, lw=0.6)
@@ -212,7 +233,7 @@ def difference_strip(
     the figure's jitter stream, drawn from in row order."""
     found = row.found
     _differences(ax, ctx, row.profile, found.differences, row.hollow, row.entry, rng)
-    ax.set_ylabel(f"{effect.label}, profile − Default")
+    ax.set_ylabel(f"{effect.label}, {difference_text(ctx.study)}")
     parts = [*lead]
     if effect.endpoint is not None:  # censored in both: stats.json's own count
         both = row.entry.get("pairs_censored_in_both", 0)
@@ -247,15 +268,16 @@ def paired_notes(
     """How to read the pairs and differences of one effect (F13; F21 without the scatter); ``entries`` are the
     ``stats.json`` entries of the rows drawn, whose interval methods the caption names."""
     strip = (
-        "the per-block differences profile − Default (jittered); square and line: the "
+        f"the per-block differences {difference_text(ctx.study)} (jittered); square and line: the "
         f"{estimator_text(effect)} estimate and its {ctx.level_label} interval from stats.json (F3, T5; a level "
         'in parentheses under "estimate" when fewer pairs allow less), by '
         f"{interval_methods(entries)} (stats.json interval.method). "
         '"No pair": blocks without two reported runs with a value (stats.json missing_pairs).'
     )
+    ours, theirs = ("RADEF", "the method") if ctx.study.cross_method else ("Default", "the profile")
     notes = [
-        "Left: one mark per block, Default on x, the profile on y, dashed identity line (marks above it: a "
-        f"larger value with the profile). Right: {strip}"
+        f"Left: one mark per block, {ours} on x, {theirs} on y, dashed identity line (marks above it: a "
+        f"larger value with {theirs}). Right: {strip}"
         if scatter
         else strip[0].upper() + strip[1:]
     ]
@@ -305,7 +327,7 @@ def f13(ctx: FigureContext, effect: Effect) -> FigureOut:
             scatter, 2 * index, f"{ctx.label(stratum)} · {name_p}, n pairs = {len(found.blocks)}"
         )
         _scatter(scatter, ctx, profile, found.profile_values, found.baseline_values, row.hollow)
-        scatter.set_xlabel(f"Default {effect.value_label}")
+        scatter.set_xlabel(f"{ctx.styles[baseline].name} {effect.value_label}")
         scatter.set_ylabel(f"{name_p} {effect.value_label}")
         difference_strip(axes[index][1], ctx, effect, row, rng, 2 * index + 1)
         record.append(paired_record(ctx, row))
@@ -315,8 +337,9 @@ def f13(ctx: FigureContext, effect: Effect) -> FigureOut:
         fig,
         "double",
         attempts,
-        f"Paired values and differences {effect.label} of each profile against Default per stratum, with the "
-        "estimate and its interval.",
+        f"Paired values and differences {effect.label} of each "
+        + ("compared method against RADEF" if ctx.study.cross_method else "profile against Default")
+        + " per stratum, with the estimate and its interval.",
         paired_notes(ctx, effect, entries),
         {"rows": record},
     )
@@ -331,7 +354,7 @@ def reach_times(
     """t(c) for each c of the grid (METHODOLOGY §3): the first valid sample at or above c up to the run's end
     within L; None where not reached. A run that never moved reaches no c, whatever its coverage status (as R_m,
     RD-8); a run that moved has no t(c) (None) when it is not coverage-eligible or has no samples."""
-    if run["outcome"] == "no_movement":
+    if never_moved(run):
         return [None] * len(grid)
     if not run["coverage_eligible"]:
         return None
@@ -433,7 +456,7 @@ def _gap_panel(
             fontsize=7,
         )
     ax.axhline(0, color=GREY, lw=0.6)
-    ax.set_ylabel("Δt(c), profile − Default (s)")
+    ax.set_ylabel(f"Δt(c), {difference_text(ctx.study)} (s)")
     ax.tick_params(labelbottom=False)
     bottom = np.zeros(len(grid))
     for key, _ in SUPPORT:
@@ -522,7 +545,7 @@ def f14(ctx: FigureContext) -> FigureOut:
             facecolor=SUPPORT_FILLS[key][0],
             hatch=SUPPORT_FILLS[key][1],
             edgecolor=EDGE,
-            label=text,
+            label=support_text(ctx.study, key, text),
         )
         for key, text in SUPPORT
     ]
@@ -544,8 +567,9 @@ def f14(ctx: FigureContext) -> FigureOut:
         fig,
         width,
         attempts,
-        "Per-block difference in the time to reach each coverage threshold, profile minus Default, with the "
-        "number of blocks in which both, one or neither run reached it.",
+        "Per-block difference in the time to reach each coverage threshold, "
+        + ("method minus RADEF" if ctx.study.cross_method else "profile minus Default")
+        + ", with the number of blocks in which both, one or neither run reached it.",
         [
             "Descriptive display quantity (METHODOLOGY §3), not an estimand and not cited: t(c) is the first "
             f"valid coverage sample at or above c on a {GRID_PP:g} pp grid, no interpolation, unreached by L or "
@@ -566,7 +590,7 @@ def figures(ctx: FigureContext) -> Iterator[FigureOut]:
     def paired_rows(strata: Sequence[Stratum], worlds: Sequence[str]) -> int:
         return len(paired_strata(ctx, strata))
 
-    for effect in EFFECTS:
+    for effect in shown_effects(ctx.settings):
         yield from grouped(
             ctx, partial(f13, effect=effect), _f13_fits, lambda *page: 2 * paired_rows(*page)
         )

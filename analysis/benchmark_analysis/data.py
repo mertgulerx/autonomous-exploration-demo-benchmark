@@ -14,11 +14,12 @@
 
 """A study's runs as the analysis sees them: strata, populations and the per-run values of every estimand
 (docs/research/METHODOLOGY.md §3; RESULTS_RESEARCH RD-6 to RD-9, RD-18; docs/MEASUREMENTS.md "Run record" and
-"Reported population `reported-outcomes-v3`").
+"Reported population `reported-outcomes-v4`").
 
-- Final runs only. ``reported`` runs (completed, time limit, stuck, no movement; ``stuck`` from run record 6,
-  ``reported-outcomes-v3``, earlier records ``reported-outcomes-v2``) form the population; the other final
-  classes are counted beside every result (missing observations: ``missing_startup``, ``missing_platform``;
+- Final runs only. ``reported`` runs (completed, time limit, stuck, no movement, explorer failure; ``stuck`` from
+  run record 6, ``reported-outcomes-v3``; ``explorer_failure`` from run record 7, ``reported-outcomes-v4``;
+  earlier records ``reported-outcomes-v2``) form the population; the other final classes are counted beside
+  every result (missing observations: ``missing_startup``, ``missing_platform``;
   exclusions: ``excluded_runtime_failure``, ``excluded_stopped``).
 - A stratum is one robot, world and spawn with one comparison key and one time limit L, holding at least one
   reported run; cells without one are listed (``Study.empty_cells``) and counted in T1, which reads the planned
@@ -44,11 +45,26 @@
   (success false; completion and unreached milestones censored at L, milestones reached before the stop
   observed; distance, compute and speed observed to its end) except that C(h) and A_h carry its last valid
   sample from its end to L (RD-6), and D(h) holds its final odometry distance there as a completed run's does.
+- An explorer failure (run record 7, ``reported-outcomes-v4``, cross-method readiness C1): a final runtime or
+  startup failure whose ``failure_source`` is ``explorer`` (the explorer process exited, its own error result, a
+  start protocol's refusal) is reported with the outcome ``explorer_failure`` (its recorded outcome kept in
+  ``recorded_outcome``); stack-caused failures keep their earlier classes. It is never successful and its
+  unreached endpoints are censored at L (reason ``explorer_failure``). One that ended after movement onset is
+  treated like ``stuck``: C(h), A_h and D(h) carried from its end to L; one that ended before is treated like
+  ``no_movement`` (RD-8): R = L and its pre-motion coverage held. A milestone its record leaves null (a failure
+  outcome without milestone fields) is read from its valid samples by the milestone rule (first valid sample at
+  or above m, no interpolation; ``milestone_source`` ``samples``).
+- Method identity (C2): every profile belongs to a method, its ``explorer_id`` (the ``profiles`` table from export
+  4, else its runs' ``explorer_id``); ours is ``frontier_exploration_ros2``, labelled "RADEF" (the paper's name). An export without
+  any explorer ID has one method, ours. ``Study.methods`` lists them in registry order (``explorer_order`` from
+  export 4, else ``REGISTRY``); a study with more than one method is a method comparison (``cross_method``), whose
+  profiles are labelled "method · profile".
 """
 
 from collections import defaultdict
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
+import math
 from typing import Any
 
 import numpy as np
@@ -64,9 +80,46 @@ Floats = NDArray[np.float64]
 GAP_S = 2.0  # RD-6: C(h), A_h and D(h) have no value across a longer gap between valid samples
 REPORTED = "reported"
 STUCK = "stuck"  # stuck-stop-v1 below 97.0 % coverage (run record 6, reported-outcomes-v3)
-# the outcomes of reported runs; ``stuck`` from run record 6 (``STUCK_RECORD_VERSION``)
-REPORTED_OUTCOMES = ("completed", "time_limit", STUCK, "no_movement")
+# a reported explorer-caused runtime or startup failure (run record 7, reported-outcomes-v4); ``load`` sets it
+# as the run's outcome and keeps the recorded one in RECORDED_OUTCOME
+EXPLORER_FAILURE = "explorer_failure"
+RECORDED_OUTCOME = "recorded_outcome"
+FAILURE_SOURCE = "failure_source"
+FAILURE_OUTCOMES = ("runtime_failure", "startup_failure")
+# the outcomes of reported runs; ``stuck`` from run record 6 (``STUCK_RECORD_VERSION``), ``explorer_failure``
+# from run record 7 (``EXPLORER_FAILURE_RECORD_VERSION``)
+REPORTED_OUTCOMES = ("completed", "time_limit", STUCK, "no_movement", EXPLORER_FAILURE)
 STUCK_RECORD_VERSION = 6
+EXPLORER_FAILURE_RECORD_VERSION = 7
+EXPLORER_FAILURE_TEXT = (
+    "an explorer failure (failure_source explorer: the explorer process exited, returned its own error or refused "
+    "the start protocol; reported-outcomes-v4) is not successful and censored at L; after movement onset it is "
+    "treated like a stuck run (coverage and distance carried from its end to L), before it like a run without "
+    "movement (pre-motion coverage held, R = L)"
+)
+# Methods (cross-method readiness C2). The explorer registry (exploration_benchmark_runner/config/profiles.yaml)
+# by package, in file order: its labels and positions for exports before version 4, which carry neither; kept
+# equal to exploration_benchmark_runner/config/profiles.yaml.
+OURS = "frontier_exploration_ros2"
+# The paper's name of our method (PAPER_GUIDE §0, maintainer 26 October 2026); output texts spell it out.
+OURS_LABEL = "RADEF"
+REGISTRY: tuple[tuple[str, str], ...] = (
+    (OURS, OURS_LABEL),
+    ("explore_lite", "m-explore-ros2"),
+    ("roadmap_explorer", "roadmap-explorer"),
+    ("rrt_explore", "rrt-explore"),
+    ("tdle", "TDLE"),
+    ("mrtsp_exploration_ros2", "base MRTSP"),
+)
+PROFILE_COLUMNS = ("profile_id", "profile_name", "robot_id", "parameter_hash", "is_baseline")
+# export 3 on: explorer_id; export 4 on: the method's registry label, position, source and build patch
+METHOD_COLUMNS = (
+    "explorer_id",
+    "explorer_label",
+    "explorer_order",
+    "explorer_source",
+    "explorer_build_patch",
+)
 MISSING = ("missing_startup", "missing_platform")
 EXCLUDED = ("excluded_runtime_failure", "excluded_stopped")
 VERSION_COLUMNS = (
@@ -103,6 +156,10 @@ STUCK_TEXT = (
 COMPLETION_SOURCES = ("explorer", "coverage_stop", "stuck_stop")
 OPTIONAL_COLUMNS = (
     COMPLETION_SOURCE,
+    FAILURE_SOURCE,
+    "explorer_id",
+    "explorer_source",
+    "explorer_build_patch",  # run record 7
     *(f"t{milestone_key(STOP_MILESTONE)}{suffix}" for suffix in ("_s", "_event", "_censor_s")),
 )
 TIME_EPSILON = 1e-9
@@ -123,6 +180,51 @@ class Series:
 
     t: Floats
     coverage: Floats
+
+
+@dataclass(frozen=True, slots=True)
+class Method:
+    """One explorer of a study (C2): its ``explorer_id``, label ("RADEF" for ours), registry position (ours 0),
+    and the sources and build patches its profiles name (export 4; else its runs' sources)."""
+
+    id: str
+    label: str
+    order: int
+    sources: tuple[str, ...] = ()
+    build_patches: tuple[str, ...] = ()
+
+    @property
+    def is_ours(self) -> bool:
+        return self.id == OURS
+
+
+def difference_text(study: "Study") -> str:
+    """The sign convention of every paired effect in words: "method − RADEF" in a method comparison (C2), else
+    "profile − Default"."""
+    return f"method − {OURS_LABEL}" if study.cross_method else "profile − Default"
+
+
+def reference_text(study: "Study") -> str:
+    """What every profile is compared with: "reference (RADEF)" in a method comparison (C2), else "Default"."""
+    return f"reference ({OURS_LABEL})" if study.cross_method else "Default"
+
+
+def is_external(run: Row) -> bool:
+    """A run of an external method: its explorer log is not parsed and no insight node ran beside it (A6)."""
+    return run["explorer_id"] not in (None, OURS)
+
+
+def never_moved(run: Row) -> bool:
+    """A reported run that never moved: ``no_movement``, or an explorer failure before movement onset (RD-8)."""
+    outcome = run["outcome"]
+    return outcome == "no_movement" or (outcome == EXPLORER_FAILURE and not run["motion_started"])
+
+
+def stopped_early(run: Row) -> bool:
+    """A reported unsuccessful run whose values are carried from its end to L: ``stuck``, or an explorer failure
+    after movement onset."""
+    outcome = run["outcome"]
+    return outcome == STUCK or (outcome == EXPLORER_FAILURE and bool(run["motion_started"]))
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,17 +278,33 @@ class Study:
     strata: tuple[Stratum, ...]
     # robot, world, spawn with final runs but none reported
     empty_cells: tuple[tuple[str, str, str], ...]
-    profiles: Mapping[str, Row]  # profile_id -> name, parameter hash, baseline flag, robot
+    # profile_id -> name, parameter hash, baseline flag, robot, and (C2) ``method`` (its explorer_id),
+    # ``method_default`` (the method's Default for the robot) and ``label`` (``profile_label``)
+    profiles: Mapping[str, Row]
     baselines: Mapping[str, str]  # robot_id -> the Default profile's ID
     coverage: Mapping[str, Series] = field(repr=False)
     pre_motion: Mapping[str, float | None] = field(repr=False)
     trajectory: Mapping[str, tuple[Floats, Floats]] = field(repr=False)  # t, odometry distance
     has_completion_source: bool = False  # the export's runs carry completion_source (run record 3)
     has_stuck: bool = False  # some run ran under the stuck stop (its stuck_rule, run record 6)
+    # run record 7 (reported-outcomes-v4): explorer failures are reported
+    has_explorer_failure: bool = False
+    methods: Mapping[str, Method] = field(
+        default_factory=dict
+    )  # explorer_id -> method, registry order
 
     @property
     def finals(self) -> list[Row]:
         return [run for stratum in self.strata for run in stratum.finals]
+
+    @property
+    def cross_method(self) -> bool:
+        """A method comparison: the study's profiles belong to more than one explorer (C2)."""
+        return len(self.methods) > 1
+
+    def method(self, profile_id: str) -> Method | None:
+        row = self.profiles.get(profile_id)
+        return None if row is None else self.methods.get(str(row["method"]))
 
     def label(self, robot: str, world: str, spawn: str, limit: float | None = None) -> str:
         """The one label of a stratum in every table and figure: the robot when the study has more than
@@ -245,6 +363,9 @@ def load(export: Export) -> Study:
         run.setdefault(MAPPING_CONDITION, None)
         for column in OPTIONAL_COLUMNS:  # before run record 3: no coverage stop; before 4: no T99.9
             run.setdefault(column, None)
+        run[RECORDED_OUTCOME] = run["outcome"]
+        if run["report_class"] == REPORTED and run["outcome"] in FAILURE_OUTCOMES:
+            run["outcome"] = EXPLORER_FAILURE  # reported-outcomes-v4: an explorer-caused failure
     finals = [run for run in runs if run["is_final"]]
     if not finals:
         raise Refused("the export holds no final runs")
@@ -283,7 +404,13 @@ def load(export: Export) -> Study:
     for (robot, world, spawn), members in sorted(cells.items()):
         name = f"{robot}/{world}/{spawn}"
         keys = sorted({run["comparison_key"] for run in members if run["comparison_key"]})
-        found_limits = {run["time_limit_s"] for run in members if run["report_class"] == REPORTED}
+        # an explorer failure before recording began may lack L: it takes the cell's
+        found_limits = {
+            run["time_limit_s"]
+            for run in members
+            if run["report_class"] == REPORTED
+            and not (run["outcome"] == EXPLORER_FAILURE and run["time_limit_s"] is None)
+        }
         if None in found_limits:
             raise Refused(
                 f"{name}: a reported run has no time limit; restricted estimands need L",
@@ -320,6 +447,12 @@ def load(export: Export) -> Study:
                     ),
                 )
             seen.add(pair)
+        if not limits and any(
+            run["report_class"] == REPORTED and run["outcome"] == EXPLORER_FAILURE
+            for run in members
+        ):
+            # only explorer failures without L (before recording began): the robot and world's L (C1)
+            limits = [_failure_limit(export, cells, robot, world, spawn)]
         if not limits:
             empty.append((robot, world, spawn))
             continue
@@ -332,19 +465,18 @@ def load(export: Export) -> Study:
             column="report_class",
             groups=_groups(finals, "report_class"),
         )
-    profiles: dict[str, Row] = {}
-    for row in _rows(
-        export.table(
-            "profiles", ["profile_id", "profile_name", "robot_id", "parameter_hash", "is_baseline"]
-        )
-    ):
-        profiles.setdefault(row["profile_id"], row)
+    profiles, methods = _profiles(export, finals)
     baselines = {
         row["robot_id"]: profile_id
         for profile_id, row in sorted(profiles.items())
         if row["is_baseline"]
     }
     reported = {run["attempt_id"] for run in finals if run["report_class"] == REPORTED}
+    coverage = _coverage(export, reported)
+    for run in finals:
+        if run["outcome"] == EXPLORER_FAILURE:
+            _failure_milestones(run, coverage.get(run["attempt_id"]))
+    version = export.study.get("run_record_version")
     return Study(
         export=export,
         runs=tuple(runs),
@@ -352,12 +484,149 @@ def load(export: Export) -> Study:
         empty_cells=tuple(empty),
         profiles=profiles,
         baselines=baselines,
-        coverage=_coverage(export, reported),
+        coverage=coverage,
         pre_motion={run["attempt_id"]: run["pre_motion_coverage_pct"] for run in finals},
         trajectory=_trajectory(export, reported),
         has_completion_source=COMPLETION_SOURCE in table.column_names,
         has_stuck=has_stuck(export.study, table),
+        has_explorer_failure=type(version) is int and version >= EXPLORER_FAILURE_RECORD_VERSION,
+        methods=methods,
     )
+
+
+def _failure_limit(
+    export: Export,
+    cells: Mapping[tuple[str, str, str], list[Row]],
+    robot: str,
+    world: str,
+    spawn: str,
+) -> float:
+    """L of a cell whose reported runs are all explorer failures without a time limit (C1): the L of the same
+    robot and world's other cells (one L by design), else the world's limit in the runs' campaign
+    (``world_time_limits``, when it sets no time-limit rule); a refusal naming the cell when neither gives one
+    positive L."""
+    name = f"{robot}/{world}/{spawn}"
+    found = {
+        float(run["time_limit_s"])
+        for (r, w, _), runs in cells.items()
+        if (r, w) == (robot, world)
+        for run in runs
+        if run["report_class"] == REPORTED and run["time_limit_s"] is not None
+    }
+    if not found:
+        campaigns = {str(run["campaign_id"]) for run in cells[(robot, world, spawn)]}
+        for campaign in export.study.get("campaigns") or ():
+            if str(campaign.get("id")) in campaigns and not campaign.get("time_limit_rule"):
+                value = (campaign.get("world_time_limits") or {}).get(world)
+                if isinstance(value, int | float) and not isinstance(value, bool):
+                    found.add(float(value))
+    if len(found) != 1 or next(iter(found)) <= 0:
+        raise Refused(
+            f"{name}: its reported runs are explorer failures without a time limit, and neither another "
+            f"cell of {robot} in {world} nor the campaign gives one positive L (found {sorted(found)})",
+            column="time_limit_s",
+            stratum=name,
+            groups=_groups(cells[(robot, world, spawn)], "time_limit_s"),
+        )
+    return next(iter(found))
+
+
+def _failure_milestones(run: Row, series: Series | None) -> None:
+    """An explorer failure's milestones that its record leaves null (a failure outcome has no milestone fields
+    before run record 7 computes them): after movement onset, the first valid sample at or above m within
+    [0, min(T_end, L)] is the event (no interpolation, the milestone rule), none is censored at L; before it, or
+    without a coverage-eligible series, they stay null. Marks the run's ``milestone_source``."""
+    run["milestone_source"] = "record"
+    if not run["motion_started"] or not run["coverage_eligible"] or series is None:
+        return
+    limit = run["time_limit_s"]
+    until = min((v for v in (run["elapsed_s"], limit) if v is not None), default=math.inf)
+    keep = series.t <= until + TIME_EPSILON
+    for m in MILESTONE_OF_ENDPOINT.values():
+        key = f"t{milestone_key(m)}"
+        if f"{key}_event" not in run or run[f"{key}_event"] is not None:
+            continue
+        reached = np.nonzero(series.coverage[keep] >= m - TIME_EPSILON)[0]
+        if reached.size:
+            run[f"{key}_s"], run[f"{key}_event"] = float(series.t[keep][reached[0]]), True
+            run[f"{key}_censor_s"] = None
+        else:
+            run[f"{key}_s"], run[f"{key}_event"], run[f"{key}_censor_s"] = None, False, limit
+        run["milestone_source"] = "samples"
+
+
+def _profiles(export: Export, finals: list[Row]) -> tuple[dict[str, Row], dict[str, Method]]:
+    """The study's profiles with their method (C2) and the methods in registry order. A profile's method is the
+    ``profiles`` table's ``explorer_id`` (export 3 on), else its final runs' one ``explorer_id``; an export without
+    any is one method, ours. The label, position, source and build patch come from export 4's columns (null when
+    the profile's runs differ), else from ``REGISTRY`` and the runs' ``explorer_source`` and
+    ``explorer_build_patch`` (run record 7)."""
+    available = set(export.table("profiles").column_names)
+    columns = [*PROFILE_COLUMNS, *(c for c in METHOD_COLUMNS if c in available)]
+    rows: dict[str, Row] = {}
+    for row in _rows(export.table("profiles", columns)):
+        rows.setdefault(row["profile_id"], row)
+    from_runs: dict[str, set[str]] = defaultdict(set)
+    run_sources: dict[str, set[str]] = defaultdict(set)
+    run_patches: dict[str, set[str]] = defaultdict(set)
+    for run in finals:
+        if run["explorer_id"]:
+            from_runs[run["profile_id"]].add(str(run["explorer_id"]))
+        if run["explorer_source"]:
+            run_sources[run["profile_id"]].add(str(run["explorer_source"]))
+        if run["explorer_build_patch"]:
+            run_patches[run["profile_id"]].add(str(run["explorer_build_patch"]))
+    known = dict(REGISTRY)
+    order = {identity: index for index, (identity, _) in enumerate(REGISTRY)}
+    found: dict[str, dict[str, Any]] = {}
+    for profile_id, row in rows.items():
+        explorer = row.get("explorer_id") or (
+            next(iter(from_runs[profile_id])) if len(from_runs[profile_id]) == 1 else None
+        )
+        method = str(explorer) if explorer else OURS
+        row["method"] = method
+        entry = found.setdefault(
+            method, dict(labels=set(), orders=set(), sources=set(), patches=set())
+        )
+        if row.get("explorer_label"):
+            entry["labels"].add(str(row["explorer_label"]))
+        if type(row.get("explorer_order")) is int:
+            entry["orders"].add(int(row["explorer_order"]))
+        source = row.get("explorer_source")
+        entry["sources"] |= {str(source)} if source else run_sources[profile_id]
+        patch = row.get("explorer_build_patch")
+        entry["patches"] |= {str(patch)} if patch else run_patches[profile_id]
+    unknown = sorted(m for m in found if m not in order and not found[m]["orders"])
+    methods = sorted(
+        (
+            Method(
+                id=method,
+                label=OURS_LABEL
+                if method == OURS
+                else min(entry["labels"], default=known.get(method, method)),
+                order=0
+                if method == OURS
+                else min(entry["orders"])
+                if entry["orders"]
+                else order.get(method, len(REGISTRY) + unknown.index(method)),
+                sources=tuple(sorted(entry["sources"])),
+                build_patches=tuple(sorted(entry["patches"])),
+            )
+            for method, entry in found.items()
+        ),
+        key=lambda m: (m.order, m.id),
+    )
+    by_id = {m.id: m for m in methods}
+    cross = len(by_id) > 1
+    for profile_id, row in rows.items():
+        owner = by_id[row["method"]]
+        name = str(row["profile_name"] or profile_id)
+        short = name.removeprefix(f"{owner.label} ") if not owner.is_ours else name
+        row["method_default"] = bool(row["is_baseline"]) or (
+            not owner.is_ours and (profile_id.startswith("default-") or short == "Default")
+        )
+        row["label"] = f"{owner.label} · {short}" if cross else name
+    return rows, by_id
 
 
 def has_stuck(study: Mapping[str, Any], runs: pa.Table) -> bool:
@@ -375,6 +644,8 @@ def has_stuck(study: Mapping[str, Any], runs: pa.Table) -> bool:
 
 def outcome_rule(study: Study) -> str:
     """The reported-population rule of the export's runs, for notes."""
+    if study.has_explorer_failure:
+        return "reported-outcomes-v4"
     return "reported-outcomes-v3" if study.has_stuck else "reported-outcomes-v2"
 
 
@@ -430,12 +701,17 @@ def block_starts(study: Study) -> dict[tuple[str, str, str, str], int]:
 
 def restricted_time(run: Row, endpoint: str, limit: float) -> Value:
     """R = min(T, L) of a reported run for ``R_completion`` or ``R_m`` (RD-7, RD-8, RD-10); a ``stuck`` run as
-    a time-limit run: its event-free endpoints are censored at L (reason ``stuck``, the export's end reason)."""
-    if run["outcome"] == "no_movement":
-        return Value(limit, "no_movement", False)
+    a time-limit run: its event-free endpoints are censored at L (reason ``stuck``, the export's end reason); an
+    explorer failure never completes (censored at L, reason ``explorer_failure``), and one before movement onset
+    never reaches anything (R = L, as ``no_movement``)."""
+    failure = run["outcome"] == EXPLORER_FAILURE
+    if never_moved(run):
+        return Value(limit, EXPLORER_FAILURE if failure else "no_movement", False)
     prefix = TIME_ENDPOINTS[endpoint]
     if prefix == "completion" and run["outcome"] == "completed" and not run["motion_started"]:
         return Value(None, "completion_without_motion")
+    if failure and prefix == "completion":
+        return Value(limit, EXPLORER_FAILURE, False)
     event = run[f"{prefix}_event"]
     if event:
         time = run[f"{prefix}_s"]
@@ -443,7 +719,11 @@ def restricted_time(run: Row, endpoint: str, limit: float) -> Value:
     if event is False:
         below = run["outcome"] == "completed" and prefix != "completion" and run["completion_event"]
         reason = (
-            "completed_below_m" if below else STUCK if run["outcome"] == STUCK else "time_limit"
+            "completed_below_m"
+            if below
+            else run["outcome"]
+            if run["outcome"] in (STUCK, EXPLORER_FAILURE)
+            else "time_limit"
         )
         return Value(limit, reason, False)
     return Value(None, "coverage_ineligible" if not run["coverage_eligible"] else "not_recorded")
@@ -451,8 +731,9 @@ def restricted_time(run: Row, endpoint: str, limit: float) -> Value:
 
 def run_end(run: Row, limit: float) -> tuple[float, bool]:
     """The run's end on the movement clock within [0, L] and whether its values are carried to L: a run that
-    completed within L (RD-6) or a ``stuck`` run, whose stuck stop ended it before L (stuck-stop-v1)."""
-    if run["outcome"] == STUCK:
+    completed within L (RD-6), a ``stuck`` run, whose stuck stop ended it before L (stuck-stop-v1), or an
+    explorer failure after movement onset (C1)."""
+    if stopped_early(run):
         carried = run["elapsed_s"] is not None
     else:
         carried = run["outcome"] == "completed" and bool(run["completion_event"])
@@ -477,11 +758,11 @@ def _usable(study: Study, run: Row) -> Series | str:
 
 
 def coverage_at(study: Study, run: Row, horizon: float, limit: float) -> Value:
-    """C(h): the last valid sample at or before h ≤ L, carried forward after a completion or a stuck stop
-    (RD-6)."""
+    """C(h): the last valid sample at or before h ≤ L, carried forward after a completion, a stuck stop or an
+    explorer failure after movement onset (RD-6, C1); a run that never moved holds its pre-motion coverage."""
     if not run["coverage_eligible"]:
         return Value(None, "coverage_ineligible")
-    if run["outcome"] == "no_movement":
+    if never_moved(run):
         held = study.pre_motion.get(run["attempt_id"])
         return (
             Value(held, "pre_motion") if held is not None else Value(None, "no_pre_motion_sample")
@@ -520,7 +801,7 @@ def coverage_auc(study: Study, run: Row, horizon: float, limit: float) -> Value:
 def distance_at(study: Study, run: Row, horizon: float, limit: float) -> Value:
     """D(h): odometry distance at min(h, T_end) for runs that moved (RD-8), from the export's 1 s rows; a
     completed or stuck run holds its final distance; no value when the last row is more than ``GAP_S`` old."""
-    if run["outcome"] == "no_movement" or not run["motion_started"]:
+    if never_moved(run) or not run["motion_started"]:
         return Value(None, "no_movement")
     if not run["motion_eligible"]:
         return Value(None, "motion_ineligible")
@@ -545,7 +826,7 @@ def idle_tail(study: Study, run: Row, limit: float, delta_pp: float) -> Value:
     """``stall-v1`` with the plan's δ (RD-18): t_g, the first time the running maximum of valid coverage
     comes within δ of its final value (the peak on [0, min(T_end, L)]), and the idle tail min(T_end, L) − t_g;
     as the run record computes it for δ = 0.1 pp."""
-    if run["outcome"] == "no_movement" or not run["motion_started"]:
+    if never_moved(run) or not run["motion_started"]:
         return Value(None, "no_movement")
     series = _usable(study, run)
     if isinstance(series, str):
@@ -562,7 +843,8 @@ def idle_tail(study: Study, run: Row, limit: float, delta_pp: float) -> Value:
 def coverage_grid(study: Study) -> pa.Table:
     """``coverage_grid.parquet``: every reported run on a 1 s grid from 0 to L (RESULTS_OVERHAUL §7) with the
     rule each value follows. ``source``: ``sample`` (the last valid sample at or before t; ``sample_age_s`` its
-    age), ``carried_forward`` (a completed or stuck run's final value), ``pre_motion`` (a run that never moved), or no
+    age), ``carried_forward`` (a completed or stuck run's, or an explorer failure's after movement, final value),
+    ``pre_motion`` (a run that never moved), or no
     value: ``gap`` (once a stretch without a sample has lasted more than 2 s, as C(h) has no value from then
     on; nothing bridges it), ``coverage_ineligible``, ``no_sample_at_onset``. ``observed`` is true for
     ``sample`` values."""
@@ -580,7 +862,7 @@ def coverage_grid(study: Study) -> pa.Table:
                 age: float | None = None
                 if not run["coverage_eligible"]:
                     source: str = "coverage_ineligible"
-                elif run["outcome"] == "no_movement":
+                elif never_moved(run):
                     source = "pre_motion" if held is not None else "no_pre_motion_sample"
                     value = held
                 elif isinstance(series, str):

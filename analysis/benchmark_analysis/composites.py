@@ -44,9 +44,16 @@ from matplotlib.ticker import MaxNLocator
 from matplotlib.transforms import offset_copy
 import numpy as np
 
-from .comparisons import difference_strip, paired_notes, paired_record, paired_row
-from .data import Row, Stratum, run_end
-from .estimates import EFFECTS
+from .comparisons import (
+    PairedRow,
+    difference_strip,
+    marks,
+    paired_notes,
+    paired_record,
+    paired_row,
+)
+from .data import Row, Stratum, difference_text, run_end
+from .estimates import EFFECTS, Effect
 from .figures import (
     AXIS_NOTE,
     GREY,
@@ -75,6 +82,7 @@ from .figures import (
     paired_strata,
     panel_message,
     panel_title,
+    short_name,
     representatives,
     study_profiles,
     time_axis,
@@ -98,9 +106,21 @@ from .streams import Reads, log_formats, world_from_map
 from .stats import JITTER_STREAM, random_stream
 from .style import PAGE_MAX_MM, PRESETS, SEQUENTIAL_CMAP, figure, page_note
 
-# the attainment column and the paired effect of F21 (ΔR_90 is always reported)
+# the attainment column and the paired effect of F21 (ΔR_90 is always reported); a method comparison shows its
+# primary time measure, T95 (C4, B2)
 MAIN_ENDPOINT = "R_90"
 MAIN_EFFECT = next(e for e in EFFECTS if e.endpoint == MAIN_ENDPOINT)
+METHOD_ENDPOINT = "R_95"
+METHOD_EFFECT = next(e for e in EFFECTS if e.endpoint == METHOD_ENDPOINT)
+
+
+def main_effect(ctx: FigureContext) -> tuple[str, Effect, str]:
+    """F21's endpoint, its paired effect and the milestone in words ("90 %")."""
+    if ctx.settings.cross_method:
+        return METHOD_ENDPOINT, METHOD_EFFECT, "95 %"
+    return MAIN_ENDPOINT, MAIN_EFFECT, "90 %"
+
+
 ROW_HEIGHT_MM = 62.0  # one stratum: a panel and the strip or table under it
 ROW_RATIOS = (3.0, 1.2)  # the panel over its strip or at-risk table
 FRAME_MM = 22.0  # room for the legend and the evidence label
@@ -115,6 +135,43 @@ TEASER_WIDTHS = (1.0, 1.3)  # F22_a and F22_b: map, coverage
 TEASER_RUN_MM = 88.0  # F22_b: the run's map and its coverage curve
 TEASER_RUN_WIDTHS = (1.15, 1.0)  # F22_b: map, coverage
 REASON_OFFSET_PT = 4.0  # F22_b: a cancel reason is marked this far up and right of its goal
+
+
+# F21: above this many compared profiles in a row, their differences share one panel (a method comparison)
+STRIPS_MAX = 2
+
+
+def shared_strip(
+    ax: Any, ctx: FigureContext, effect: Effect, rows: list[PairedRow], rng: Any, index: int
+) -> None:
+    """F21 with more than ``STRIPS_MAX`` compared profiles: every profile's per-block differences in one panel,
+    one column each in study order (its colour and marker; open: censored at L), the estimate and its interval in
+    black beside it."""
+    for x, row in enumerate(rows):
+        found = row.found
+        marks(
+            ax,
+            x + rng.uniform(-0.12, 0.12, len(found.differences)),
+            found.differences,
+            row.hollow,
+            ctx.styles[row.profile],
+            10,
+        )
+        interval = row.entry.get("interval") or {}
+        if interval.get("lower") is not None and interval.get("upper") is not None:
+            ax.plot([x + 0.3] * 2, [interval["lower"], interval["upper"]], color="#000000", lw=1.0)
+        if row.entry.get("estimate") is not None:
+            ax.plot([x + 0.3], [row.entry["estimate"]], marker="s", color="#000000", ms=3)
+    ax.axhline(0, color=GREY, lw=0.6)
+    ax.set_xticks(
+        range(len(rows)),
+        [f"n = {len(r.found.blocks)}" for r in rows],
+        fontsize=7,
+        rotation=90,
+    )
+    ax.set_xlim(-0.5, len(rows) - 0.3)
+    ax.set_ylabel(f"{effect.label}, {difference_text(ctx.study)}")
+    panel_title(ax, index, "per method", wrap=STRIP_TITLE_CHARS)
 
 
 def _rows_height_mm(row_mm: float, rows: int) -> float:
@@ -140,11 +197,15 @@ def _panel_over_strip(fig: Any, cell: Any) -> tuple[Any, Any]:
 
 def f21(ctx: FigureContext) -> FigureOut:
     strata = ctx.study.strata
+    endpoint, effect, percent = main_effect(ctx)
+    reference = "RADEF" if ctx.study.cross_method else "Default"
     width_mm = PRESETS[ctx.preset].widths_mm["double"]
     height_mm = _rows_height_mm(ROW_HEIGHT_MM, len(strata))
     # per stratum, its profiles with a Default run to pair with, in F13's row order
     paired = [[(p, b) for s, p, b in paired_strata(ctx) if s is stratum] for stratum in strata]
     slots = max([1, *(len(found) for found in paired)])  # ΔR_90 strips per row: one per profile
+    shared = slots > STRIPS_MAX  # a method comparison: one panel of every profile's differences
+    slots = 1 if shared else slots
     widths = [*COLUMN_WIDTHS[:3], *[COLUMN_WIDTHS[3] / slots] * slots]
     fig, axes = figure(
         ctx.preset,
@@ -172,7 +233,7 @@ def f21(ctx: FigureContext) -> FigureOut:
         found = outcomes(ctx, stratum)
         attempts |= found.attempt_ids
         every_count += found.counts
-        outcome_bars(tall[0], [ctx.styles[p].name for p in found.profiles], found.counts)
+        outcome_bars(tall[0], [short_name(ctx, p) for p in found.profiles], found.counts)
         tall[0].xaxis.set_major_locator(MaxNLocator(nbins=3, integer=True))  # a narrow column
         # the row's stratum; the axis says "Final runs"
         panel_title(tall[0], index, ctx.label(stratum), wrap=LABEL_TITLE_CHARS)
@@ -180,26 +241,36 @@ def f21(ctx: FigureContext) -> FigureOut:
         bottom[1].set_xlabel(TIME_LABEL_SHORT)
         panel_title(top[1], index + 1, "coverage")
         attempts |= attainment_panel(
-            top[2], bottom[2], ctx, stratum, MAIN_ENDPOINT, table_wrap=TABLE_TITLE_CHARS
+            top[2], bottom[2], ctx, stratum, endpoint, table_wrap=TABLE_TITLE_CHARS
         )
         top[2].set_xlabel(TIME_LABEL_SHORT)
-        panel_title(top[2], index + 2, "attainment")  # the y label names the 90 %
+        panel_title(top[2], index + 2, "attainment")  # the y label names the milestone
         index += 3
         rows = []
-        for strip, (profile, baseline) in zip(tall[1:], paired[line], strict=False):
-            row = paired_row(ctx, MAIN_EFFECT, stratum, profile, baseline)
+        if shared and paired[line]:
+            found_rows = [paired_row(ctx, effect, stratum, p, b) for p, b in paired[line]]
+            shared_strip(tall[1], ctx, effect, found_rows, rng, index)
+            index += 1
+            for row in found_rows:
+                entries.append(row.entry)
+                attempts |= set(row.found.attempt_ids)
+                rows.append(paired_record(ctx, row))
+        for strip, (profile, baseline) in zip(
+            [] if shared else tall[1:], paired[line], strict=False
+        ):
+            row = paired_row(ctx, effect, stratum, profile, baseline)
             entries.append(row.entry)
             attempts |= set(row.found.attempt_ids)
             lead = f"{ctx.styles[profile].name}, n pairs = {len(row.found.blocks)}"
             wrap = STRIP_TITLE_CHARS // slots
-            difference_strip(strip, ctx, MAIN_EFFECT, row, rng, index, lead=(lead,), wrap=wrap)
+            difference_strip(strip, ctx, effect, row, rng, index, lead=(lead,), wrap=wrap)
             index += 1
             rows.append(paired_record(ctx, row))
-        for strip in tall[1 + len(paired[line]) :]:
+        for strip in tall[1 + (1 if shared else len(paired[line])) :]:
             strip.set_axis_off()
         if not paired[line]:
-            panel_message(tall[1], "no profile to\ncompare with Default")
-            panel_title(tall[1], index, MAIN_EFFECT.label)
+            panel_message(tall[1], f"no profile to\ncompare with {reference}")
+            panel_title(tall[1], index, effect.label)
             index += 1
         record.append(
             dict(
@@ -213,15 +284,21 @@ def f21(ctx: FigureContext) -> FigureOut:
     legend(fig, ctx, study_profiles(ctx), handles)
     finish(fig, ctx)
     notes = [
-        "Rows: strata. Columns: final runs by outcome (as F6 (a)); coverage over time (as F1); attainment of 90 % "
-        "coverage (as F2_R_90); per-block ΔR_90 against Default (as the right column of F13_dR_90), one strip per "
-        "profile. Each part is drawn by its standalone figure's code; time axes differ per row. Time: simulated "
-        "time since first movement.",
+        "Rows: strata. Columns: final runs by outcome (as F6 (a)); coverage over time (as F1); attainment of "
+        f"{percent} coverage (as F2_{endpoint}); per-block {effect.label.split(' (')[0]} against {reference} (as "
+        f"the right column of F13_{effect.name}), one strip per profile. Each part is drawn by its standalone "
+        "figure's code; time axes differ per row. Time: simulated time since first movement.",
         outcome_note(ctx.study),
         *coverage_notes(ctx),
         *attainment_notes(ctx),
-        *paired_notes(ctx, MAIN_EFFECT, entries, scatter=False),
+        *paired_notes(ctx, effect, entries, scatter=False),
     ]
+    if shared:
+        notes.append(
+            "With more than two compared profiles in a row, their per-block differences share one panel, one "
+            "column each in the legend's order (n pairs under it), the estimate and its interval in black beside "
+            "each column; outcome rows name a method's Default by the method."
+        )
     notes = list(dict.fromkeys(notes))  # the parts share the FX-2 axis note
     if (overflow := page_note(height_mm)) is not None:
         notes.append(overflow)
@@ -231,9 +308,10 @@ def f21(ctx: FigureContext) -> FigureOut:
         "double",
         attempts,
         "Main results per stratum: outcomes of the final runs, coverage over time, the share of runs that reached "
-        "90 % coverage over time, and the paired difference in restricted time to 90 % coverage against Default.",
+        f"{percent} coverage over time, and the paired difference in restricted time to {percent} coverage against "
+        f"{reference}.",
         notes,
-        {"rows": record, "endpoint": MAIN_ENDPOINT, "effect": MAIN_EFFECT.name},
+        {"rows": record, "endpoint": endpoint, "effect": effect.name},
     )
 
 

@@ -53,7 +53,7 @@ from matplotlib.ticker import FuncFormatter, LogLocator, NullFormatter
 import numpy as np
 import numpy.typing as npt
 
-from .data import REPORTED, TIME_EPSILON, Row, Stratum, run_end
+from .data import REPORTED, TIME_EPSILON, Row, Stratum, never_moved, run_end
 from .figures import (
     REFERENCE_PAD_M,
     Extent,
@@ -243,7 +243,7 @@ def _run_layers(
     end_s, _ = run_end(run, stratum.limit_s)
     arrivals, samples = (
         _arrivals(reads, attempt, end_s, bins)
-        if run["outcome"] != "no_movement"
+        if not never_moved(run)
         else (np.zeros((0, 2), dtype=np.intp), 0)  # never moved: no entries, in the divisor
     )
     placed, unplaced = place(goals, world_from_map(reads, attempt) if goals else None, end_s)

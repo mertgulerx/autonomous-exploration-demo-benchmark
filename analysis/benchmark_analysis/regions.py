@@ -69,7 +69,7 @@ from typing import Any
 import numpy as np
 import numpy.typing as npt
 
-from .data import TIME_EPSILON, Row, run_end
+from .data import TIME_EPSILON, Row, never_moved, run_end
 from .export import Export
 from .streams import (
     Mask,
@@ -511,14 +511,18 @@ def run_regions(export: Export, run: Row, reference: str, limit_s: float) -> Run
     """``region-measures-v1`` of one reported run on its coverage reference ``reference`` (the provenance's
     ``reference_name``) with the stratum's L; reads through its own ``Reads``, so ``inputs`` are this run's."""
     reads = Reads(export)
-    attempt, outcome = str(run["attempt_id"]), str(run["outcome"])
+    attempt = str(run["attempt_id"])
+    # the measurement rule: an explorer failure before movement onset is measured as never moving (RD-8, C1);
+    # the run keeps its own outcome label (``label``) for the counts (T12, F27)
+    label = str(run["outcome"])
+    outcome = "no_movement" if never_moved(run) else label
     profile = str(run["profile_id"])
     raster = regions(reads, reference)
     cells = reference_cells(reads, reference)
 
     def without(reason: str) -> RunRegions:
         return RunRegions(
-            attempt, profile, outcome, reason, {}, None, None, inputs=frozenset(reads.files)
+            attempt, profile, label, reason, {}, None, None, inputs=frozenset(reads.files)
         )
 
     if raster is None:
@@ -584,7 +588,7 @@ def run_regions(export: Export, run: Row, reference: str, limit_s: float) -> Run
     return RunRegions(
         attempt,
         profile,
-        outcome,
+        label,
         "observed",
         times,
         found_entries,

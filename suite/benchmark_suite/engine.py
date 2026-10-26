@@ -686,7 +686,7 @@ class Engine:
             }
         if method == "attempt.stop":
             # Ends one run as manual_stop: its data is kept, the experiment is resolved and not run
-            # again, and study exports leave it out (run_record.report_class, reported-outcomes-v3).
+            # again, and study exports leave it out (run_record.report_class, reported-outcomes-v4).
             known_keys(params, {"attempt_id"}, "params")
             identity = text(params.get("attempt_id"), "attempt_id")
             if identity not in self.active:

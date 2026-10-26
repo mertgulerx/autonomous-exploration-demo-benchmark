@@ -30,7 +30,7 @@ from PySide6 import QtCore, QtGui, QtWidgets
 
 from .gui_controls import KeySelect, UnderlineTabs
 from .gui_run_detail import RunView
-from .gui_runs import OUTCOMES, Names, RunsCard, run_label
+from .gui_runs import OUTCOMES, Names, RunsCard, explorer_names, run_label
 from .gui_analysis import Jobs, analysis_available
 from .gui_files import FilesTab
 from .gui_study import StudyTab, newest_export
@@ -81,7 +81,7 @@ class ResultsPage(QtWidgets.QWidget):
         self.wanted_campaign: str | None = (
             None  # chosen on Campaigns, applied once its study is known
         )
-        self.names = Names({}, {}, {}, {}, {})
+        self.names = Names({}, {}, {}, {}, {}, {})
         # profile and spawn names by source, merged into ``names`` (``_merge_names``)
         self.library_names: dict[str, dict[str, str]] = {}
         self.inline_names: dict[str, dict[str, str]] = {}
@@ -297,9 +297,11 @@ class ResultsPage(QtWidgets.QWidget):
     # names and filter options
 
     def name_of(self, kind: str, identity: Any) -> str:
-        """A campaign's, robot's, world's, spawn's or profile's label (the run view's head and provenance)."""
+        """A campaign's, robot's, world's, spawn's, profile's or explorer's label (the run view's head and
+        provenance; an explorer by its run-record ``explorer_id``)."""
         tables = {
             "campaign": self.names.campaigns,
+            "explorer": self.names.explorers,
             "robot": self.names.robots,
             "world": self.names.worlds,
             "spawn": self.names.spawns,
@@ -311,7 +313,13 @@ class ResultsPage(QtWidgets.QWidget):
         self.run_view.set_catalog(catalog)
         self.names.robots.update({r["id"]: r["label"] for r in catalog["robots"]})
         self.names.worlds.update({w["id"]: w["label"] for w in catalog["worlds"]})
+        # the run records' explorer_id is the explorer's package, named by the registry (contract C2), in
+        # registry order
+        explorers = explorer_names(catalog)
+        self.names.explorers.update(explorers)
+        self.study_view.set_explorers(list(explorers))
         self.runs.set_options("robot_id", [(r["label"], r["id"]) for r in catalog["robots"]])
+        self.runs.set_options("explorer_id", [(name, key) for key, name in explorers.items()])
         self.runs.set_options("world_id", [(w["label"], w["id"]) for w in catalog["worlds"]])
         self.runs.set_options("outcome", [(humanize(o), o) for o in OUTCOMES])
 

@@ -85,7 +85,8 @@ profiles:
     executables: [rrt_explore/rrt]
     start: topic
     start_topic: /robot1/rrt/enable
-    # true is sent once this node subscribes and the costmap has been published twice since (worker.py).
+    # true is sent once this node subscribes and the costmap has been published twice since, then repeated every
+    # wall second until its state reads ACTIVE (worker.py, A5).
     start_subscriber: /robot1/rrt
     start_after: /global_costmap/costmap
     completion: {kind: rrt_state, topic: /exploration_state}
@@ -123,8 +124,10 @@ profiles:
       branch: ROS2
       commit: b5ed3cf8573cb4a2387b5434d3ec4bb782ba286e
       licence: MIT (package.xml; no licence file)
-      # Build-only change (docker/fetch_external_explorers.sh): the empty launch/ directory its CMakeLists.txt installs.
-      build_patch: tdle_ws/src/tdle/launch (empty directory created)
+      # Build changes (docker/fetch_external_explorers.sh): the empty launch/ directory its CMakeLists.txt installs, and
+      # a patch to the method (decision B5): a map read whose index falls outside the data array reads as unknown
+      # (-1); in-range reads unchanged, and a column outside the row still wraps into the next row as upstream.
+      build_patch: tdle_ws/src/tdle/launch (empty directory created); docker/patches/tdle-b5ed3cf-bounds.patch sha256 46bc72e212c9dc270aa5607d178c5b6eff3dc1574e9f5066618a638eea014c93
     random_seed: unsupported
   mrtsp_exploration_ros2:
     label: base MRTSP

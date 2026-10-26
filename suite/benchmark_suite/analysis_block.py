@@ -24,7 +24,7 @@ validates the block at submission and copies the plan and the parsed block into 
 module fills documented defaults for what a block leaves out (RO-16) and never reads the checkout.
 """
 
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 import hashlib
@@ -179,10 +179,13 @@ def validate(
     *,
     confirmatory: bool,
     worlds: Mapping[str, WorldFacts] | None = None,
+    robots: Collection[str] | None = None,
 ) -> dict[str, Any]:
     """The block with every given field checked (defaults are the analysis module's, RO-16); an unquoted
     ``plan_registered_utc``, which YAML reads as a UTC time, comes back as its text. With ``worlds`` (the
-    registry's worlds by ID), version 3's families and density contrasts are also checked against them."""
+    registry's worlds by ID), version 3's families and density contrasts are also checked against them; with
+    ``robots`` (the catalog's robot IDs), the robot keys of a per-robot ``horizons_s`` entry. Whether a
+    hypothesis's horizon is one its profile's robot declared is checked by the analysis, which knows the robot."""
     version = block.get("version")
     if type(version) is not int or version not in ANALYSIS_BLOCK_VERSIONS:
         raise ContractError("analysis.version", "Use version 1, 2 or 3")
@@ -212,11 +215,27 @@ def validate(
         raise ContractError(
             "analysis.horizons_s", "Map each world to a list of horizons in seconds"
         )
+    # A world maps to its horizons, or (C6, decision B12) to each robot's horizons when the robots' time limits
+    # differ; a hypothesis may name any horizon declared for its world.
+    declared_horizons: dict[str, list[Any]] = {}
     for world, values in horizons.items():
-        if not isinstance(values, list) or not values:
-            raise ContractError(f"analysis.horizons_s.{world}", "Expected a list of horizons")
-        for value in values:
-            _number(value, f"analysis.horizons_s.{world}", 1e-3, 1e7)
+        if isinstance(values, dict) and robots is not None:
+            unknown_robots = sorted(str(robot) for robot in values if robot not in robots)
+            if unknown_robots:
+                raise ContractError(
+                    f"analysis.horizons_s.{world}", "Unknown robot: " + ", ".join(unknown_robots)
+                )
+        lists = (
+            {f"{world}.{robot}": robot_values for robot, robot_values in values.items()}
+            if isinstance(values, dict) and values
+            else {str(world): values}
+        )
+        for where, robot_values in lists.items():
+            if not isinstance(robot_values, list) or not robot_values:
+                raise ContractError(f"analysis.horizons_s.{where}", "Expected a list of horizons")
+            for value in robot_values:
+                _number(value, f"analysis.horizons_s.{where}", 1e-3, 1e7)
+            declared_horizons.setdefault(str(world), []).extend(robot_values)
     milestones = block.get("milestones", list(MILESTONES))
     _names(milestones, "analysis.milestones", MILESTONES)
     families = _families(block.get("families", {}), worlds)
@@ -254,7 +273,7 @@ def validate(
             raise ContractError(field + ".factor", "Only a declared family takes a factor")
         if hypothesis["endpoint"] in HORIZON_ENDPOINTS:
             _number(hypothesis.get("horizon_s"), field + ".horizon_s", 1e-3, 1e7)
-            declared = horizons.get(hypothesis["world"])
+            declared = declared_horizons.get(hypothesis["world"])
             if declared is not None and hypothesis["horizon_s"] not in declared:
                 raise ContractError(
                     field + ".horizon_s", "Use one of the world's horizons in horizons_s"

@@ -17,6 +17,9 @@
 ARG BENCHMARK_BASE
 FROM ${BENCHMARK_BASE}
 LABEL org.benchmark.multi_robot="1"
+# C++ build type of the refreshed packages (B3; the build step below checks each of them). Packages of the base
+# that the refresh does not rebuild keep the base's build type until the next full build (docker/Dockerfile).
+LABEL org.benchmark.build-type="Release (refreshed packages)"
 ENV RMW_IMPLEMENTATION=rmw_cyclonedds_cpp
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ros-jazzy-laser-filters=2.0.10-5noble.20260915.190358 \
@@ -72,12 +75,20 @@ COPY docker/patches /opt/benchmark_ws/docker/patches
 RUN bash /opt/benchmark_ws/docker/fetch_slam_toolbox.sh /opt/benchmark_ws/vendor_src && \
     bash /opt/benchmark_ws/docker/fetch_external_explorers.sh /opt/benchmark_ws/vendor_src
 COPY README.md /opt/benchmark_ws/README.md
+# The refreshed packages, built as Release (B3, 26 October 2026; the images had no build type before runtime
+# version 14); the check after the build requires each one installed and each CMake one configured as Release.
 RUN /bin/bash -c "source /opt/ros/jazzy/setup.bash && source install/setup.bash && \
+    packages='exploration_benchmark_interfaces frontier_exploration_ros2 bme_ros2_navigation bme_ros2_navigation_py \
+      exploration_benchmark_robots exploration_benchmark_runner rviz_autonomous_exploration_benchmark slam_toolbox \
+      explore_lite_msgs explore_lite roadmap_explorer_msgs roadmap_explorer rrt_explore tdle mrtsp_exploration_ros2' && \
     CMAKE_BUILD_PARALLEL_LEVEL=2 \
-    colcon build --symlink-install --executor sequential \
-    --packages-select exploration_benchmark_interfaces frontier_exploration_ros2 bme_ros2_navigation bme_ros2_navigation_py exploration_benchmark_robots exploration_benchmark_runner rviz_autonomous_exploration_benchmark slam_toolbox \
-    explore_lite_msgs explore_lite roadmap_explorer_msgs roadmap_explorer rrt_explore tdle mrtsp_exploration_ros2 \
-    --cmake-args -DBUILD_TESTING=OFF"
+    colcon build --symlink-install --executor sequential --packages-select \${packages} \
+    --cmake-args -DBUILD_TESTING=OFF -DCMAKE_BUILD_TYPE=Release && \
+    for package in \${packages}; do \
+      test -f install/\${package}/share/\${package}/package.xml || { echo not installed: \${package}; exit 1; }; \
+      cache=build/\${package}/CMakeCache.txt; \
+      if [ -f \${cache} ]; then grep -qx CMAKE_BUILD_TYPE:STRING=Release \${cache} || { echo not Release: \${package}; exit 1; }; fi; \
+    done"
 # Mark the patched SLAM Toolbox build with its patch hash; the worker refuses any other build
 # (mapping-known-pose-v3, plans/worlds/I10).
 RUN cd /opt/benchmark_ws && sha256sum docker/patches/slam_toolbox-2.8.5-grid-extent.patch | cut -d' ' -f1 \

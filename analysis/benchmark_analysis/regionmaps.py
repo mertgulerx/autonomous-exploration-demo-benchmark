@@ -635,7 +635,13 @@ def _outcomes(measures: Sequence[RunRegions]) -> str:
 
 
 # T12's short outcome codes (its notes spell them out)
-OUTCOME_CODES = {"completed": "c", "time_limit": "tl", "stuck": "st", "no_movement": "nm"}
+OUTCOME_CODES = {
+    "completed": "c",
+    "time_limit": "tl",
+    "stuck": "st",
+    "no_movement": "nm",
+    "explorer_failure": "ef",
+}
 
 
 def _outcome_codes(measures: Sequence[RunRegions]) -> str:
@@ -976,7 +982,7 @@ def t12(src: Sources) -> Table:
             table.attempt_ids |= {m.attempt_id for m in runs}
     table.notes = [
         "Per stratum, profile and counted region: Runs = reported runs on the stratum's coverage reference; "
-        "Outcomes = those runs by outcome (c completed, tl time limit, st stuck, nm no movement; the windows of "
+        "Outcomes = those runs by outcome (c completed, tl time limit, st stuck, nm no movement, ef explorer failure; the windows of "
         "E_j and K_j differ by outcome); "
         "Reached = k/n of the runs with a T90_j value; T90_j = the individual values in whole seconds up to "
         f"{FEW_RUNS} runs with a value, else the Kaplan–Meier median [Q1, Q3] (midpoint rule, RD-10), > L or "

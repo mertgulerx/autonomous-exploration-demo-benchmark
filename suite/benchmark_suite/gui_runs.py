@@ -17,15 +17,15 @@
 
 One row per final run (``results.query`` table ``runs``, ``is_final``); a run whose experiment had earlier
 attempts shows "N attempts", and expanding it inserts those attempts as indented, muted rows with their reason
-(read on demand by ``experiment_id``). Filters by campaign, robot, world, profile and outcome; the default columns
-of decision 3 and every other scalar record field from Columns (remembered per viewer); sorting by any shown
-column. The footer counts the filter's final runs by report class and its earlier attempts
-(``include: ["counts"]``). Censored values read "> L" and "not reached", never as observed times; unavailable
-values "—".
+(read on demand by ``experiment_id``). Filters by campaign, robot, world, profile, explorer and outcome; the
+default columns of decision 3 with the run's explorer (contract C2) and every other scalar record field from
+Columns (remembered per viewer); sorting by any shown column. The footer counts the filter's final runs by
+report class and its earlier attempts (``include: ["counts"]``). Censored values read "> L" and "not reached",
+never as observed times; unavailable values "—".
 """
 
 from collections.abc import Callable, Iterable, Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 import hashlib
 import json
 import math
@@ -34,6 +34,7 @@ import uuid
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
+from .contracts import EXPLORER_FAILURE, explorer_failure, measured_as
 from .gui_cells import (
     CELL_ROLE,
     Align,
@@ -109,6 +110,7 @@ DEFAULT_COLUMNS = (
     Column("robot", "Robot", _style("name", 166), "robot_id"),
     Column("world_spawn", "World · spawn", _style("text", 150), "world_id"),
     Column("profile", "Profile", _style("text", 116), "profile_id"),
+    Column("explorer", "Explorer", _style("text", 130), "explorer_id"),
     Column("repetition", "Rep.", _style("number", 50), "repetition"),
     Column("outcome", "Outcome", _style("badge", 250), "outcome"),
     Column("limit", "L", _style("number", 66), "time_limit_s"),
@@ -125,6 +127,7 @@ SHOWN_FIELDS = frozenset(
         "world_id",
         "spawn_id",
         "profile_id",
+        "explorer_id",
         "repetition",
         "outcome",
         "time_limit_s",
@@ -161,13 +164,15 @@ def run_label(record: Mapping[str, Any], name: Callable[[str, Any], str]) -> str
 @dataclass
 class Names:
     """Labels the table shows instead of identities. An identity not known yet reads "Default" when it is a
-    robot's or world's default (``default-<owner>``) and is humanized otherwise."""
+    robot's or world's default (``default-<owner>``) and is humanized otherwise. ``explorers``: the catalog's
+    registry label per run-record ``explorer_id`` (the explorer's package)."""
 
     campaigns: dict[str, str]
     robots: dict[str, str]
     worlds: dict[str, str]
     spawns: dict[str, str]
     profiles: dict[str, str]
+    explorers: dict[str, str] = field(default_factory=dict)
 
     def get(self, table: Mapping[str, str], key: Any) -> str:
         if key is None:
@@ -178,17 +183,36 @@ class Names:
         )
 
 
+def explorer_names(catalog: Mapping[str, Any]) -> dict[str, str]:
+    """Each catalog explorer's display name by its run-record ``explorer_id`` (package), in registry order:
+    the registry label, except frontier_exploration_ros2, whose label "Default" would read as a profile and
+    which goes by its framework name."""
+    names: dict[str, str] = {}
+    for explorer in catalog.get("explorers", []):
+        package = explorer.get("package")
+        if not package:
+            continue
+        ours = explorer.get("id") == catalog.get("default_explorer", "default")
+        names[str(package)] = str(
+            explorer.get("framework" if ours else "label") or explorer.get("label") or package
+        )
+    return names
+
+
 def outcome_look(record: Mapping[str, Any], *, muted: bool = False) -> BadgeLook | None:
     """The outcome badge of a run record; a completed run that the coverage stop or the stuck stop ended
-    (``completion_source``) says so in its word."""
+    (``completion_source``) says so in its word, and a failure the worker attributed to the explorer reads
+    "Explorer failure" (``failure_source``; reported-outcomes-v4)."""
     outcome = record.get("outcome")
+    if explorer_failure(outcome, record.get("failure_source")):
+        return badge_look("outcome", EXPLORER_FAILURE, muted=muted)
     source = record.get("completion_source")
     word = SOURCE_WORDS.get(source) if outcome == "completed" and isinstance(source, str) else None
     return badge_look("outcome", outcome, word=word, muted=muted)
 
 
 def excluded(record: Mapping[str, Any]) -> bool:
-    """A final run outside the reported population (``reported-outcomes-v3``)."""
+    """A final run outside the reported population (``reported-outcomes-v4``)."""
     return record.get("report_class") not in (REPORTED, None, "not_final")
 
 
@@ -309,6 +333,8 @@ def run_cell(record: Mapping[str, Any], key: str, names: Names) -> Cell:
         return Cell(f"{world} · {spawn}", token=token, faint="·")
     if key == "profile":
         return Cell(names.get(names.profiles, record.get("profile_id")), token=token)
+    if key == "explorer":
+        return Cell(names.get(names.explorers, record.get("explorer_id")), token=token)
     if key == "repetition":
         value = record.get("repetition")
         return Cell(str(value + 1), "number", token=token) if isinstance(value, int) else missing
@@ -331,8 +357,13 @@ def run_cell(record: Mapping[str, Any], key: str, names: Names) -> Cell:
         value, event = record.get(f"{prefix}_s"), record.get(f"{prefix}_event")
         if event and isinstance(value, (int, float)):
             return Cell(duration(value), "number", token=token)
-        # RD-8: a run that never moved never reaches (R = L)
-        never = record.get("outcome") == "no_movement"
+        # RD-8: a run that never moved never reaches (R = L); an explorer failure before movement onset too
+        never = (
+            measured_as(
+                record.get("outcome"), record.get("failure_source"), record.get("motion_started")
+            )
+            == "no_movement"
+        )
         if (event is False or never) and record.get("report_class") == REPORTED:
             if key == "completion":
                 return Cell("> L", "name", token="state.warn")  # ``.cens``: right-censored at L
@@ -1025,8 +1056,8 @@ class ColumnMenu(Themed):
 
 
 class RunsCard(Card):
-    """``.card.runs``: the filter bar (campaign 236 px, robot, world, profile and outcome 150 px, Columns at the
-    right), the table and the footer."""
+    """``.card.runs``: the filter bar (campaign 236 px, robot, world, profile, explorer and outcome 150 px,
+    Columns at the right), the table and the footer."""
 
     filters_changed = QtCore.Signal()
 
@@ -1044,9 +1075,13 @@ class RunsCard(Card):
             KeySelect(themes),
             KeySelect(themes),
         )
-        self.profile, self.outcome = KeySelect(themes), KeySelect(themes)
+        self.profile, self.explorer, self.outcome = (
+            KeySelect(themes),
+            KeySelect(themes),
+            KeySelect(themes),
+        )
         self.bar.add(self.campaign, width=236)
-        for select in (self.robot, self.world, self.profile, self.outcome):
+        for select in (self.robot, self.world, self.profile, self.explorer, self.outcome):
             self.bar.add(select, width=150)
         self.bar.add_stretch()
         self.columns_button = Button(themes, "Columns", icon="sliders", variant="ghost", small=True)
@@ -1057,6 +1092,7 @@ class RunsCard(Card):
             ("robot_id", self.robot, "All robots"),
             ("world_id", self.world, "All worlds"),
             ("profile_id", self.profile, "All profiles"),
+            ("explorer_id", self.explorer, "All explorers"),
             ("outcome", self.outcome, "All outcomes"),
         )
         for _, select, everything in self.selects:

@@ -25,6 +25,13 @@ checked against the export's world metadata by ``families``. Milestone 99.9 (``c
 run record 4 on: an earlier export's defaults leave it out, and a plan naming it there is refused. A milestone is
 named by its key (``milestone_key``: 90 -> ``R_90``, 99.9 -> ``R_99_9``, ``t99_9_s``, ``F2_R_99_9``) and shown by its
 label (``milestone_label``: "99.9 %"); no milestone is ever truncated to an integer.
+
+A method comparison (the export's profiles belong to more than one explorer, ``data.Study.cross_method``;
+cross-method readiness C4, decision B2) changes two defaults: the representative endpoint is ``R_95``, and the
+measures named primary for comparing methods are T95 (restricted at L) and C(L) (``METHOD_PRIMARY``; T90, T99.9,
+A_L and D(h) secondary, completion time descriptive and split by ``completion_source``); the plan still declares
+its own hypotheses. ``horizons_s`` maps a world to its horizons, or (C6, B12) a world to a robot to its horizons
+for a study whose robots need different ones; ``Settings.horizons`` reads either.
 """
 
 from collections.abc import Mapping
@@ -63,6 +70,11 @@ def milestone_endpoint(m: Milestone) -> str:
 
 MILESTONE_OF_ENDPOINT: dict[str, Milestone] = {milestone_endpoint(m): m for m in MILESTONES}
 SENSITIVITY = ("no_low_rtf", "exclusions_as_failures", "sequential_only", "shorter_horizons")
+# C4 (B2): the measures named primary and secondary when the study compares methods
+HORIZON_ENDPOINTS = ("C_h", "A_h", "D_h")  # hypotheses at a declared horizon
+METHOD_PRIMARY = ("R_95", "C_L")
+METHOD_SECONDARY = ("R_90", "R_99_9", "A_L", "D_h")
+METHOD_REPRESENTATIVE_ENDPOINT = "R_95"
 REPRESENTATIVE_RULES = ("SEL-1", "SEL-2", "SEL-3")
 TIME_ENDPOINTS = ("R_completion", *MILESTONE_OF_ENDPOINT)
 DEFAULTS: dict[str, Any] = dict(
@@ -161,17 +173,61 @@ class Settings:
     families: tuple[Family, ...]  # version 3 (I6 §3.8)
     density_contrasts: tuple[DensityContrast, ...]  # version 3 (I6 §3.9)
     sources: Mapping[str, str]  # key -> "plan" or "default"
+    # C6: (world, robot) -> horizons for worlds whose horizons_s entry is keyed by robot
+    robot_horizons_s: Mapping[tuple[str, str], tuple[float, ...]] = MappingProxyType({})
+    cross_method: bool = False  # the export's profiles belong to more than one explorer (C4)
 
     @property
     def confirmatory(self) -> bool:
         return self.evidence_level == "confirmatory"
+
+    def horizons(self, world: str, robot: str) -> tuple[float, ...]:
+        """The declared horizons of ``world`` for ``robot``: its robot's entry when ``horizons_s`` is keyed by
+        robot there, else the world's (none for another robot of a robot-keyed world)."""
+        if (world, robot) in self.robot_horizons_s:
+            return self.robot_horizons_s[(world, robot)]
+        return self.horizons_s.get(world, ())
+
+    def check_robot_horizons(self, robot_of: Mapping[str, str]) -> None:
+        """C6: a hypothesis on C_h, A_h or D_h at a declared horizon in a world whose ``horizons_s`` entry is keyed
+        by robot must name a horizon declared for its profile's robot (``robot_of``: profile ID -> robot); the
+        engine's submission check sees only the union of the robots' lists. Refused otherwise."""
+        keyed = {world for world, _ in self.robot_horizons_s}
+        for index, h in enumerate(self.hypotheses):
+            if h.endpoint not in HORIZON_ENDPOINTS or h.horizon_s is None or h.world not in keyed:
+                continue
+            robot = robot_of.get(h.profile)
+            declared = () if robot is None else self.horizons(h.world, robot)
+            if not any(abs(h.horizon_s - value) <= 1e-9 for value in declared):
+                raise Refused(
+                    f"study.yaml: analysis.hypotheses[{index}].horizon_s {h.horizon_s:g} s (hypothesis {h.id}) is "
+                    f"not a horizon of world {h.world} for robot {robot} (declared: "
+                    f"{', '.join(f'{v:g}' for v in declared) or 'none'})"
+                )
+
+    @property
+    def method_endpoints(self) -> dict[str, list[str]] | None:
+        """The measures named primary and secondary for a method comparison (C4), None otherwise."""
+        if not self.cross_method:
+            return None
+        return dict(primary=list(METHOD_PRIMARY), secondary=list(METHOD_SECONDARY))
 
     def document(self) -> dict[str, Any]:
         """The settings as recorded in every sidecar."""
         return dict(
             evidence_level=self.evidence_level,
             plan_registered_utc=self.plan_registered_utc,
-            horizons_s={world: list(values) for world, values in sorted(self.horizons_s.items())},
+            horizons_s={
+                **{world: list(values) for world, values in sorted(self.horizons_s.items())},
+                **{
+                    world: {
+                        robot: list(values)
+                        for (w, robot), values in sorted(self.robot_horizons_s.items())
+                        if w == world
+                    }
+                    for world in sorted({w for w, _ in self.robot_horizons_s})
+                },
+            },
             milestones=list(self.milestones),
             hypotheses=[
                 dict(
@@ -215,11 +271,14 @@ class Settings:
                 dict(id=c.id, base=c.base, moving=c.moving) for c in self.density_contrasts
             ],
             sources=dict(sorted(self.sources.items())),
+            comparison="methods" if self.cross_method else "profiles",
+            method_endpoints=self.method_endpoints,
         )
 
 
-def settings(study: dict[str, Any]) -> Settings:
-    """The settings of an export's ``study.yaml``; a confirmatory study without a block is refused (RO-16)."""
+def settings(study: dict[str, Any], *, cross_method: bool = False) -> Settings:
+    """The settings of an export's ``study.yaml``; a confirmatory study without a block is refused (RO-16).
+    ``cross_method``: the export compares methods (``data.Study.cross_method``), which sets the method defaults (C4)."""
     evidence = str(study.get("evidence_level") or "exploratory")
     block = study.get("analysis")
     if block is None:
@@ -249,7 +308,10 @@ def settings(study: dict[str, Any]) -> Settings:
     milestones = _milestones(value["milestones"])
     bootstrap = {**DEFAULTS["bootstrap"], **value["bootstrap"]}
     stall = {**DEFAULTS["stall"], **value["stall"]}
-    representative = {**DEFAULTS["representative"], **value["representative"]}
+    default_representative = dict(DEFAULTS["representative"])
+    if cross_method:
+        default_representative["endpoint"] = METHOD_REPRESENTATIVE_ENDPOINT
+    representative = {**default_representative, **block.get("representative", {})}
     event_tick = {**DEFAULTS["event_tick"], **value["event_tick"]}
     taxonomy = value["taxonomy"]
     # What the code below relies on; the engine checks the same (analysis_block.validate).
@@ -272,15 +334,13 @@ def settings(study: dict[str, Any]) -> Settings:
         for c in value["density_contrasts"]
     )
     _check_units(families, contrasts, value["hypotheses"])
+    plain, by_robot = _horizons(value["horizons_s"])
     return Settings(
         evidence_level=evidence,
         plan_registered_utc=block.get("plan_registered_utc"),
-        horizons_s=MappingProxyType(
-            {
-                str(world): tuple(sorted({float(h) for h in values}))
-                for world, values in value["horizons_s"].items()
-            }
-        ),
+        horizons_s=MappingProxyType(plain),
+        robot_horizons_s=MappingProxyType(by_robot),
+        cross_method=cross_method,
         milestones=milestones,
         hypotheses=tuple(
             Hypothesis(
@@ -311,6 +371,30 @@ def settings(study: dict[str, Any]) -> Settings:
         density_contrasts=contrasts,
         sources=MappingProxyType(sources),
     )
+
+
+def _horizons(
+    declared: Mapping[Any, Any],
+) -> tuple[dict[str, tuple[float, ...]], dict[tuple[str, str], tuple[float, ...]]]:
+    """``horizons_s`` as world -> horizons and (world, robot) -> horizons (C6): a world maps to a list of
+    seconds, or to a mapping of robots to lists; anything else is refused."""
+    plain: dict[str, tuple[float, ...]] = {}
+    by_robot: dict[tuple[str, str], tuple[float, ...]] = {}
+
+    def seconds(values: Any, where: str) -> tuple[float, ...]:
+        if not isinstance(values, list) or any(
+            isinstance(v, bool) or not isinstance(v, int | float) for v in values
+        ):
+            raise Refused(f"study.yaml: analysis.horizons_s.{where}: a list of seconds expected")
+        return tuple(sorted({float(h) for h in values}))
+
+    for world, values in declared.items():
+        if isinstance(values, Mapping):
+            for robot, robot_values in values.items():
+                by_robot[(str(world), str(robot))] = seconds(robot_values, f"{world}.{robot}")
+        else:
+            plain[str(world)] = seconds(values, str(world))
+    return plain, by_robot
 
 
 def _has_stop_milestone(study: Mapping[str, Any]) -> bool:

@@ -64,7 +64,7 @@ from matplotlib.ticker import MaxNLocator
 import numpy as np
 import yaml
 
-from .data import TIME_EPSILON, Floats, Row, Stratum, Study, block_starts, run_end
+from .data import TIME_EPSILON, Floats, Row, Stratum, Study, block_starts, never_moved, run_end
 from .errors import Refused
 from .export import UniqueKeyLoader
 from .figures import (
@@ -422,7 +422,7 @@ def crops(ctx: FigureContext) -> list[Crop]:
     found = []
     for number, position in enumerate(shuffled.tolist(), 1):
         stratum, run = ordered[position]
-        if run["outcome"] == "no_movement":
+        if never_moved(run):
             start, end = None, None
         else:
             end, _ = run_end(run, stratum.limit_s)

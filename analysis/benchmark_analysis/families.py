@@ -31,6 +31,10 @@ share of its L (horizons that drop out are named). Per profile and population:
 - the declared pairs (second minus first), descriptive;
 - the optional variance split (I6 §3.5, O-5 (b)), descriptive.
 
+A family or contrast is analysed per robot (cross-method readiness C6, decision B12): its unit is (family,
+robot), so one export with several robots gives one set of entries per robot (the entry IDs and ``robot_id``
+name it); a world's horizons may be declared per robot (``Settings.horizons``).
+
 A density contrast (``density_contrasts``) is the mean over the shared spawns of the moving world's spawn mean
 minus the base world's, on rho and C(L), with the stratified Welch interval (primary) and the exact stratified
 permutation interval (sensitivity, O-10 (b)); repetitions are never paired. ``exclusions_as_failures`` is always
@@ -66,6 +70,7 @@ from .data import (
     Study,
     Value,
     mapping_condition,
+    never_moved,
 )
 from .errors import Refused
 from .estimates import POPULATIONS, horizon_value, interval_document, pairs, runs_for, time_value
@@ -251,6 +256,36 @@ def _context(study: Study, settings: Settings, reads: Reads, table: Mapping[str,
         table,
         MappingProxyType(_cells(study)),
         MappingProxyType({key: tuple(runs) for key, runs in finals.items()}),
+    )
+
+
+def _robots(context: Context, members: Iterable[str]) -> list[str | None]:
+    """The robots with final runs in ``members`` (worlds), sorted; ``[None]`` when none has a run."""
+    found = sorted({cell.robot_id for world in members for cell in context.cells.get(world, ())})
+    return list(found) or [None]
+
+
+def _for_robot(context: Context, robot: str | None) -> Context:
+    """``context`` narrowed to one robot's cells and final runs (C6: a family unit is one family and robot);
+    ``context`` itself for None. The manifests cache is shared."""
+    if robot is None:
+        return context
+    cells = {
+        world: tuple(c for c in group if c.robot_id == robot)
+        for world, group in context.cells.items()
+    }
+    finals = {
+        key: tuple(r for r in runs if r["robot_id"] == robot)
+        for key, runs in context.finals.items()
+    }
+    return Context(
+        context.study,
+        context.settings,
+        context.reads,
+        context.table,
+        MappingProxyType({w: g for w, g in cells.items() if g}),
+        MappingProxyType({k: v for k, v in finals.items() if v}),
+        context.manifests,
     )
 
 
@@ -474,7 +509,16 @@ def _homogeneous(context: Context, unit: Unit) -> None:
     for column, read in checks:
         grouped: dict[str, list[Row]] = defaultdict(list)
         for run in runs:
-            grouped[json.dumps(read(context, run))].append(run)
+            value = read(context, run)
+            if (
+                value in (None, NO_MANIFEST)
+                and never_moved(run)
+                and run["outcome"] != "no_movement"
+            ):
+                # an explorer failure before movement onset (C1) may have failed before its condition was
+                # recorded: it adds no value to compare, only a run that never moved
+                continue
+            grouped[json.dumps(value)].append(run)
         if len(grouped) > 1:
             raise Refused(
                 f"{unit.ref.id}: runs mix {column} values {sorted(grouped)}; one {unit.ref.kind} needs one",
@@ -553,7 +597,7 @@ def _horizon(context: Context, cell: Stratum, fraction: float | None) -> float |
     cell with a finite L declares, so the lookup finds one; a cell without L has no values anyway."""
     if fraction is None or not math.isfinite(cell.limit_s):
         return None
-    for h in context.settings.horizons_s.get(cell.world_id, ()):
+    for h in context.settings.horizons(cell.world_id, cell.robot_id):
         if round(h / cell.limit_s, FRACTION_DIGITS) == fraction:
             return h
     raise RuntimeError(f"{cell.world_id} declares no horizon at {fraction} L")
@@ -903,7 +947,7 @@ def _fractions(context: Context, unit: Unit) -> tuple[list[float], dict[str, lis
                 continue
             mine = {
                 round(h / cell.limit_s, FRACTION_DIGITS): h
-                for h in context.settings.horizons_s.get(world, ())
+                for h in context.settings.horizons(world, cell.robot_id)
                 if 0 < h < cell.limit_s
             }
             declared.setdefault(world, {}).update(mine)
@@ -1134,7 +1178,7 @@ def _profile_contrast(
         endpoint=outcome,
         fraction=fraction,
         population=population,
-        comparison=f"{profile} − Default",
+        comparison=f"{profile} − {unit.baseline}",
         estimate=float(np.mean(values)) if values else None,
         n_worlds=len(values),
         worlds_used=sorted(means),
@@ -1507,22 +1551,33 @@ def _profile_test(context: Context, hypothesis: Hypothesis, declared: Declared) 
 
 
 def _hypothesis(
-    context: Context, hypothesis: Hypothesis, declared: Mapping[str, Declared]
+    context: Context,
+    hypothesis: Hypothesis,
+    declared: Mapping[tuple[str, str | None], tuple[Context, Declared]],
 ) -> dict[str, Any] | None:
-    """The test of a hypothesis on a declared family or density contrast; None for any other hypothesis. The
-    units' refusals (membership, factorial, homogeneity) ran before, in ``family_entries`` and
-    ``contrast_entries``."""
+    """The test of a hypothesis on a declared family or density contrast, in the unit of its profile's robot
+    (C6); None for any other hypothesis. The units' refusals (membership, factorial, homogeneity) ran before, in
+    ``family_entries`` and ``contrast_entries``."""
     contrasts = {c.id: c for c in context.settings.density_contrasts}
+    robot = context.study.profiles.get(hypothesis.profile, {}).get("robot_id")
+    families = {family for family, _ in declared}
     if hypothesis.world in contrasts:
         contrast = contrasts[hypothesis.world]
-        unit, _ = _contrast_unit(context, contrast)
-        test = _contrast_test(context, hypothesis, contrast)
-    elif hypothesis.world in declared:
-        unit = declared[hypothesis.world].unit
+        robots = _robots(context, (contrast.base, contrast.moving))
+        narrowed = _for_robot(context, robot if robot in robots else robots[0])
+        unit, _ = _contrast_unit(narrowed, contrast)
+        test = _contrast_test(narrowed, hypothesis, contrast)
+    elif hypothesis.world in families:
+        key = (hypothesis.world, robot)
+        # the profile's robot ran no world of the family: its first unit, where it is untestable
+        if key not in declared:
+            key = next(k for k in sorted(declared, key=str) if k[0] == hypothesis.world)
+        narrowed, found = declared[key]
+        unit = found.unit
         test = (
-            _factor_test(context, hypothesis, declared[hypothesis.world])
+            _factor_test(narrowed, hypothesis, found)
             if hypothesis.factor is not None
-            else _profile_test(context, hypothesis, declared[hypothesis.world])
+            else _profile_test(narrowed, hypothesis, found)
         )
     else:
         return None
@@ -1537,7 +1592,7 @@ def _hypothesis(
         hypothesis_id=hypothesis.id,
         hypothesis_endpoint=hypothesis.endpoint,
         factor=hypothesis.factor,
-        comparison=None if hypothesis.factor else f"{hypothesis.profile} − Default",
+        comparison=None if hypothesis.factor else f"{hypothesis.profile} − {unit.baseline}",
         estimate=test.estimate,
         interval=interval_document(test.interval),
         p_value=test.p_value,
@@ -1610,12 +1665,16 @@ def family_estimates(study: Study, settings: Settings, reads: Reads | None = Non
         )
     context = _context(study, settings, reads, table)
     entries: list[dict[str, Any]] = []
-    declared: dict[str, Declared] = {}
+    # C6: one unit per family (or contrast) and robot, each on its robot's runs
+    declared: dict[tuple[str, str | None], tuple[Context, Declared]] = {}
     for family in settings.families:
-        declared[family.id] = _declared(context, family)
-        entries += family_entries(context, declared[family.id])
+        for robot in _robots(context, _members(family, table)):
+            narrowed = _for_robot(context, robot)
+            declared[(family.id, robot)] = (narrowed, _declared(narrowed, family))
+            entries += family_entries(narrowed, declared[(family.id, robot)][1])
     for contrast in settings.density_contrasts:
-        entries += contrast_entries(context, contrast)
+        for robot in _robots(context, (contrast.base, contrast.moving)):
+            entries += contrast_entries(_for_robot(context, robot), contrast)
     if settings.confirmatory:
         for hypothesis in settings.hypotheses:
             found = _hypothesis(context, hypothesis, declared)

@@ -62,6 +62,9 @@ BOOTSTRAP_STREAM, SIGN_FLIP_STREAM, POOLED_BOOTSTRAP_STREAM, POOLED_SIGN_FLIP_ST
 JITTER_STREAM = 5  # horizontal jitter of points in figures (display only)
 # 6 is taxonomy.SHEET_ORDER_STREAM (the coding sheet's order)
 LENTH_STREAM = 7  # the Monte Carlo null of Lenth's ratio (families, plans/worlds/I6 §3.4.1)
+# the within-world block bootstrap of the win difference and the stratified run bootstrap of the probability of
+# improvement (summaries, method-summaries-v1, C5)
+WIN_BOOTSTRAP_STREAM, IMPROVEMENT_BOOTSTRAP_STREAM = 8, 9
 
 
 def random_stream(seed: int, purpose: int) -> np.random.Generator:

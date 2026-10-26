@@ -52,7 +52,7 @@ from .store import (
 
 # results.query table runs: filters on the index columns, finality and the record values study.get offers
 # as selectors (debug_streams, a list, and run_record_version, always current here, are not filters).
-RECORD_FILTERS = ("dataset_schema", "coverage_metric_version", "timing_rule")
+RECORD_FILTERS = ("dataset_schema", "coverage_metric_version", "timing_rule", "explorer_id")
 RUN_FILTERS = frozenset({*INDEX_COLUMNS, *RECORD_FILTERS, "is_final"})
 # Sortable: every scalar field of the record, and finality.
 RUN_SORT_KEYS = frozenset({field.name for field in FIELDS if field.kind != "list"} | {"is_final"})
@@ -235,21 +235,21 @@ def runs_page(
 
 def run_counts(database: sqlite3.Connection, filters: dict[str, Any]) -> dict[str, int]:
     """Counts over every run a filter selects (``results.query`` runs with ``include: ["counts"]``): final
-    runs by report class (``reported-outcomes-v3``, as each row's read-time field) and the attempts that are
+    runs by report class (``reported-outcomes-v4``, as each row's read-time field) and the attempts that are
     not final as ``discarded`` (a discard) or ``replaced`` (a timing rejection or an interruption, replaced or
     waiting for its replacement). The Results footer reads them."""
     source, arguments = _run_source(database, filters)
     counts: Counter[str] = Counter()
-    for final, outcome, started, exited, state in database.execute(
+    for final, outcome, started, exited, state, cause in database.execute(
         "SELECT (e.final_attempt_id IS r.attempt_id),r.outcome,"
         "json_extract(r.record,'$.insight_started'),json_extract(r.record,'$.insight_exited_before_stop'),"
-        f"e.state FROM {source}",
+        f"e.state,json_extract(r.record,'$.failure_source') FROM {source}",
         arguments,
     ):
         # json_extract gives SQLite integers for booleans; None stays None
         started = None if started is None else bool(started)
         exited = None if exited is None else bool(exited)
-        kind = report_class(bool(final), outcome, started, exited, state)
+        kind = report_class(bool(final), outcome, started, exited, state, cause)
         if kind == "not_final":
             kind = "discarded" if outcome == "manual_discard" else "replaced"
         counts[kind] += 1
@@ -363,6 +363,22 @@ def refused_mixes(full: Iterable[dict[str, Any]]) -> list[str]:
     return mixes
 
 
+def default_hashes(specifications: Iterable[dict[str, Any]]) -> dict[str, list[str]]:
+    """Each explorer's Default parameter hash per robot across campaigns (A7), as homogeneity values:
+    ``default_parameter_hashes.<robot>`` (frontier_exploration_ros2) and
+    ``explorer_default_hashes.<explorer>.<robot>`` (an external explorer, by its profiles.yaml ID). Only campaigns
+    that recorded a hash for that robot (and explorer) take part, so campaigns of different robots or explorers
+    never differ by that alone; campaigns accepted before ``explorer_default_hashes`` recorded none."""
+    found: dict[str, set[str]] = defaultdict(set)
+    for specification in specifications:
+        for robot, digest in (specification.get("default_parameter_hashes") or {}).items():
+            found[f"default_parameter_hashes.{robot}"].add(canonical(digest))
+        for explorer, hashes in (specification.get("explorer_default_hashes") or {}).items():
+            for robot, digest in (hashes or {}).items():
+                found[f"explorer_default_hashes.{explorer}.{robot}"].add(canonical(digest))
+    return {name: sorted(values) for name, values in sorted(found.items())}
+
+
 def homogeneity(
     specifications: Iterable[dict[str, Any]],
     records: Iterable[dict[str, Any]],
@@ -377,10 +393,10 @@ def homogeneity(
     studies = [specification.get("study") or {} for specification in specifications]
     for name in ("plan_sha256", "evidence_level"):
         values[f"study.{name}"] = sorted({canonical(study.get(name)) for study in studies})
-    for name in ("default_parameter_hashes", "time_limit_rule"):
-        values[name] = sorted(
-            {canonical(specification.get(name)) for specification in specifications}
-        )
+    values["time_limit_rule"] = sorted(
+        {canonical(specification.get("time_limit_rule")) for specification in specifications}
+    )
+    values.update(default_hashes(specifications))
     # The registry and robot catalog the engine read (provenance version 2; null in version 1 documents,
     # so a study mixing both warns too: the registry did not exist then).
     identities = {record["provenance_id"] for record in full if record["provenance_id"]}
@@ -425,12 +441,19 @@ RECORD_COLUMNS = (
     "parameter_hash",
     "comparison_key",
 )
-RECORD_VALUES = ("dataset_schema", "coverage_metric_version", "mapping_condition", *HOMOGENEOUS)
+RECORD_VALUES = (
+    "dataset_schema",
+    "coverage_metric_version",
+    "mapping_condition",
+    "explorer_id",
+    *HOMOGENEOUS,
+)
 SELECTORS = (
     "robot_id",
     "world_id",
     "spawn_id",
     "profile_id",
+    "explorer_id",
     "parameter_hash",
     "comparison_key",
     "dataset_schema",

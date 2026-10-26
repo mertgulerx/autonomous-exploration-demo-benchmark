@@ -294,6 +294,8 @@ BAR_SEGMENTS = (
     ("time_limit", "data.timeLimit"),
     # stuck-stop-v1: stuck runs, reported like time limits, join in the warning tone when there are any.
     ("stuck", "state.warn"),
+    # reported-outcomes-v4: explorer failures, reported, in the bad tone apart from the excluded failures
+    ("explorer_failure", "state.bad"),
     ("failure", "data.failure"),
     # D9: no-movement and stopped runs join as neutral segments when there are any.
     ("no_movement", "state.neutral"),
@@ -303,7 +305,8 @@ BAR_SEGMENTS = (
 
 class OutcomeBar(Themed, CssBox):
     """``.bar``: 8 px, radius 4, 2 px gaps; completed, time-limit and failure shares of the planned
-    experiments (and stuck ones in the warning tone, no-movement and stopped ones neutral, D9), then the
+    experiments (and stuck ones in the warning tone, explorer failures in the bad tone, no-movement and
+    stopped ones neutral, D9), then the
     remaining share hatched at 135°
     (zero-count segments take no gap)."""
 

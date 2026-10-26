@@ -52,7 +52,8 @@ from .gui_runs import run_label
 from .gui_style import duration, fixed, humanize, number
 from .gui_support import POLL_MS, TableModel, Transport
 from .gui_theme import ThemeManager
-from .gui_traces import TracesChart, run_end
+from .contracts import OUR_EXPLORER, explorer_failure, measured_as
+from .gui_traces import Style, TracesChart, run_end, trace_styles
 from .gui_widgets import (
     BODY,
     Button,
@@ -871,7 +872,8 @@ class TracesView(Themed):
     def __init__(self, themes: ThemeManager, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(themes, parent)
         self.chart = TracesChart(themes, self)
-        self.legend: list[tuple[QtGui.QColor | None, str]] = []
+        # (colour, label, dash pattern in px); a None colour is the carry-forward entry
+        self.legend: list[tuple[QtGui.QColor | None, str, tuple[float, ...]]] = []
         self.note = ""
         self.caption: list[tuple[str, str]] = []
         self.support: list[tuple[int, float]] = []
@@ -882,25 +884,48 @@ class TracesView(Themed):
         reply: Mapping[str, Any],
         world: str,
         profile_name: Callable[[str], str],
-        order: Sequence[str] | None = None,
+        styles: Mapping[str, Style] | None = None,
+        explorer_name: Callable[[str], str] | None = None,
     ) -> None:
-        """``order``: the study's other profiles in F1's colour order (``TracesChart.set_runs``)."""
+        """``styles``: the study's profiles' colours and dashes (``TracesChart.set_runs``); ``explorer_name``
+        names a compared method in its profiles' labels ("method · profile", contract C2)."""
         runs = list(reply.get("runs") or [])
         self.message = "" if runs else "No reported run of this study in " + world
-        self.chart.set_runs(runs, order)
+        self.chart.set_runs(runs, styles)
         profiles: dict[str, dict[str, Any]] = {}
         for run in runs:
             profiles.setdefault(str(run.get("profile_id")), run)
+        # ours first, then the compared methods in registry order, each method's Default before its variants
         ordered = sorted(
             profiles.values(),
-            key=lambda r: (not r.get("is_baseline"), str(r.get("parameter_hash"))),
+            key=lambda r: (*self.chart.trace_style(r), str(r.get("profile_id"))),
         )
         self.legend = [
-            (self.chart.colour(run), profile_name(str(run.get("profile_id")))) for run in ordered
+            (
+                self.chart.colour(run),
+                trace_label(run, profile_name, explorer_name),
+                self.chart.dashes(run),
+            )
+            for run in ordered
         ]
-        carried = [o for o in ("completed", "stuck") if any(r.get("outcome") == o for r in runs)]
+        words = {
+            "completed": "completed",
+            "stuck": "stuck",
+            "explorer_failure": "explorer failure",
+        }
+        found = {
+            "explorer_failure"
+            if explorer_failure(r.get("outcome"), r.get("failure_source"))
+            else str(r.get("outcome"))
+            for r in runs
+            if measured_as(r.get("outcome"), r.get("failure_source"), r.get("motion_started"))
+            in ("completed", "stuck")
+        }
+        carried = [words[o] for o in words if o in found]
         if carried:
-            self.legend.append((None, " or ".join(carried).capitalize() + ", carried forward to L"))
+            self.legend.append(
+                (None, " or ".join(carried).capitalize() + ", carried forward to L", ())
+            )
         axis = self.chart.axis()
         self.note = "Simulated time since first movement" + (
             f" · compressed after {duration(axis.split)}" if axis.compressed else ""
@@ -956,11 +981,21 @@ class TracesView(Themed):
         painter.fillRect(QtCore.QRect(0, 51, width, 1), line)
         painter.fillRect(QtCore.QRect(0, 52 + 35, width, 1), line)
         x = 20.0
-        for colour, label in self.legend:
+        # the entries that fit before the axis note; the rest as "+ N more" (six methods and variants)
+        right = width - 20 - (SMALL.advance(self.note) + 16 if self.note else 0)
+        for index, (colour, label, dashes) in enumerate(self.legend):
+            more = len(self.legend) - index - 1
+            reserve = SMALL.advance(f"+ {more} more") + 16 if more > 0 else 0
+            if x + 27 + CAPTION.advance(label) + reserve > right:
+                left = len(self.legend) - index
+                draw_text(painter, x, 18, f"+ {left} more", SMALL, theme.color("text.secondary"))
+                break
             pen = QtGui.QPen(colour or theme.color("text.secondary"), 2 if colour else 1.6)
             pen.setCapStyle(QtCore.Qt.PenCapStyle.FlatCap)
             if colour is None:
                 pen.setDashPattern([4 / 1.6, 3 / 1.6])
+            elif dashes:
+                pen.setDashPattern([value / 2 for value in dashes])  # a variant (C2)
             painter.setPen(pen)
             painter.drawLine(QtCore.QPointF(x + 1, 26), QtCore.QPointF(x + 19, 26))
             x += 20 + 7
@@ -2033,19 +2068,17 @@ class StudyTab(QtWidgets.QWidget):
                 f"The runs of {world} hold {what}, so they are not drawn together"
             )
             return
-        # F1's colours: the study's other profiles by parameter hash, the same in every world
-        profiles = [
-            profile
-            for _, profile in sorted(
-                {
-                    (str(r.get("parameter_hash")), str(r.get("profile_id")))
-                    for r in self.records.values()
-                    if r.get("is_final") and not r.get("is_baseline")
-                }
-            )
-        ]
+        # colours by explorer and dashes by variant over the study's final runs, the same in every world (C2)
+        chart = self.viewer.traces.chart
+        styles = trace_styles(
+            (r for r in self.records.values() if r.get("is_final")), chart.explorers
+        )
         self.viewer.traces.set_reply(
-            result, world, lambda profile: self.names("profile", profile), profiles or None
+            result,
+            world,
+            lambda profile: self.names("profile", profile),
+            styles or None,
+            lambda explorer: self.names("explorer", explorer),
         )
 
     def _describe_trace(self, run: Mapping[str, Any]) -> str:
@@ -2055,11 +2088,17 @@ class StudyTab(QtWidgets.QWidget):
         outcome = (
             f"Completed {duration(completion)}"
             if run.get("outcome") == "completed"
+            else "Explorer failure"
+            if explorer_failure(run.get("outcome"), run.get("failure_source"))
             else humanize(str(run.get("outcome")))
         )
         return "\n".join(
             (
-                f"{self.names('profile', run.get('profile_id'))}"
+                trace_label(
+                    run,
+                    lambda profile: self.names("profile", profile),
+                    lambda explorer: self.names("explorer", explorer),
+                )
                 + (f" · block {repetition + 1}" if isinstance(repetition, int) else ""),
                 outcome + (f" · C(L) {coverage} %" if coverage else ""),
                 f"{self.names('robot', run.get('robot_id'))} · {self.names('spawn', run.get('spawn_id'))} spawn",
@@ -2087,6 +2126,25 @@ class StudyTab(QtWidgets.QWidget):
 
     def close_timers(self) -> None:
         self.poll.stop()
+
+    def set_explorers(self, explorers: Sequence[str]) -> None:
+        """The catalog's run-record explorer IDs in registry order: the traces' colour order (C2)."""
+        self.viewer.traces.chart.explorers = list(explorers)
+
+
+def trace_label(
+    run: Mapping[str, Any],
+    profile_name: Callable[[str], str],
+    explorer_name: Callable[[str], str] | None,
+) -> str:
+    """A trace's profile as "method · profile" for a compared method (contract C2), unless the profile's name
+    already starts with the method's ("TDLE Default"); our explorer's profiles by their names."""
+    name = profile_name(str(run.get("profile_id")))
+    explorer = run.get("explorer_id")
+    if explorer_name is None or explorer in (None, OUR_EXPLORER):
+        return name
+    method = explorer_name(str(explorer))
+    return name if name.startswith(method) else f"{method} · {name}"
 
 
 def _json(text: Any) -> dict[str, Any]:

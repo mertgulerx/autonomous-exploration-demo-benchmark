@@ -106,6 +106,9 @@ OUTCOME_BADGES: Mapping[str, tuple[Tone, str]] = MappingProxyType(
         "time_limit": ("warn", "hourglass"),
         # stuck-stop-v1: a reported outcome like time_limit, not a failure
         "stuck": ("warn", "cpause"),
+        # reported-outcomes-v4: a startup or runtime failure the worker attributed to the explorer is a
+        # reported, unsuccessful outcome of its method (not muted as the excluded failures are)
+        "explorer_failure": ("bad", "alert"),
         "no_movement": ("neutral", "ban"),
         "manual_stop": ("neutral", "cstop"),
         "startup_failure": ("bad", "cx"),

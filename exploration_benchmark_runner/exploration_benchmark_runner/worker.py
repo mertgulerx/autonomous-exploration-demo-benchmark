@@ -159,9 +159,23 @@ NAV_ACTIVATION_TIMEOUT_SECONDS = 60.0
 # A start topic's true (profiles.yaml ``start: topic``) waits for this many start_after messages after the
 # explorer's subscriber appears: at 2 Hz (the global costmap) at least one full period after discovery.
 START_AFTER_MESSAGES = 2
+# rrt-explore's true is repeated every wall second until its state reads ACTIVE, for at most this long (A5).
+START_REPEAT_S = 30.0
+# An explorer process exit becomes a runtime failure this many wall seconds after it is first seen, so that a
+# native completion sent just before the exit ends the run as completed.
+EXPLORER_EXIT_GRACE_S = 2.0
 # Frontier insight node (suite runs): its output topic and the attempt log it writes.
 INSIGHT_TOPIC = "/benchmark/frontier_insight"
 INSIGHT_LOG = "insight.log"
+
+
+def process_alive(pid, started):
+    """Whether the process ``pid`` with creation time ``started`` still runs (not replaced, not a zombie)."""
+    try:
+        process = psutil.Process(pid)
+        return process.create_time() == started and process.status() != psutil.STATUS_ZOMBIE
+    except psutil.NoSuchProcess:
+        return False
 
 
 def require_mapping_executables():
@@ -226,8 +240,13 @@ class Worker:
         self.stuck_stop = None
         self.stopped_by_stuck = False
         self.native_code = -1
+        # Who caused a startup or runtime failure (C1, reported-outcomes-v4): "explorer" for the failures that
+        # explorer_failure() queues, "stack" for every other failure; null for other outcomes.
+        self.failure_source = None
         self.explorer_identity = None
         self.explorer_identities = {}
+        # Wall time an explorer exit was first seen (EXPLORER_EXIT_GRACE_S), else None.
+        self.explorer_exit_wall = None
         self.explorer_started_wall = 0.0
         self.start_sim = self.start_unix = 0.0
         self.measurements = None
@@ -1311,6 +1330,8 @@ class Worker:
         self.terminal = queue.Queue()
         self.explorer_identity = None
         self.explorer_identities = {}
+        # Wall time an explorer exit was first seen (EXPLORER_EXIT_GRACE_S), else None.
+        self.explorer_exit_wall = None
         self.native_code = -1
         self.path = Path()
         self.path.header.frame_id = "map"
@@ -1410,8 +1431,10 @@ class Worker:
         self.explore_goal = None
         self.explore_handle = None
         self.start_publisher = None
-        # start_sent: true was published (a stop then publishes false); start_settled: nothing more to try.
+        # start_sent: true was published (a stop then publishes false), last at start_sent_wall; start_settled:
+        # nothing more to try (ACTIVE seen or refused).
         self.start_sent = False
+        self.start_first_wall = self.start_sent_wall = 0.0
         self.start_settled = False
         self.explorer_active = False
         if self.profile.get("start") == "topic":
@@ -1491,8 +1514,8 @@ class Worker:
             return
         if not self.explore_client.server_is_ready():
             if wall - self.explorer_started_wall > 120:
-                self.terminal.put(
-                    ("startup_failure", "Explore action server not available within 120 s", -1)
+                self.explorer_failure(
+                    "startup_failure", "Explore action server not available within 120 s"
                 )
                 self.explore_goal = False
             return
@@ -1510,9 +1533,19 @@ class Worker:
             self.start_after_count += 1
 
     def start_exploration_topic(self, wall):
-        """rrt-explore: one ``true`` on its enable topic once the node subscribes to it and its costmap has
-        arrived (``setup_start_and_completion``); refused after 120 s."""
+        """rrt-explore: ``true`` on its enable topic once the node subscribes to it and its costmap has arrived
+        (``setup_start_and_completion``), refused after 120 s (C1: a missing subscriber is the explorer's
+        failure, missing start_after messages the stack's); repeated every wall second until its state is ACTIVE,
+        for at most START_REPEAT_S (A5: a first message lost on a new connection would leave it idle; a repeated
+        true is a no-op while it runs, but would restart it after DONE)."""
         if self.start_publisher is None or self.start_settled:
+            return
+        if self.start_sent:
+            if self.explorer_active or wall - self.start_first_wall > START_REPEAT_S:
+                self.start_settled = True
+            elif wall - self.start_sent_wall >= 1.0:
+                self.start_publisher.publish(Bool(data=True))
+                self.start_sent_wall = wall
             return
         if self.start_after_count is None:
             expected = self.profile["start_subscriber"]
@@ -1525,25 +1558,34 @@ class Worker:
                 self.start_after_count = 0
         if self.start_after_count is None or self.start_after_count < START_AFTER_MESSAGES:
             if wall - self.explorer_started_wall > 120:
-                waiting = (
-                    f"{self.profile['start_subscriber']} on {self.profile['start_topic']}"
-                    if self.start_after_count is None
-                    else f"{self.profile['start_after']} messages"
-                )
-                self.terminal.put(
-                    ("startup_failure", f"Explorer start: no {waiting} within 120 s", -1)
-                )
+                # The explorer's own subscriber missing is the explorer's failure; the stack's start_after topic
+                # (Nav2's global costmap) not publishing is the stack's (C1).
+                if self.start_after_count is None:
+                    self.explorer_failure(
+                        "startup_failure",
+                        f"Explorer start: no {self.profile['start_subscriber']} on "
+                        f"{self.profile['start_topic']} within 120 s",
+                    )
+                else:
+                    self.terminal.put(
+                        (
+                            "startup_failure",
+                            f"Explorer start: no {self.profile['start_after']} messages within 120 s",
+                            -1,
+                        )
+                    )
                 self.start_settled = True
             return
         self.start_publisher.publish(Bool(data=True))
-        self.start_sent = self.start_settled = True
+        self.start_sent = True
+        self.start_first_wall = self.start_sent_wall = wall
         if self.recorder:
             self.recorder.event("exploration_start_sent", simulation=self.clock_value)
 
     def exploration_accepted(self, future):
         handle = future.result()
         if handle is None or not handle.accepted:
-            self.terminal.put(("startup_failure", "Explore goal rejected", -1))
+            self.explorer_failure("startup_failure", "Explore goal rejected")
             return
         self.explore_handle = handle
         handle.get_result_async().add_done_callback(self.exploration_finished)
@@ -1553,23 +1595,25 @@ class Worker:
 
         response = future.result()
         if response is None or response.result is None:
-            self.terminal.put(("runtime_failure", "Explore action ended without a result", -1))
+            self.explorer_failure("runtime_failure", "Explore action ended without a result")
             return
         code = response.result.error_code
         if code == Explore.Result.NO_MORE_REACHABLE_FRONTIERS:
             self.native_completed("roadmap-explorer NO_MORE_REACHABLE_FRONTIERS")
         elif self.phase == "RUNNING":
-            self.terminal.put(
-                (
-                    "runtime_failure",
-                    f"roadmap-explorer ended with error code {code} (goal status {response.status})",
-                    -1,
-                )
+            self.explorer_failure(
+                "runtime_failure",
+                f"roadmap-explorer ended with error code {code} (goal status {response.status})",
             )
 
     def native_completed(self, detail):
         if self.phase == "RUNNING":
             self.terminal.put(("completed", detail, -1))
+
+    def explorer_failure(self, outcome, detail):
+        """Queue a failure the explorer caused (C1): its process exited or was replaced, roadmap-explorer's action
+        ended without success, or a start protocol was refused."""
+        self.terminal.put((outcome, detail, -1, "explorer"))
 
     def reset_path(self, _):
         if not self.single or self.phase == "RUNNING":
@@ -1647,12 +1691,9 @@ class Worker:
                     continue
                 identity = (process.pid, process.create_time())
                 if known is not None and known != identity:
-                    self.terminal.put(
-                        (
-                            "runtime_failure",
-                            f"Explorer process identity changed during the run ({executable})",
-                            -1,
-                        )
+                    self.explorer_failure(
+                        "runtime_failure",
+                        f"Explorer process identity changed during the run ({executable})",
                     )
                     continue
                 self.explorer_identities[name] = identity
@@ -1715,7 +1756,7 @@ class Worker:
                 )
         self.publish_metrics(snapshot)
 
-    def stop(self, outcome, detail="", native_code=-1):
+    def stop(self, outcome, detail="", native_code=-1, failure_source="stack"):
         if self.phase in ("STOPPING", "FINISHED"):
             return
         recorder = self.recorder
@@ -1734,6 +1775,9 @@ class Worker:
                 native_code,
             )
             # Decided at the accepted terminal reason, before any later sample or failure.
+            self.failure_source = (
+                failure_source if outcome in ("startup_failure", "runtime_failure") else None
+            )
             self.stopped_by_coverage = (outcome, detail) == (
                 "completed",
                 COVERAGE_STOP_DETAIL,
@@ -1816,6 +1860,13 @@ class Worker:
             )
             recorder.manifest["coverage_stop"] = (
                 self.coverage_stop if stopped_by_rule else None
+            )
+            # Who caused a startup or runtime failure (C1): "explorer" or "stack", else null (a storage failure
+            # that replaced the outcome after the trigger carries none).
+            recorder.manifest["failure_source"] = (
+                self.failure_source
+                if self.outcome in ("startup_failure", "runtime_failure")
+                else None
             )
             with self.lock:
                 recorder.manifest["mapping_status"] = deepcopy(self.mapping_status)
@@ -1983,19 +2034,8 @@ class Worker:
         if self.phase == "RUNNING":
             self.coverage_tick(wall)
             self.check_native_controllers(wall)
-            identities = list(self.critical_processes)
-            if self.explorer_identity is not None:
-                identities.append(self.explorer_identity)
-            for pid, started in identities:
-                try:
-                    process = psutil.Process(pid)
-                    alive = (
-                        process.create_time() == started
-                        and process.status() != psutil.STATUS_ZOMBIE
-                    )
-                except psutil.NoSuchProcess:
-                    alive = False
-                if not alive:
+            for pid, started in self.critical_processes:
+                if not process_alive(pid, started):
                     self.terminal.put(
                         (
                             "runtime_failure",
@@ -2004,19 +2044,25 @@ class Worker:
                         )
                     )
                     break
-            # Wait briefly for a native completion callback before treating an
-            # otherwise unexpected explorer exit as a runtime failure.
-            if (
-                self.explorer_process.poll() is not None
-                and wall - self.measurements.wall_start > 2
-            ):
-                self.terminal.put(
-                    (
-                        "runtime_failure",
-                        f"Explorer exited with code {self.explorer_process.returncode}",
-                        -1,
-                    )
-                )
+            # The explorer's listed processes (``executables``) and its launch process: an exit is the explorer's
+            # failure (C1), queued EXPLORER_EXIT_GRACE_S wall s after it is first seen so that a native completion
+            # callback sent just before the exit is taken first.
+            dead = next(
+                (
+                    f"Explorer process exited ({name}, owned PID {pid})"
+                    for name, (pid, started) in self.explorer_identities.items()
+                    if not process_alive(pid, started)
+                ),
+                None,
+            )
+            if dead is None and self.explorer_process.poll() is not None:
+                dead = f"Explorer exited with code {self.explorer_process.returncode}"
+            if dead is None:
+                self.explorer_exit_wall = None
+            elif self.explorer_exit_wall is None:
+                self.explorer_exit_wall = wall
+            elif wall - self.explorer_exit_wall >= EXPLORER_EXIT_GRACE_S:
+                self.explorer_failure("runtime_failure", dead)
             self.start_exploration_action(wall)
             self.start_exploration_topic(wall)
             self.coverage_stop_due()
@@ -2039,9 +2085,9 @@ class Worker:
                 self.last_path = wall
                 self.record_path()
         while not self.terminal.empty():
-            outcome, detail, code = self.terminal.get_nowait()
+            outcome, detail, code, *source = self.terminal.get_nowait()
             if self.phase in ("STARTING", "READY", "RUNNING"):
-                self.stop(outcome, detail, code)
+                self.stop(outcome, detail, code, failure_source=source[0] if source else "stack")
         if self.recorder and wall - self.last_checkpoint >= 5:
             self.last_checkpoint = wall
             with self.lock:

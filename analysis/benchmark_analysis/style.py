@@ -19,7 +19,13 @@ FP-4 to FP-7, FP-9).
   ``sans`` switches to Liberation Sans with sans-serif math for sans-serif journals (FP-9).
 - Profiles: Default black; the other profiles take Okabe–Ito colours in the order of their parameter hashes,
   so one profile keeps one colour in every figure of a study; sky blue is reserved for routes (FP-7). Colour is
-  always paired with a marker and a line style.
+  always paired with a marker and a line style. More than five other profiles repeat the colours with further
+  markers and line styles, said in a note (never a refusal).
+- Methods (a method comparison, cross-method readiness C2): the encoding is keyed by ``explorer_id``, the same in
+  every robot and study: ours black, each external method one fixed Okabe–Ito hue by its registry position
+  (blue, vermilion, bluish green, reddish purple, orange; sky blue stays reserved) with its own marker; a
+  method's Default draws solid, its variants (by name, the same across robots) take the further line styles. A
+  sixth external method or a sixth variant repeats a hue or a line style, said in a note.
 - Outcomes in greys and hatches, never a profile hue (FP-4); map greys with the outside hatched (FP-5).
 """
 
@@ -35,6 +41,7 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.figure import Figure  # noqa: E402
 
+from .data import Study  # noqa: E402
 from .errors import Refused  # noqa: E402
 
 STYLE = Path(__file__).with_name("publication.mplstyle")
@@ -87,6 +94,9 @@ OUTCOMES: dict[str, dict[str, Any]] = {
     # stuck-stop-v1 below 97.0 %: a reported unsuccessful outcome, the time-limit grey with a hatch
     "stuck": dict(facecolor="#8C8C8C", hatch="//", label="Stuck"),
     "no_movement": dict(facecolor="#CCCCCC", hatch=None, label="No movement"),
+    # reported-outcomes-v4 (C1): an explorer-caused failure, reported and unsuccessful; a light grey with a cross
+    # hatch, apart from the time-limit and stuck greys and from the white excluded classes
+    "explorer_failure": dict(facecolor="#B3B3B3", hatch="xx", label="Explorer failure"),
     "missing_startup": dict(facecolor="#FFFFFF", hatch="////", label="Missing (startup)"),
     "missing_platform": dict(facecolor="#FFFFFF", hatch="\\\\\\\\", label="Missing (platform)"),
     "excluded_runtime_failure": dict(facecolor="#FFFFFF", hatch="xxxx", label="Runtime failure"),
@@ -113,32 +123,115 @@ class ProfileStyle:
     is_baseline: bool
 
 
-def profile_styles(profiles: Mapping[str, Mapping[str, Any]]) -> dict[str, ProfileStyle]:
-    """One encoding per profile of a study, keyed by profile ID."""
+# extra markers once MARKERS are used up (a style repeats only with a note)
+MORE_MARKERS = ("X", "<", ">", "p", "h", "*")
+
+
+@dataclass(frozen=True, slots=True)
+class Styles:
+    """The encodings of a study's profiles, keyed by profile ID, and the notes saying where one repeats."""
+
+    by_profile: dict[str, ProfileStyle]
+    notes: tuple[str, ...]
+
+
+def method_colour(order: int) -> str:
+    """A method's colour by its registry position (C2): ours (0) black, then the Okabe–Ito hues in order."""
+    return BASELINE_COLOUR if order == 0 else PROFILE_COLOURS[(order - 1) % len(PROFILE_COLOURS)]
+
+
+def profile_styles(study: Study) -> Styles:
+    """One encoding per profile of a study, keyed by profile ID: by parameter hash for profiles of one explorer,
+    by method (``explorer_id``) and variant name in a method comparison (C2). Never refuses: an encoding that
+    has to repeat is noted."""
+    if study.cross_method:
+        return _method_styles(study)
+    profiles = study.profiles
     styles = {}
+    notes: list[str] = []
     others = sorted(
         (row["parameter_hash"], profile_id)
         for profile_id, row in profiles.items()
         if not row["is_baseline"]
     )
-    if len(others) > len(PROFILE_COLOURS):
-        raise Refused(
-            f"{len(others)} profiles besides Default: at most {len(PROFILE_COLOURS)} per study"
+    # one colour per profile name, so the same variant of two robots shares its encoding; a name two profiles of
+    # one robot share is told apart by profile ID
+    shared = {
+        (str(row["robot_id"]), str(row["profile_name"]))
+        for row in profiles.values()
+        if sum(
+            (r["robot_id"], r["profile_name"]) == (row["robot_id"], row["profile_name"])
+            for r in profiles.values()
         )
+        > 1
+    }
+
+    def key(profile_id: str) -> str:
+        row = profiles[profile_id]
+        name = str(row["profile_name"])
+        return profile_id if (str(row["robot_id"]), name) in shared else name
+
+    names = list(dict.fromkeys(key(pid) for _, pid in others))
+    if len(names) > len(PROFILE_COLOURS):
+        notes.append(
+            f"{len(names)} profiles besides Default share {len(PROFILE_COLOURS)} colours: a colour repeats with "
+            "another marker and line style."
+        )
+    markers = (*MARKERS[1:], *MORE_MARKERS)
     for profile_id, row in profiles.items():
         if row["is_baseline"]:
             styles[profile_id] = ProfileStyle(
-                row["profile_name"], BASELINE_COLOUR, MARKERS[0], LINESTYLES[0], True
+                str(row["label"]), BASELINE_COLOUR, MARKERS[0], LINESTYLES[0], True
             )
-    for index, (_, profile_id) in enumerate(others):
+    for _, profile_id in others:
+        index = names.index(key(profile_id))
         styles[profile_id] = ProfileStyle(
-            profiles[profile_id]["profile_name"],
-            PROFILE_COLOURS[index],
-            MARKERS[index + 1],
-            LINESTYLES[index + 1],
+            str(profiles[profile_id]["label"]),
+            PROFILE_COLOURS[index % len(PROFILE_COLOURS)],
+            markers[index % len(markers)],
+            LINESTYLES[(index + 1) % len(LINESTYLES)],
             False,
         )
-    return styles
+    return Styles(styles, tuple(notes))
+
+
+def _method_styles(study: Study) -> Styles:
+    """C2: colour and marker by method, line style by variant (the method's Default solid)."""
+    notes: list[str] = []
+    external = [m for m in study.methods.values() if not m.is_ours]
+    if any(m.order > len(PROFILE_COLOURS) for m in external):
+        notes.append(
+            f"More than {len(PROFILE_COLOURS)} compared methods: a colour repeats with another marker."
+        )
+    markers = (*MARKERS, *MORE_MARKERS)
+    variants: dict[str, list[str]] = {}
+    for row in sorted(study.profiles.values(), key=lambda r: str(r["profile_name"])):
+        if not row["method_default"]:
+            names = variants.setdefault(str(row["method"]), [])
+            if str(row["profile_name"]) not in names:
+                names.append(str(row["profile_name"]))
+    crowded = sorted(
+        study.methods[m].label for m, names in variants.items() if len(names) >= len(LINESTYLES)
+    )
+    if crowded:
+        notes.append(
+            f"More variants of {', '.join(crowded)} than line styles: a line style repeats (the legend names "
+            "each)."
+        )
+    styles = {}
+    for profile_id, row in study.profiles.items():
+        method = study.methods[str(row["method"])]
+        index = (
+            0 if row["method_default"] else 1 + variants[method.id].index(str(row["profile_name"]))
+        )
+        styles[profile_id] = ProfileStyle(
+            str(row["label"]),
+            method_colour(method.order),
+            markers[method.order % len(markers)],
+            LINESTYLES[index % len(LINESTYLES)],
+            bool(row["is_baseline"]),
+        )
+    return Styles(styles, tuple(notes))
 
 
 @contextmanager

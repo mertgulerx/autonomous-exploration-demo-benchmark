@@ -50,6 +50,7 @@ from .data import (
     EXCLUDED,
     MISSING,
     REPORTED,
+    EXPLORER_FAILURE,
     REPORTED_OUTCOMES,
     STUCK,
     Row,
@@ -121,8 +122,12 @@ FLOW_TITLES = {"not_run": "Not run", "not_final": "Not final", "not_reported": "
 MAIN_X, MAIN_W, SIDE_X, SIDE_W, BOX_H = 0.2, 0.34, 0.68, 0.58, 0.5
 OUTCOME_Y, OUTCOME_H = 0.62, 0.5
 # (x of the first box, step, box width, font size) of the reported-outcome boxes by their number: three before
-# run record 6, four with ``stuck`` (stuck-stop-v1)
-OUTCOME_SLOTS = {3: (0.17, 0.33, 0.3, 7.0), 4: (0.125, 0.25, 0.23, 6.0)}
+# run record 6, four with ``stuck`` (stuck-stop-v1), five with ``explorer_failure`` (run record 7)
+OUTCOME_SLOTS = {
+    3: (0.17, 0.33, 0.3, 7.0),
+    4: (0.125, 0.25, 0.23, 6.0),
+    5: (0.1, 0.2, 0.19, 5.0),
+}
 TEXT_LINE = 0.17  # one 7 pt line
 HEADER_MARK_Y, HEADER_NAME_Y = 6.0, 5.72
 
@@ -271,7 +276,12 @@ def _flow_column(
         height = TEXT_LINE * (text.count("\n") + 1) + 0.1
         _flow_box(ax, side_x, FLOW_SIDES[stage], SIDE_W, height, text, size=7)
         _arrow(ax, (main_x, FLOW_SIDES[stage]), (side_x - SIDE_W / 2, FLOW_SIDES[stage]))
-    shown = [o for o in REPORTED_OUTCOMES if ctx.study.has_stuck or o != STUCK]
+    shown = [
+        o
+        for o in REPORTED_OUTCOMES
+        if (ctx.study.has_stuck or o != STUCK)
+        and (ctx.study.has_explorer_failure or o != EXPLORER_FAILURE)
+    ]
     x0, step, w, size = OUTCOME_SLOTS[len(shown)]
     for slot, outcome in enumerate(shown):
         x = column + x0 + step * slot
