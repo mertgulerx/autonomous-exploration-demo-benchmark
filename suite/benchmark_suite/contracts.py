@@ -31,10 +31,12 @@ DATASET_VERSION = 11
 GAZEBO_SEED = 1234
 DEFAULT_LIMIT = 1800.0
 # Time-limit rules a campaign may name (``time_limit_rule``; I4 §3.3); CampaignSpec.accepted is the one
-# check. Must contain exploration_benchmark_runner.time_limits.TIME_LIMIT_RULE, the rule that
-# Library.resolve_campaign computes (not imported: the GUI loads this module without the runner).
-TIME_LIMIT_RULE = "kinematic-time-limit-v1"
-TIME_LIMIT_RULES = frozenset({TIME_LIMIT_RULE})
+# check. TIME_LIMIT_RULE equals exploration_benchmark_runner.time_limits.TIME_LIMIT_RULE, the rule that
+# Library.resolve_campaign computes (not imported: the GUI loads this module without the runner). A retired
+# rule stays valid in stored specifications with their stored limits (Restart); new campaigns are refused it.
+TIME_LIMIT_RULE = "kinematic-time-limit-v2"
+RETIRED_TIME_LIMIT_RULES = frozenset({"kinematic-time-limit-v1"})
+TIME_LIMIT_RULES = frozenset({TIME_LIMIT_RULE}) | RETIRED_TIME_LIMIT_RULES
 NO_MOVEMENT_LIMIT = 180.0
 HIDDEN_GROUPS = frozenset({"Suppression", "QoS", "Visualization", "Benchmark Integration"})
 # Most campaigns or profiles one deletion request may name; the GUI checks the same bounds.

@@ -1,0 +1,318 @@
+--- a/include/slam_toolbox/slam_mapper.hpp
++++ b/include/slam_toolbox/slam_mapper.hpp
+@@ -38,9 +38,12 @@
+   SMapper();
+   ~SMapper();
+ 
+-  // get occupancy grid from scans
++  // get occupancy grid from scans; the caller deletes it unless ownsOccupancyGrid()
+   karto::OccupancyGrid * getOccupancyGrid(const double & resolution);
+ 
++  // Benchmark incremental-map patch: true when getOccupancyGrid returns the mapper's own grid
++  bool ownsOccupancyGrid() const;
++
+   // convert Karto pose to TF pose
+   tf2::Transform toTfPose(const karto::Pose2 & pose) const;
+ 
+@@ -65,6 +68,21 @@
+ 
+ protected:
+   std::unique_ptr<karto::Mapper> mapper_;
++
++  // Benchmark incremental-map patch (benchmark_incremental_map): the grid kept between map updates,
++  // how many processed scans it holds and the last of them, and the update counters (logged by
++  // the check mode).
++  bool incremental_map_ = false;
++  bool incremental_map_check_ = false;
++  std::unique_ptr<karto::IncrementalOccupancyGrid> incremental_grid_;
++  size_t incremental_count_ = 0;
++  karto::LocalizedRangeScan * incremental_last_ = nullptr;
++  double incremental_resolution_ = 0.0;
++  size_t incremental_additions_ = 0;
++  size_t incremental_growths_ = 0;
++  size_t incremental_rebuilds_ = 0;
++  size_t incremental_mismatches_ = 0;
++  rclcpp::Logger logger_ = rclcpp::get_logger("slam_toolbox");
+ };
+ 
+ }  // namespace mapper_utils
+--- a/lib/karto_sdk/include/karto_sdk/Karto.h
++++ b/lib/karto_sdk/include/karto_sdk/Karto.h
+@@ -6354,6 +6354,145 @@
+   Parameter<kt_double> * m_pOccupancyThreshold;
+ };    // OccupancyGrid
+ 
++/**
++ * Benchmark incremental-map patch: an occupancy grid on a fixed lattice that adds only new scans
++ * to its hit and pass counts. A world coordinate v falls in lattice cell Round(v / resolution),
++ * so lattice cell k is centred on k * resolution whatever the grid's extent. The grid holds the
++ * lattice cells of its scans' bounding boxes, and its offset is the centre of its first cell
++ * (Karto's convention). Hit and pass counts are sums over scans, independent of the extent: growing
++ * the grid copies them to their new place, and adding the new scans gives the same counts, and the
++ * same cells, as building the grid from every scan. That holds only while added scans never move
++ * (no scan matching, no loop closure).
++ */
++class IncrementalOccupancyGrid : public OccupancyGrid
++{
++public:
++  explicit IncrementalOccupancyGrid(kt_double resolution)
++  : OccupancyGrid(0, 0, Vector2<kt_double>(), resolution),
++    m_Scale(1.0 / resolution),
++    m_MinX(0),
++    m_MinY(0),
++    m_Empty(true)
++  {
++  }
++
++  /**
++   * Adds the scans from index first on, growing the grid to hold them, and recomputes every cell.
++   * @return whether the grid grew
++   */
++  kt_bool AddScans(const LocalizedRangeScanVector & rScans, size_t first)
++  {
++    BoundingBox2 boundingBox;
++    kt_bool hasScans = false;
++    for (size_t i = first; i < rScans.size(); ++i) {
++      if (rScans[i] != nullptr) {
++        boundingBox.Add(rScans[i]->GetBoundingBox());
++        hasScans = true;
++      }
++    }
++    kt_bool grew = false;
++    if (hasScans) {
++      kt_int32s minX = Lattice(boundingBox.GetMinimum().GetX());
++      kt_int32s minY = Lattice(boundingBox.GetMinimum().GetY());
++      kt_int32s maxX = Lattice(boundingBox.GetMaximum().GetX());
++      kt_int32s maxY = Lattice(boundingBox.GetMaximum().GetY());
++      if (!m_Empty) {
++        minX = std::min(minX, m_MinX);
++        minY = std::min(minY, m_MinY);
++        maxX = std::max(maxX, m_MinX + GetWidth() - 1);
++        maxY = std::max(maxY, m_MinY + GetHeight() - 1);
++      }
++      grew = m_Empty || minX != m_MinX || minY != m_MinY ||
++        maxX - minX + 1 != GetWidth() || maxY - minY + 1 != GetHeight();
++      if (grew) {
++        Grow(minX, minY, maxX, maxY);
++      }
++      for (size_t i = first; i < rScans.size(); ++i) {
++        if (rScans[i] != nullptr) {
++          AddScan(rScans[i]);
++        }
++      }
++    }
++    Update();
++    return grew;
++  }
++
++protected:
++  /**
++   * OccupancyGrid::RayTrace with grid cells taken from lattice cells in integers, so that a ray
++   * covers the same lattice cells in every extent. Map building only (AddScan without doUpdate).
++   */
++  virtual kt_bool RayTrace(
++    const Vector2<kt_double> & rWorldFrom,
++    const Vector2<kt_double> & rWorldTo,
++    kt_bool isEndPointValid,
++    kt_bool doUpdate = false)
++  {
++    assert(!doUpdate);
++    (void)doUpdate;
++    Vector2<kt_int32s> gridFrom(Lattice(rWorldFrom.GetX()) - m_MinX,
++      Lattice(rWorldFrom.GetY()) - m_MinY);
++    Vector2<kt_int32s> gridTo(Lattice(rWorldTo.GetX()) - m_MinX, Lattice(rWorldTo.GetY()) - m_MinY);
++    m_pCellPassCnt->TraceLine(gridFrom.GetX(), gridFrom.GetY(), gridTo.GetX(), gridTo.GetY());
++    if (isEndPointValid && m_pCellPassCnt->IsValidGridIndex(gridTo)) {
++      kt_int32s index = m_pCellPassCnt->GridIndex(gridTo, false);
++      m_pCellPassCnt->GetDataPointer()[index]++;
++      m_pCellHitsCnt->GetDataPointer()[index]++;
++    }
++    return m_pCellPassCnt->IsValidGridIndex(gridTo);
++  }
++
++private:
++  kt_int32s Lattice(kt_double value) const
++  {
++    return static_cast<kt_int32s>(math::Round(value * m_Scale));
++  }
++
++  /**
++   * Resizes the grid to the lattice cells [minX, maxX] x [minY, maxY], which hold the current ones,
++   * and copies the hit and pass counts to their new place.
++   */
++  void Grow(kt_int32s minX, kt_int32s minY, kt_int32s maxX, kt_int32s maxY)
++  {
++    kt_int32s width = maxX - minX + 1;
++    kt_int32s height = maxY - minY + 1;
++    Vector2<kt_double> offset(minX / m_Scale, minY / m_Scale);
++    Grid<kt_int32u> * pCellPassCnt = Grid<kt_int32u>::CreateGrid(width, height, 1.0 / m_Scale);
++    Grid<kt_int32u> * pCellHitsCnt = Grid<kt_int32u>::CreateGrid(width, height, 1.0 / m_Scale);
++    if (!m_Empty) {
++      CopyCounts(m_pCellPassCnt, pCellPassCnt, m_MinX - minX, m_MinY - minY);
++      CopyCounts(m_pCellHitsCnt, pCellHitsCnt, m_MinX - minX, m_MinY - minY);
++    }
++    pCellPassCnt->GetCoordinateConverter()->SetOffset(offset);
++    pCellHitsCnt->GetCoordinateConverter()->SetOffset(offset);
++    delete m_pCellPassCnt;
++    delete m_pCellHitsCnt;
++    m_pCellPassCnt = pCellPassCnt;
++    m_pCellHitsCnt = pCellHitsCnt;
++    Grid<kt_int8u>::Resize(width, height);
++    GetCoordinateConverter()->SetOffset(offset);
++    m_MinX = minX;
++    m_MinY = minY;
++    m_Empty = false;
++  }
++
++  static void CopyCounts(
++    Grid<kt_int32u> * pFrom, Grid<kt_int32u> * pTo, kt_int32s shiftX, kt_int32s shiftY)
++  {
++    for (kt_int32s y = 0; y < pFrom->GetHeight(); ++y) {
++      memcpy(
++        pTo->GetDataPointer() + (y + shiftY) * pTo->GetWidthStep() + shiftX,
++        pFrom->GetDataPointer() + y * pFrom->GetWidthStep(),
++        pFrom->GetWidth() * sizeof(kt_int32u));
++    }
++  }
++
++  kt_double m_Scale;
++  kt_int32s m_MinX;  // lattice cell of the grid's first column
++  kt_int32s m_MinY;  // lattice cell of the grid's first row
++  kt_bool m_Empty;
++};    // IncrementalOccupancyGrid
++
+ ////////////////////////////////////////////////////////////////////////////////////////
+ ////////////////////////////////////////////////////////////////////////////////////////
+ ////////////////////////////////////////////////////////////////////////////////////////
+--- a/src/slam_mapper.cpp
++++ b/src/slam_mapper.cpp
+@@ -18,6 +18,7 @@
+ 
+ /* Author: Steven Macenski */
+ 
++#include <cstring>
+ #include <memory>
+ #include "slam_toolbox/slam_mapper.hpp"
+ 
+@@ -63,10 +64,74 @@
+ karto::OccupancyGrid * SMapper::getOccupancyGrid(const double & resolution)
+ /*****************************************************************************/
+ {
+-  karto::OccupancyGrid * occ_grid = nullptr;
+-  return karto::OccupancyGrid::CreateFromScans(
+-    mapper_->GetAllProcessedScans(),
+-    resolution, (kt_int32u)mapper_->getParamMinPassThrough(), (kt_double)mapper_->getParamOccupancyThreshold());
++  const kt_int32u min_pass_through = (kt_int32u)mapper_->getParamMinPassThrough();
++  const kt_double occupancy_threshold = (kt_double)mapper_->getParamOccupancyThreshold();
++  karto::LocalizedRangeScanVector scans = mapper_->GetAllProcessedScans();
++  if (!ownsOccupancyGrid()) {
++    return karto::OccupancyGrid::CreateFromScans(
++      scans, resolution, min_pass_through, occupancy_threshold);
++  }
++
++  // Benchmark incremental-map patch: add the scans processed since the last update to the grid
++  // kept on its fixed lattice (growing it copies its counts); rebuild it from every scan only when
++  // the resolution changed or the scan list is not the previous one extended.
++  if (scans.empty()) {
++    incremental_grid_.reset();
++    incremental_count_ = 0;
++    incremental_last_ = nullptr;
++    return nullptr;
++  }
++  const bool extends = incremental_grid_ && incremental_count_ > 0 &&
++    incremental_count_ <= scans.size() && scans[incremental_count_ - 1] == incremental_last_ &&
++    resolution == incremental_resolution_;
++  bool grew = false;
++  if (extends) {
++    grew = incremental_grid_->AddScans(scans, incremental_count_);
++    ++(grew ? incremental_growths_ : incremental_additions_);
++  } else {
++    incremental_grid_ = std::make_unique<karto::IncrementalOccupancyGrid>(resolution);
++    incremental_grid_->SetMinPassThrough(min_pass_through);
++    incremental_grid_->SetOccupancyThreshold(occupancy_threshold);
++    incremental_grid_->AddScans(scans, 0);
++    incremental_resolution_ = resolution;
++    ++incremental_rebuilds_;
++  }
++  incremental_count_ = scans.size();
++  incremental_last_ = scans.back();
++
++  if (incremental_map_check_) {
++    // Check mode: the grid built from every scan on the same lattice must equal the incremental one.
++    karto::IncrementalOccupancyGrid full(resolution);
++    full.SetMinPassThrough(min_pass_through);
++    full.SetOccupancyThreshold(occupancy_threshold);
++    full.AddScans(scans, 0);
++    const karto::Vector2<kt_double> & offset = incremental_grid_->GetCoordinateConverter()->GetOffset();
++    const bool same = full.GetWidth() == incremental_grid_->GetWidth() &&
++      full.GetHeight() == incremental_grid_->GetHeight() &&
++      full.GetCoordinateConverter()->GetOffset().GetX() == offset.GetX() &&
++      full.GetCoordinateConverter()->GetOffset().GetY() == offset.GetY() &&
++      full.GetDataSize() == incremental_grid_->GetDataSize() &&
++      std::memcmp(full.GetDataPointer(), incremental_grid_->GetDataPointer(),
++        full.GetDataSize()) == 0;
++    if (!same) {
++      ++incremental_mismatches_;
++    }
++    RCLCPP_INFO(
++      logger_, "benchmark_incremental_map_check: scans %zu, %s, equal to a full rebuild: %s "
++      "(additions %zu, growths %zu, rebuilds %zu, mismatches %zu)", scans.size(),
++      extends ? (grew ? "growth" : "addition") : "rebuild", same ? "yes" : "NO",
++      incremental_additions_, incremental_growths_, incremental_rebuilds_, incremental_mismatches_);
++  }
++  return incremental_grid_.get();
++}
++
++/*****************************************************************************/
++bool SMapper::ownsOccupancyGrid() const
++/*****************************************************************************/
++{
++  // Exact only while scans never move after they are added.
++  return incremental_map_ && !mapper_->getParamUseScanMatching() &&
++         !mapper_->getParamDoLoopClosing();
+ }
+ 
+ /*****************************************************************************/
+@@ -370,6 +435,18 @@
+   }
+   node->get_parameter("occupancy_threshold", occupancy_threshold);
+   mapper_->setParamOccupancyThreshold(occupancy_threshold);
++
++  // Benchmark incremental-map patch: incremental map updates (used only without scan matching and
++  // loop closing) and the check mode that compares each update with a full rebuild.
++  if (!node->has_parameter("benchmark_incremental_map")) {
++    node->declare_parameter("benchmark_incremental_map", incremental_map_);
++  }
++  node->get_parameter("benchmark_incremental_map", incremental_map_);
++  if (!node->has_parameter("benchmark_incremental_map_check")) {
++    node->declare_parameter("benchmark_incremental_map_check", incremental_map_check_);
++  }
++  node->get_parameter("benchmark_incremental_map_check", incremental_map_check_);
++  logger_ = node->get_logger();
+ }
+ 
+ /*****************************************************************************/
+@@ -377,6 +454,9 @@
+ /*****************************************************************************/
+ {
+   mapper_->Reset();
++  incremental_grid_.reset();
++  incremental_count_ = 0;
++  incremental_last_ = nullptr;
+ }
+ 
+ // explicit instantiation for the supported template types
+--- a/src/slam_toolbox_common.cpp
++++ b/src/slam_toolbox_common.cpp
+@@ -664,7 +664,10 @@
+   sstm_->publish(
+     std::move(std::make_unique<nav_msgs::msg::MapMetaData>(map_.map.info)));
+ 
+-  delete occ_grid;
++  // Benchmark incremental-map patch: the mapper keeps its incremental grid between updates.
++  if (!smapper_->ownsOccupancyGrid()) {
++    delete occ_grid;
++  }
+   occ_grid = nullptr;
+   return true;
+ }

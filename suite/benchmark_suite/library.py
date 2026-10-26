@@ -44,6 +44,7 @@ from .contracts import (
     ContractError,
     DEFAULT_LIMIT,
     PROFILE_DELETION_LIMIT,
+    RETIRED_TIME_LIMIT_RULES,
     RuleValue,
     Study,
     canonical,
@@ -335,7 +336,7 @@ class Library:
         return loaded
 
     def rule_value(self, world_id: str, robot_id: str) -> RuleValue | None:
-        """``kinematic-time-limit-v1`` for one world and robot: A from the world's pinned reference
+        """``TIME_LIMIT_RULE`` for one world and robot: A from the world's pinned reference
         (the rule module's ``target_area_m2``, as the tool computes it), R and v from the robot's Default
         catalog profile (``lidar.range_max``, ``max_linear_speed``). None without a reference of the
         rule's metric version (``RULE_METRIC_VERSION``)."""
@@ -736,6 +737,11 @@ class Library:
             accepted["study"] = dict(study.dictionary(), plan_sha256=digest)
         # The rule's values; CampaignSpec.accepted checks the rule name, the global time_limit, given
         # limits, capped pairs and robots that disagree (contracts.resolve_time_limit_inputs).
+        if raw.get("time_limit_rule") in RETIRED_TIME_LIMIT_RULES:
+            raise ContractError(
+                "time_limit_rule",
+                f"{raw['time_limit_rule']} is retired; use {TIME_LIMIT_RULE} (a restart keeps its rule)",
+            )
         if raw.get("time_limit_rule") == TIME_LIMIT_RULE:
             limits, inputs = self._rule_time_limits(raw, accepted)
             accepted.setdefault("world_time_limits", limits)

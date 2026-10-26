@@ -70,7 +70,7 @@ COPY launch.sh docker.sh /opt/benchmark_ws/
 COPY docker/entrypoint.sh /opt/benchmark_ws/docker/entrypoint.sh
 COPY docker/Dockerfile docker/Dockerfile.runtime docker/build_robot_dependencies.sh docker/fetch_slam_toolbox.sh docker/fetch_external_explorers.sh /opt/benchmark_ws/docker/
 COPY docker/patches /opt/benchmark_ws/docker/patches
-# SLAM Toolbox 2.8.5 with the grid-extent patch and the external explorers at their pinned commits
+# SLAM Toolbox 2.8.5 with the grid-extent and incremental-map patches and the external explorers at their pinned commits
 # (Dockerfile has the same step; pcl_ros is pinned in the apt step above).
 RUN bash /opt/benchmark_ws/docker/fetch_slam_toolbox.sh /opt/benchmark_ws/vendor_src && \
     bash /opt/benchmark_ws/docker/fetch_external_explorers.sh /opt/benchmark_ws/vendor_src
@@ -89,10 +89,11 @@ RUN /bin/bash -c "source /opt/ros/jazzy/setup.bash && source install/setup.bash 
       cache=build/\${package}/CMakeCache.txt; \
       if [ -f \${cache} ]; then grep -qx CMAKE_BUILD_TYPE:STRING=Release \${cache} || { echo not Release: \${package}; exit 1; }; fi; \
     done"
-# Mark the patched SLAM Toolbox build with its patch hash; the worker refuses any other build
-# (mapping-known-pose-v3, plans/worlds/I10).
-RUN cd /opt/benchmark_ws && sha256sum docker/patches/slam_toolbox-2.8.5-grid-extent.patch | cut -d' ' -f1 \
-    > install/slam_toolbox/share/slam_toolbox/benchmark_grid_extent.sha256
+# Mark the patched SLAM Toolbox build with the hash of its patches in the order applied; the worker refuses
+# any other build (mapping-known-pose-v3, plans/worlds/I10; incremental map since mapping-known-pose-v8).
+RUN cd /opt/benchmark_ws && cat docker/patches/slam_toolbox-2.8.5-grid-extent.patch \
+      docker/patches/slam_toolbox-2.8.5-incremental-map.patch \
+    | sha256sum | cut -d' ' -f1 > install/slam_toolbox/share/slam_toolbox/benchmark_grid_extent.sha256
 # Rebuild the E0 moving-object system from the current sources (Dockerfile has the same step; the variable
 # is repeated for bases built before it).
 RUN rm -rf /opt/benchmark_ws/world_collection/plugins/moving_objects /opt/benchmark-moving-objects

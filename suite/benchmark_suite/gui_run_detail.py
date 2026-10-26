@@ -43,7 +43,7 @@ from .gui_mapview import LiveMap
 from .gui_marks import CHART_LABEL, KeyValue, KeyValueList, tick_step
 from .gui_profile_preview import profile_differences
 from .gui_runs import outcome_look
-from .gui_style import duration, fixed, number
+from .gui_style import coverage_text, duration, fixed, number
 from .gui_support import POLL_MS, Transport, stale_engine_message
 from .gui_theme import ThemeManager, snap
 from .gui_widgets import (
@@ -1178,7 +1178,7 @@ def key_values(record: Mapping[str, Any]) -> tuple[list[KeyValue], list[KeyValue
     wall = (end - start) / 1e9 if isinstance(start, int) and isinstance(end, int) else None
     rtf_token = "state.warn" if record.get("low_rtf") else "text.ink"
     left = [
-        KeyValue("C(L)", number_text(record.get("coverage_at_limit_pct"), 1), "%"),
+        KeyValue("C(L)", coverage_text(record.get("coverage_at_limit_pct")) or "—", "%"),
         KeyValue("Covered area", number_text(record.get("covered_m2"), 1), "m²"),
         KeyValue("Ground-truth path", number_text(record.get("gt_path_length_m"), 2), "m"),
         KeyValue("Odometry", number_text(record.get("odom_distance_m"), 2), "m"),

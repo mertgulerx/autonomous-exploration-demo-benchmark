@@ -5,7 +5,7 @@ robots:
     id: tb3_waffle_pi
     label: TurtleBot3 Waffle Pi
     family: turtlebot3
-    version: 5
+    version: 6
     adapter: turtlebot3
     model: turtlebot3_waffle_pi
     packages:
@@ -26,7 +26,7 @@ robots:
     - - 0.0735
       - -0.158
     spawn_z: 0.01
-    physics_step: 0.001
+    physics_step: 0.005
     kinematics: differential
     required_streams:
     - clock
@@ -42,8 +42,10 @@ robots:
       samples: 360
       specification: https://emanual.robotis.com/docs/en/platform/turtlebot3/appendix_lds_02/
     limits_source: Native Gazebo DiffDrive linear acceleration (1 m/s^2); official
-      Jazzy navigation angular limits and manufacturer linear speed bound. Native
-      simulation physics step (1 ms) preserves the 200 Hz IMU.
+      Jazzy navigation angular limits and manufacturer linear speed bound. Physics
+      step 5 ms (version 6, 26 October 2026; native 1 ms before) is the longest step
+      that keeps the 200 Hz IMU and divides the 10 ms ground-truth period; it cuts the
+      physics work about fivefold.
     footprint_source: Native zero-joint collision envelope plus 5 mm planar margin;
       config/collision_envelopes.json
   tb4_standard:

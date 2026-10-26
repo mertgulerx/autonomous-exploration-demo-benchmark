@@ -62,10 +62,17 @@ def fixed(value: object, digits: int) -> str | None:
     return text.replace("-", "\u2212")
 
 
+def coverage_text(value: object) -> str | None:
+    """A coverage percentage with one decimal, rounded down: a shown value never reaches a milestone the run did
+    not reach (99.894 shows as 99.8, beside "99.9 % not reached"). None when unavailable."""
+    found = number(value)
+    return None if found is None else fixed(math.floor(found * 10) / 10, 1)
+
+
 def worker_values(metrics: Mapping[str, Any]) -> list[tuple[str, str, str]]:
     """A worker's Coverage, Sim time and Distance (Campaigns tiles and Monitor cards): label, value ("—" when
     unavailable) and unit (none when unavailable)."""
-    coverage = fixed(metrics.get("coverage_percent"), 1)
+    coverage = coverage_text(metrics.get("coverage_percent"))
     distance = fixed(metrics.get("distance_m"), 1)
     return [
         ("Coverage", coverage or "—", "%" if coverage else ""),
@@ -83,9 +90,9 @@ def cell_text(key: str, value: Any) -> str:
         "pre_motion_wall_elapsed",
     }:
         return duration(value)
-    if key in {"cpu_percent", "cpu_average_percent", "coverage_percent"} and isinstance(
-        value, (float, int)
-    ):
+    if key == "coverage_percent" and isinstance(value, (float, int)):
+        return f"{coverage_text(value) or '—'}%"
+    if key in {"cpu_percent", "cpu_average_percent"} and isinstance(value, (float, int)):
         return f"{value:.1f}%"
     if key in {"rss_mib", "rss_average_mib"} and isinstance(value, (float, int)):
         return f"{value:.1f} MiB"

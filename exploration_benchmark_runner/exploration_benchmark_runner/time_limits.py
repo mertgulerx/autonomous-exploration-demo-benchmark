@@ -12,10 +12,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Time-limit rule ``kinematic-time-limit-v1`` (docs/MEASUREMENTS.md, "Time limits
-and outcomes").
+"""Time-limit rule ``kinematic-time-limit-v2`` (docs/MEASUREMENTS.md, "Time limits
+and outcomes"; v1, before 26 October 2026: factor 30, floor 600 s).
 
-L = min(14400, max(600, ceil(30 * A / (2 * R * v)))) simulation seconds, with A the
+L = min(14400, max(300, ceil(20 * A / (2 * R * v)))) simulation seconds, with A the
 target area of the world's coverage reference (target cells times resolution
 squared), R the robot's catalog lidar range and v its catalog top linear speed, both
 from the Default physical settings. The quotient is computed exactly from the
@@ -28,13 +28,15 @@ from dataclasses import dataclass
 from fractions import Fraction
 import math
 
-TIME_LIMIT_RULE = "kinematic-time-limit-v1"
+TIME_LIMIT_RULE = "kinematic-time-limit-v2"
 # The rule takes A from a world's metric-version-2 coverage reference (I4 §3.1); a
 # world without one has no rule values. The suite's catalog, campaign check and tool
 # read it.
 RULE_METRIC_VERSION = 2
-FACTOR = 30
-FLOOR_S = 600
+# v2 (WORLD_COLLECTION decision 69): about 2.4 times the run times observed in small worlds;
+# v1 had factor 30 and floor 600 s.
+FACTOR = 20
+FLOOR_S = 300
 CAP_S = 14400
 
 
@@ -78,7 +80,7 @@ def target_area_m2(cells, resolution):
 
 
 def kinematic_time_limit(target_cells, resolution_m, range_m, speed_mps):
-    """Return the ``kinematic-time-limit-v1`` limit for one world and robot."""
+    """Return the ``TIME_LIMIT_RULE`` limit for one world and robot."""
     area = target_area_m2(target_cells, resolution_m)
     lidar_range = exact(range_m, "range_m")
     speed = exact(speed_mps, "speed_mps")

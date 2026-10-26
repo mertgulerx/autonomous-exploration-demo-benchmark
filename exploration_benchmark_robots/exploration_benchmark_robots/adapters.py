@@ -31,6 +31,8 @@ from .known_pose import (
     MAPPING_CONDITION,
     NO_RETURN_FREE_LENGTH_M,
     SLAM_HEADING_CHECK,
+    SLAM_INCREMENTAL_MAP,
+    SLAM_MAP_UPDATE_INTERVAL_S,
     SLAM_TOOLBOX_PATCH_SHA256,
     SLAM_TOOLBOX_VERSION,
     add_ground_truth_publisher,
@@ -415,6 +417,8 @@ def mapping_parameters():
         slam_toolbox_version=SLAM_TOOLBOX_VERSION,
         slam_toolbox_patch_sha256=SLAM_TOOLBOX_PATCH_SHA256,
         slam_heading_check=SLAM_HEADING_CHECK,
+        slam_map_update_interval_s=SLAM_MAP_UPDATE_INTERVAL_S,
+        slam_incremental_map=SLAM_INCREMENTAL_MAP,
     )
 
 
@@ -471,6 +475,10 @@ def prepare_mapping(profile, directory, generated, shared):
         do_loop_closing=False,
         # mapping-known-pose-v6: turning in place adds scans too (minimum_travel_heading), not only travel.
         check_min_dist_and_heading_precisely=SLAM_HEADING_CHECK,
+        # mapping-known-pose-v7: grid rebuilds every 0.9 s (shared file 0.3 s), as the rebuild cost grows with the map.
+        map_update_interval=SLAM_MAP_UPDATE_INTERVAL_S,
+        # mapping-known-pose-v8: the incremental-map patch adds only new scans at each update.
+        benchmark_incremental_map=SLAM_INCREMENTAL_MAP,
         max_laser_range=threshold,
         scan_buffer_maximum_scan_distance=threshold,
     )
@@ -505,6 +513,8 @@ def prepare_mapping(profile, directory, generated, shared):
         scan_matching=False,
         loop_closing=False,
         slam_heading_check=SLAM_HEADING_CHECK,
+        slam_map_update_interval_s=SLAM_MAP_UPDATE_INTERVAL_S,
+        slam_incremental_map=SLAM_INCREMENTAL_MAP,
         slam_shared_source=str(shared),
     )
 

@@ -83,7 +83,7 @@ RUN /bin/bash -lc "source /opt/ros/${ROS_DISTRO}/setup.bash && \
     rosdep install --from-paths exploration_packages simulation rviz exploration_benchmark_interfaces exploration_benchmark_robots exploration_benchmark_runner --ignore-src -r -y && \
     rm -rf /var/lib/apt/lists/*"
 
-# SLAM Toolbox 2.8.5 with the grid-extent patch, built in the workspace so it overlays the apt package, and
+# SLAM Toolbox 2.8.5 with the grid-extent and incremental-map patches, built in the workspace so it overlays the apt package, and
 # the external explorers explore_lite, roadmap_explorer, rrt_explore, tdle and mrtsp_exploration_ros2 at their
 # pinned commits (plans/EXTERNAL_EXPLORERS, EXTERNAL_EXPLORERS_RRT_TDLE, EXTERNAL_EXPLORERS_MRTSP; their binary
 # dependencies, pcl_ros among them, come from the binary lock).
@@ -103,10 +103,10 @@ RUN cd ${WORKSPACE_DIR} && \
     for cache in build/*/CMakeCache.txt; do \
       grep -qx 'CMAKE_BUILD_TYPE:STRING=Release' "${cache}" || { echo "not Release: ${cache}"; exit 1; }; \
     done
-# Mark the patched SLAM Toolbox build with its patch hash; the worker refuses any other build
-# (mapping-known-pose-v3, plans/worlds/I10).
-RUN sha256sum docker/patches/slam_toolbox-2.8.5-grid-extent.patch | cut -d' ' -f1 \
-    > install/slam_toolbox/share/slam_toolbox/benchmark_grid_extent.sha256
+# Mark the patched SLAM Toolbox build with the hash of its patches in the order applied; the worker refuses
+# any other build (mapping-known-pose-v3, plans/worlds/I10; incremental map since mapping-known-pose-v8).
+RUN cat docker/patches/slam_toolbox-2.8.5-grid-extent.patch docker/patches/slam_toolbox-2.8.5-incremental-map.patch \
+    | sha256sum | cut -d' ' -f1 > install/slam_toolbox/share/slam_toolbox/benchmark_grid_extent.sha256
 
 # E0 moving-object system (world_collection/plugins/moving_objects, plain CMake; COLCON_IGNORE keeps it out of
 # the colcon build). No build type: the project's fixed flags alone, as in its agreement test. Workers launch

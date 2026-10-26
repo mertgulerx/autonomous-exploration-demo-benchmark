@@ -51,7 +51,7 @@ from .gui_cells import (
 )
 from .gui_controls import BadgeLook, KeySelect, badge_look
 from .gui_menus import INSET, ITEM_HEIGHT, ITEM_TEXT, SEPARATOR_HEIGHT
-from .gui_style import duration, fixed, humanize
+from .gui_style import coverage_text, duration, fixed, humanize
 from .gui_support import PagedTable, PagedTableModel, Transport
 from .gui_theme import ThemeManager, paint_check, snap
 from .gui_widgets import (
@@ -370,7 +370,7 @@ def run_cell(record: Mapping[str, Any], key: str, names: Names) -> Cell:
             return Cell("not reached", token="text.secondary")
         return missing
     if key == "coverage":
-        text = fixed(record.get("coverage_at_limit_pct"), 1)
+        text = coverage_text(record.get("coverage_at_limit_pct"))
         return Cell(text, "number", unit="%", token=token) if text else missing
     if key == "rtf":
         text = fixed(record.get("rtf_min_5s"), 2)

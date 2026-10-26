@@ -427,10 +427,12 @@ class FlexRow(QtWidgets.QWidget, CssBox):
         split = len(self.items) if self.stretch_at is None else self.stretch_at
         height = float(self.height()) if self.inner_height is None else self.inner_height
         x = self.shift + self.left
-        for index, (widget, width, gap, margin) in enumerate(self.items[:split]):
+        first = True  # hidden leading items take no gap
+        for widget, width, gap, margin in self.items[:split]:
             if not widget.isVisibleTo(self):
                 continue
-            x += (gap if index else 0) + margin
+            x += (0 if first else gap) + margin
+            first = False
             size = self.width_of(widget, width)
             self._place(widget, x, size, height)
             x += size + margin

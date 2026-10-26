@@ -12,7 +12,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Read-only tool: ``kinematic-time-limit-v1`` limits of one robot per world.
+"""Read-only tool: the time-limit rule's limits (``TIME_LIMIT_RULE``) of one robot per world.
 
 ``python -m benchmark_suite.time_limits --robot tb4_standard [--world ID ...]`` (run from
 ``suite/``) prints the inputs and values as YAML comments, then a ``world_time_limits:``
@@ -358,7 +358,7 @@ def render(rule: Rule, robot: RobotInput, rows: Sequence[Row]) -> str:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         prog="python -m benchmark_suite.time_limits",
-        description="Print kinematic-time-limit-v1 limits and horizons (read-only).",
+        description="Print the time-limit rule's limits and horizons (read-only).",
     )
     parser.add_argument("--robot", required=True, help="catalog robot ID, for example tb4_standard")
     parser.add_argument(

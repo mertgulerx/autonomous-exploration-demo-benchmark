@@ -40,8 +40,17 @@ import xml.etree.ElementTree as ET
 # the range threshold (tuning runs only); v4: the same patch with no-return beams
 # free for NO_RETURN_FREE_LENGTH_M only (docker/patches, plan I10 §8); v5: a static map -> odom, a pilot trial on
 # 26 October 2026, reverted; v6 (26 October 2026): v4 with SLAM_HEADING_CHECK, so turning in place also adds scans
-# (SLAM Toolbox's default checks only travel distance, so the worker's start sweep added none).
-MAPPING_CONDITION = "mapping-known-pose-v6"
+# (SLAM Toolbox's default checks only travel distance, so the worker's start sweep added none); v7 (26 October 2026):
+# v6 with SLAM_MAP_UPDATE_INTERVAL_S (0.3 s before): Karto rebuilds the grid from every kept scan at each update, which
+# made SLAM Toolbox fall behind on large maps; v8 (26 October 2026): v7 with SLAM_INCREMENTAL_MAP, the incremental-map
+# patch: the grid sits on a fixed 0.05 m lattice (its origin a whole cell, not the scans' exact bounding-box corner)
+# and each update adds only the new scans, identical to a full rebuild on that lattice.
+MAPPING_CONDITION = "mapping-known-pose-v8"
+# SLAM Toolbox's benchmark_incremental_map (v8, the incremental-map patch): map updates add only the scans
+# processed since the last update; the patch uses it only without scan matching and loop closing.
+SLAM_INCREMENTAL_MAP = True
+# SLAM Toolbox's map_update_interval (v7): seconds between grid rebuilds and /map publications.
+SLAM_MAP_UPDATE_INTERVAL_S = 0.9
 # SLAM Toolbox's check_min_dist_and_heading_precisely (v6): a scan is processed after minimum_travel_heading of
 # turning as well as after minimum_travel_distance of travel.
 SLAM_HEADING_CHECK = True
@@ -50,14 +59,19 @@ SLAM_HEADING_CHECK = True
 # Compiled into the patch as kBenchmarkNoReturnFreeLength; keep the two equal.
 NO_RETURN_FREE_LENGTH_M = 5.0
 SLAM_TOOLBOX_VERSION = "2.8.5"
-SLAM_TOOLBOX_PATCH = "slam_toolbox-2.8.5-grid-extent.patch"
-SLAM_TOOLBOX_PATCH_SHA256 = (
-    "381910851b8d625e982b870937318e489282f8463b7db93fc42b83a4940c6b8b"
+# Applied in this order by docker/fetch_slam_toolbox.sh.
+SLAM_TOOLBOX_PATCHES = (
+    "slam_toolbox-2.8.5-grid-extent.patch",
+    "slam_toolbox-2.8.5-incremental-map.patch",
 )
-# Written next to the patched build's share files by the Dockerfiles.
+# SHA-256 of the patches concatenated in that order (grid-extent alone before v8).
+SLAM_TOOLBOX_PATCH_SHA256 = (
+    "2c8257b495d6dbf05c3f85295d62b0ce843c4158b76692209c7021105df8a6c5"
+)
+# Written next to the patched build's share files by the Dockerfiles (the name kept from v4).
 SLAM_TOOLBOX_PATCH_MARKER = "share/slam_toolbox/benchmark_grid_extent.sha256"
-# 100 Hz: an exact 5:1 multiple of the recorded 20 Hz ground_truth stream on both
-# physics steps in use (0.01 s and 0.001 s); 50 Hz would not decimate to 20 Hz.
+# 100 Hz: an exact 5:1 multiple of the recorded 20 Hz ground_truth stream on the
+# physics steps in use (0.01 s and 0.005 s; 0.001 s before 26 October 2026); 50 Hz would not decimate to 20 Hz.
 GROUND_TRUTH_RATE_HZ = 100
 # The suite's ground_truth stream keeps the first pose of every 50 ms of sim time.
 GROUND_TRUTH_RECORD_PERIOD_NS = 50_000_000

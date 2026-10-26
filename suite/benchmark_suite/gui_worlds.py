@@ -109,12 +109,12 @@ RULE_UNAVAILABLE = (
 
 DEFAULT_WORLD = "bookstore"  # ticked when a new campaign starts (as the default robot on step 1)
 # The campaign key's value is contracts.TIME_LIMIT_RULE (plan I4); the engine computes the limits.
-# The rule's formula as the tooltip writes it: it belongs to TIME_LIMIT_RULE (I4 §3.1: factor 30, floor 600 s,
-# cap 14,400 s; exploration_benchmark_runner.time_limits); change both together. The GUI only shows it; the
-# values always come from the catalog.
-RULE_FLOOR_S = 600
+# The rule's formula as the tooltip writes it: it belongs to TIME_LIMIT_RULE (kinematic-time-limit-v2: factor 20,
+# floor 300 s, cap 14,400 s; exploration_benchmark_runner.time_limits); change both together. The GUI only shows
+# it; the values always come from the catalog.
+RULE_FLOOR_S = 300
 RULE_CAP_S = 14400
-RULE_FORMULA = f"min({RULE_CAP_S}, max({RULE_FLOOR_S}, ⌈30 A / (2 R v)⌉))"
+RULE_FORMULA = f"min({RULE_CAP_S}, max({RULE_FLOOR_S}, ⌈20 A / (2 R v)⌉))"
 
 # Sections of the world step, in order, with their titles: a generated world's family (F1–F5), else its tier.
 # The analysis package groups worlds the same way (benchmark_analysis/worlds.py GROUP_ORDER, GROUP_TITLES), but

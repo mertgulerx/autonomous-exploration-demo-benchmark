@@ -14,7 +14,8 @@
 
 """The Monitor page (HANDOFF §8.9–§8.13, screens 09–12).
 
-The page head names the active workers' campaign and opens it on Campaigns. The worker strip has one card per
+The page head names the active workers' campaign and opens it on Campaigns; while a run is on the card and workers
+are active, its "All runs" link goes back to every worker's live map and stays there until a worker is chosen. The worker strip has one card per
 active worker (slot order): its tag, robot, attempt badge and experiment, then Coverage, Sim time and Distance,
 or the readiness detail while it starts. The run card shows the selected run: the view switch (Map & metrics,
 Logs, Events), the attempt's worker, number and start, and Stop run. Map & metrics is the live map (fed by
@@ -67,10 +68,19 @@ from .gui_marks import (
 )
 from .gui_menus import show_tooltip
 from .gui_profile_preview import DEFAULT_EXPLORER
-from .gui_style import cell_text, duration, fixed, humanize, number, worker_values
+from .gui_style import (
+    cell_text,
+    coverage_text,
+    duration,
+    fixed,
+    humanize,
+    number,
+    worker_values,
+)
 from .gui_support import Transport, stale_engine_message
 from .gui_theme import ThemeManager, snap
 from .gui_viewers import TITLES, Kind, RunViewers
+from .gui_wizard import BackLink
 from .gui_widgets import (
     BODY,
     CARD_TITLE,
@@ -523,7 +533,7 @@ class MeasurementsContent(Themed):
     def set_metrics(self, metrics: Mapping[str, Any], *, ended: bool) -> None:
         self.ended = ended
         self.health, self.health_tip = health_badge(metrics)
-        self.coverage = fixed(metrics.get("coverage_percent"), 1)
+        self.coverage = coverage_text(metrics.get("coverage_percent"))
         self.covered = fixed(metrics.get("coverage_covered_m2"), 1)
         self.target = fixed(metrics.get("coverage_target_m2"), 1)
         status = metrics.get("coverage_status")
@@ -967,6 +977,7 @@ class MonitorPage(QtWidgets.QWidget):
         self.replayer = ReplayController(transport, self)
         self.replay_run: dict[str, Any] | None = None
         self.replay_hold = False  # opened from Results: the sole live worker is not followed
+        self.overview_hold = False  # All runs: the sole live worker is not followed until chosen
         self.final_metrics: dict[str, Any] = {}
         self.pending_replay: str | None = None  # the Results attempt being looked up
         self.replay_attempt_row: dict[str, Any] = {}
@@ -981,9 +992,13 @@ class MonitorPage(QtWidgets.QWidget):
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(16)
-        # Page head (``.page-head``): title, campaign, Open campaign.
+        # Page head (``.page-head``): All runs (while a run is on the card), title, campaign, Open campaign.
         self.head = FlexRow(gap=12)
         self.head.setFixedHeight(36)
+        self.back = BackLink(themes, "All runs")
+        self.back.setToolTip("Back to every active worker's live map")
+        self.back.clicked.connect(self.show_overview)
+        self.head.add(self.back)
         self.head.add(TextLine(themes, "Monitor", PAGE_TITLE, "text.ink"))
         self.context = TextLine(themes, "", BODY, "text.secondary")
         self.head.add(self.context)
@@ -1136,6 +1151,7 @@ class MonitorPage(QtWidgets.QWidget):
                 "monitor-campaign:" + campaign, "campaign.status", {"campaign_id": campaign}
             )
         self.context.setText(name)
+        self.back.setVisible(self.shown_run is not None and bool(self.active_runs()))
         self.open_link.setVisible(campaign is not None and campaign not in self.tuning_campaigns)
         self.head.relayout()
         self.events.set_campaign(campaign)
@@ -1167,8 +1183,8 @@ class MonitorPage(QtWidgets.QWidget):
     # ---------- selection ----------
 
     def follow_single_worker(self) -> None:
-        if self.replay_hold:
-            return  # a replay opened from Results stays until a worker is chosen
+        if self.replay_hold or self.overview_hold:
+            return  # a replay opened from Results, or All runs, stays until a worker is chosen
         active = self.active_runs()
         if len(active) == 1 and self.selected_attempt != active[0]["attempt"]["id"]:
             self.choose_worker(active[0]["attempt"]["id"], focus_map=False)
@@ -1179,6 +1195,7 @@ class MonitorPage(QtWidgets.QWidget):
             return
         changed = identity != self.selected_attempt or self.replay is not None
         self.end_replay()  # also a Results lookup still pending: its reply is ignored
+        self.overview_hold = False
         self.selected_attempt = identity
         self.shown_run = active
         self.strip.select(identity)
@@ -1195,6 +1212,17 @@ class MonitorPage(QtWidgets.QWidget):
         self._update_head()
         self._update_card()
         self.inspect_selected()
+
+    def show_overview(self) -> None:
+        """All runs: leave the run on the card (a replay ends) for every active worker's live map."""
+        self.end_replay()
+        self.close_monitor()
+        self.overview_hold = True
+        self.selected_attempt = None
+        self.shown_run = None
+        self.strip.select(None)
+        self._update_head()
+        self._update_card()
 
     def _show_run(self, run: dict[str, Any]) -> None:
         self.card.set_meta(attempt_meta(run["attempt"], self.explorer_name_of(run)), None)
@@ -1591,6 +1619,7 @@ class MonitorPage(QtWidgets.QWidget):
         self.strip.select(None)
         self.shown_run = run
         self.replay_hold = True  # the sole live worker is not followed until a worker is chosen
+        self.overview_hold = False
         identity = str(attempt["id"])
         self.measurements.clear()
         self.coverage = CoverageHistory(identity)

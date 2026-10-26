@@ -103,7 +103,7 @@ from exploration_benchmark_robots.adapters import (
 from exploration_benchmark_robots.known_pose import (
     GROUND_TRUTH_TOPIC,
     MAPPING_STATUS_TOPIC,
-    SLAM_TOOLBOX_PATCH,
+    SLAM_TOOLBOX_PATCHES,
     SLAM_TOOLBOX_PATCH_MARKER,
     SLAM_TOOLBOX_PATCH_SHA256,
     odom_origin,
@@ -157,7 +157,7 @@ NAV_NODES = (
 NAV_DISCOVERY_SETTLE_SECONDS = 3.0
 NAV_ACTIVATION_TIMEOUT_SECONDS = 60.0
 # A start topic's true (profiles.yaml ``start: topic``) waits for this many start_after messages after the
-# explorer's subscriber appears: at 2 Hz (the global costmap) at least one full period after discovery.
+# explorer's subscriber appears: at 1 Hz (the global costmap) at least one full period after discovery.
 START_AFTER_MESSAGES = 2
 # rrt-explore's true is repeated every wall second until its state reads ACTIVE, for at most this long (A5).
 START_REPEAT_S = 30.0
@@ -204,7 +204,7 @@ def require_mapping_executables():
             "runtime image older than I10 (known-pose mapping): rebuild the runtime "
             f"image, then the suite image (missing {', '.join(missing)} in {prefix})"
         )
-    # mapping-known-pose-v4: the SLAM Toolbox that launches must be the patched build.
+    # mapping-known-pose-v4: the SLAM Toolbox that launches must be the patched build (both patches since v8).
     try:
         slam_prefix = FilePath(get_package_prefix("slam_toolbox"))
     except PackageNotFoundError as exc:
@@ -213,8 +213,8 @@ def require_mapping_executables():
     found = marker.read_text().strip() if marker.is_file() else None
     if found != SLAM_TOOLBOX_PATCH_SHA256:
         raise RuntimeError(
-            f"SLAM Toolbox in {slam_prefix} is not the build with {SLAM_TOOLBOX_PATCH} "
-            "(mapping-known-pose-v4): rebuild the runtime image, then the suite image "
+            f"SLAM Toolbox in {slam_prefix} is not the build with {', '.join(SLAM_TOOLBOX_PATCHES)} "
+            "(mapping-known-pose-v8): rebuild the runtime image, then the suite image "
             f"(marker {'missing' if found is None else 'differs'})"
         )
 

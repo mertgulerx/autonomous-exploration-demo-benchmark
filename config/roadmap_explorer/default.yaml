@@ -1,7 +1,8 @@
 # Benchmark Default of roadmap-explorer: the author's 2D-lidar file params/tb3_exploration_params.yaml of
 # github.com/suchetanrs/roadmap-explorer at 203ff2602e1a1e41eec7ef663eacc21266e270c6 (Apache-2.0), unchanged except
-# where marked "benchmark" (docs/plans/EXTERNAL_EXPLORERS.md, decisions E2 and E4). Generated per run (managed):
-# explorationBT.exploration_boundary (the world reference's bounds) and the costmap footprint (the robot's).
+# where marked "benchmark" (docs/plans/EXTERNAL_EXPLORERS.md, decisions E2, E4 and E10). Generated per run (managed):
+# explorationBT.exploration_boundary (the world reference's bounds), the costmap footprint (the robot's) and the
+# costmap's inflation_radius, raised to the robot's padded circumradius when below it (E10).
 roadmap_explorer_node:
   ros__parameters:
     use_sim_time: True  # benchmark (simulation clock)
@@ -86,7 +87,7 @@ roadmap_explorer_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         enabled: True
-        inflation_radius: 0.10
+        inflation_radius: 0.10  # benchmark (E10): raised per run to the robot's padded circumradius
         cost_scaling_factor: 0.5
         inflate_unknown: false
         inflate_around_unknown: false

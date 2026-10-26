@@ -20,6 +20,8 @@ import math
 from pathlib import Path
 import yaml
 
+from exploration_benchmark_robots.catalog import footprint_circumradius
+
 from .parameters import nest
 
 # Margin around the target cells farthest from the spawn in roadmap-explorer's exploration boundary (metres).
@@ -76,6 +78,8 @@ def resolve_parameters(spec, directory, profile, robot=None, spawn=None, referen
     # beside a shipped robot_radius (decision E4): Nav2 shapes the costmap by the footprint and ignores robot_radius
     # for it, while roadmap-explorer reads robot_radius (getRobotRadius) as its frontiers' clearance from lethal
     # cells; deleting it (until 26 October 2026) left Nav2's default 0.1 m there instead of the shipped 0.60 m.
+    # The costmap's inflation reaches at least the robot's padded circumradius (decision E10): the shipped 0.10 m
+    # let frontiers, goals and roadmap edges lie closer to walls than the robot's body.
     for section, content in default_document(profile).items():
         if section == node:
             continue
@@ -84,6 +88,14 @@ def resolve_parameters(spec, directory, profile, robot=None, spawn=None, referen
             if "robot_radius" in scope and robot is not None:
                 scope["footprint"] = json.dumps(robot["footprint"])
                 integration[f"{section}.footprint"] = scope["footprint"]
+                inflation = scope.get("inflation_layer")
+                if isinstance(inflation, dict) and "inflation_radius" in inflation:
+                    padding = scope.get("footprint_padding", 0.01)  # Nav2's default
+                    circumradius = footprint_circumradius(robot["footprint"], padding)
+                    radius = math.ceil(1000 * circumradius) / 1000
+                    if inflation["inflation_radius"] < radius:
+                        inflation["inflation_radius"] = radius
+                        integration[f"{section}.inflation_layer.inflation_radius"] = radius
             scope["use_sim_time"] = True
         parameters[section] = content
     path = Path(directory) / "resolved_parameters.yaml"

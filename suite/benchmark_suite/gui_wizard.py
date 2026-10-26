@@ -983,7 +983,7 @@ class SummaryItem:
     name: str
     detail: str
     count: int | None = None
-    mono: bool = False  # the detail is an identifier ("kinematic-time-limit-v1", 38)
+    mono: bool = False  # the detail is an identifier ("kinematic-time-limit-v2", 38)
 
 
 @dataclass(frozen=True, slots=True)

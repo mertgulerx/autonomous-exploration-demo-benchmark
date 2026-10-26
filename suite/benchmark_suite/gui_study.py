@@ -49,7 +49,7 @@ from .gui_dialogs import wrap_text
 from .gui_marks import KeyValue, KeyValueList
 from .gui_pdf import Well
 from .gui_runs import run_label
-from .gui_style import duration, fixed, humanize, number
+from .gui_style import coverage_text, duration, humanize, number
 from .gui_support import POLL_MS, TableModel, Transport
 from .gui_theme import ThemeManager
 from .contracts import OUR_EXPLORER, explorer_failure, measured_as
@@ -2084,7 +2084,7 @@ class StudyTab(QtWidgets.QWidget):
     def _describe_trace(self, run: Mapping[str, Any]) -> str:
         repetition = run.get("repetition")
         completion = number(run.get("completion_s"))
-        coverage = fixed(run.get("coverage_at_limit_pct"), 1)
+        coverage = coverage_text(run.get("coverage_at_limit_pct"))
         outcome = (
             f"Completed {duration(completion)}"
             if run.get("outcome") == "completed"
