@@ -19,6 +19,7 @@ from collections.abc import Callable, Set as AbstractSet
 from dataclasses import dataclass, field
 from functools import partial
 import json
+import math
 from typing import Any
 
 from PySide6 import QtCore, QtGui, QtWidgets
@@ -1035,6 +1036,8 @@ TILE_UNIT = TextStyle(13, 400, 18)
 WHO = TextStyle(13, 600, 18)
 # ``.thumb .map``: at most 132×124 (three or four workers: 96×90), in the world's aspect.
 WIDE_MAP, NARROW_MAP = (132.0, 124.0), (96.0, 90.0)
+# A fill tile's text below its map: the values line (8 + 18 px) and the two identity lines (8 + 25 + 18 px).
+FILL_TEXT_HEIGHT = 77.0
 
 
 @dataclass(slots=True)
@@ -1076,6 +1079,9 @@ class WorkerTile(Themed, CssBox):
         self.setProperty("focusRadius", 8)
         self.setToolTip("Open this run on the Monitor")
         self.narrow = False
+        # ``fill`` (the Monitor's all-workers view): the map takes the column's width and the height left above the
+        # values and identity lines (FILL_TEXT_HEIGHT), the values below it as in a narrow tile.
+        self.fill = False
         self.run: dict[str, Any] = {}
         self.robot = ""
         self.values = worker_values({})
@@ -1127,6 +1133,8 @@ class WorkerTile(Themed, CssBox):
 
     def map_size(self) -> tuple[int, int]:
         _, width = self.column()
+        if self.fill:
+            return map_box(self.map.world, (width, max(1.0, self.height() - 2 - FILL_TEXT_HEIGHT)))
         if self.narrow:
             return map_box(self.map.world, (min(NARROW_MAP[0], width), NARROW_MAP[1]))
         return map_box(self.map.world, WIDE_MAP)
@@ -1147,7 +1155,7 @@ class WorkerTile(Themed, CssBox):
             return
         painter = QtGui.QPainter(self)
         map_width, map_height = self.map_size()
-        if self.narrow:
+        if self.narrow or self.fill:
             self.paint_values_below(painter, 1 + map_height + 8)
             line1 = 1 + map_height + 8 + 18 + 8
         else:
@@ -1218,13 +1226,24 @@ class LiveCard(Card):
     open_worker = QtCore.Signal(str)  # a tile was clicked: the Monitor with that run selected
 
     def __init__(
-        self, themes: ThemeManager, transport: Transport, parent: QtWidgets.QWidget | None = None
+        self,
+        themes: ThemeManager,
+        transport: Transport,
+        parent: QtWidgets.QWidget | None = None,
+        *,
+        tag_prefix: str = "tile-",
+        monitor_link: bool = True,
+        fill: bool = False,
     ) -> None:
         super().__init__(themes, parent)
         self.transport = transport
+        # ``tag_prefix``: its replies' tags, distinct per card (the window routes "tile-" to the Campaigns card);
+        # ``fill``: tiles whose maps fill their columns (the Monitor's view of every worker, without the link).
+        self.prefix, self.fill = tag_prefix, fill
         self.title = TextLine(themes, "Live on the map", CARD_TITLE, "text.ink", self)
         self.link = LinkButton(themes, "Open Monitor", parent=self)
         self.link.clicked.connect(self.open_monitor)
+        self.link.setVisible(monitor_link)
         self.tiles: dict[str, WorkerTile] = {}
         self.runs: list[dict[str, Any]] = []
         self.live: dict[str, LiveRun] = {}
@@ -1250,6 +1269,7 @@ class LiveCard(Card):
             experiment = run["experiment"]
             if identity not in self.tiles:
                 self.tiles[identity] = WorkerTile(self.themes, self)
+                self.tiles[identity].fill = self.fill
                 self.tiles[identity].clicked.connect(self.open_worker)
                 self.tiles[identity].show()
                 self.live[identity] = LiveRun(world_id=experiment["world_id"])
@@ -1273,7 +1293,9 @@ class LiveCard(Card):
     def request_world(self, world_id: str) -> None:
         if world_id not in self.world_requests:
             self.world_requests.add(world_id)
-            self.transport.submit("tile-map:" + world_id, "spawns.map", {"world_id": world_id})
+            self.transport.submit(
+                self.prefix + "map:" + world_id, "spawns.map", {"world_id": world_id}
+            )
 
     def poll(self) -> None:
         if not self.isVisible():
@@ -1287,7 +1309,7 @@ class LiveCard(Card):
             return
         live.pending = True
         self.transport.submit(
-            "tile-monitor:" + identity,
+            self.prefix + "monitor:" + identity,
             "monitor.get",
             {
                 "attempt_id": identity,
@@ -1301,8 +1323,8 @@ class LiveCard(Card):
 
     def received(self, tag: str, result: Any) -> bool:
         """Handle a reply for this card; False when the tag is not one of its own."""
-        if tag.startswith("tile-map:"):
-            world_id = tag.removeprefix("tile-map:")
+        if tag.startswith(self.prefix + "map:"):
+            world_id = tag.removeprefix(self.prefix + "map:")
             try:
                 self.worlds[world_id] = WorldMap.from_reply(result)
             except (KeyError, TypeError, ValueError):
@@ -1312,10 +1334,12 @@ class LiveCard(Card):
                 if self.live[identity].world_id == world_id:
                     tile.map.set_world(self.worlds[world_id])
                     tile.relayout()
+            if self.fill:
+                self.relayout()  # the grid depends on the worlds' aspects
             return True
-        if not tag.startswith("tile-monitor:"):
+        if not tag.startswith(self.prefix + "monitor:"):
             return False
-        identity = tag.removeprefix("tile-monitor:")
+        identity = tag.removeprefix(self.prefix + "monitor:")
         live = self.live.get(identity)
         if live is None:
             return True
@@ -1334,11 +1358,11 @@ class LiveCard(Card):
         return True
 
     def failed(self, tag: str, error: str) -> bool:
-        if tag.startswith("tile-map:"):
-            self.world_requests.discard(tag.removeprefix("tile-map:"))
+        if tag.startswith(self.prefix + "map:"):
+            self.world_requests.discard(tag.removeprefix(self.prefix + "map:"))
             return True
-        if tag.startswith("tile-monitor:"):
-            live = self.live.get(tag.removeprefix("tile-monitor:"))
+        if tag.startswith(self.prefix + "monitor:"):
+            live = self.live.get(tag.removeprefix(self.prefix + "monitor:"))
             if live is not None:
                 live.pending = False
             return True  # the tile keeps its last map; the run's own state shows in its badge
@@ -1373,19 +1397,47 @@ class LiveCard(Card):
 
     def relayout(self) -> None:
         left, room = self.content()
-        link = self.link.natural_width()
+        link = self.link.natural_width() if self.link.isVisibleTo(self) else 0.0
         place(self.title, left, 23, max(0.0, room - link - 16), 20)
-        place(self.link, left + room - link, 24, link, 18)
+        if link:
+            place(self.link, left + room - link, 24, link, 18)
         count = len(self.runs)
         if not count:
             return
-        column = (room - 16 * (count - 1)) / count
         height = self.height() - 57 - 20
+        if self.fill:
+            self.place_grid(left, room, height)
+            return
+        column = (room - 16 * (count - 1)) / count
         for index, run in enumerate(self.runs):
             # ``.wk + .wk``: a 1 px rule and 16 px padding before the column's content.
             x = left + index * (column + 16) + (17 if index else 0)
             inner = column - (17 if index else 0)
             place(self.tiles[run["attempt"]["id"]], x - 1, 56, inner + 2, height + 2)
+
+    def place_grid(self, left: float, room: float, height: float) -> None:
+        """Fill tiles in the rows × columns grid (16 px gaps) whose smallest map is largest for the tiles'
+        worlds (an unknown world counts as square)."""
+        count = len(self.runs)
+
+        def cell(columns: int) -> tuple[float, float]:
+            rows = -(-count // columns)
+            return (room - 16 * (columns - 1)) / columns, (height - 16 * (rows - 1)) / rows
+
+        def smallest_map(columns: int) -> float:
+            width, tall = cell(columns)
+            box = (width - 2, max(1.0, tall - 2 - FILL_TEXT_HEIGHT))
+            worlds = [
+                self.worlds.get(self.live[run["attempt"]["id"]].world_id) for run in self.runs
+            ]
+            return min(math.prod(map_box(world, box)) for world in worlds)
+
+        columns = max(range(1, count + 1), key=smallest_map)
+        width, tall = cell(columns)
+        for index, run in enumerate(self.runs):
+            row, column = divmod(index, columns)
+            x, y = left + column * (width + 16), 56 + row * (tall + 16)
+            place(self.tiles[run["attempt"]["id"]], x - 1, y, width + 2, tall + 2)
 
     def resizeEvent(self, event: QtGui.QResizeEvent) -> None:
         super().resizeEvent(event)
@@ -1402,6 +1454,8 @@ class LiveCard(Card):
             top = 57 + (self.height() - 57 - 21 - 18) / 2
             draw_text(painter, x, top, text, BODY, self.color("text.secondary"))
             return
+        if self.fill:
+            return  # a grid of tiles: no column rules
         column = (room - 16 * (count - 1)) / count
         for index in range(1, count):
             x = snap(left + index * (column + 16))

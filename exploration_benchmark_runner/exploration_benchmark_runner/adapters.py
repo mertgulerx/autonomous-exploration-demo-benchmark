@@ -73,14 +73,15 @@ def resolve_parameters(spec, directory, profile, robot=None, spawn=None, referen
         values["explorationBT"]["exploration_boundary"] = boundary
         integration["explorationBT.exploration_boundary"] = boundary
     # Further node sections of the Default file (roadmap-explorer's costmap) are copied, with the robot's footprint
-    # in place of a shipped robot_radius (decision E4).
+    # beside a shipped robot_radius (decision E4): Nav2 shapes the costmap by the footprint and ignores robot_radius
+    # for it, while roadmap-explorer reads robot_radius (getRobotRadius) as its frontiers' clearance from lethal
+    # cells; deleting it (until 26 October 2026) left Nav2's default 0.1 m there instead of the shipped 0.60 m.
     for section, content in default_document(profile).items():
         if section == node:
             continue
         content = deepcopy(content)
         for scope in _ros_parameter_scopes(content):
             if "robot_radius" in scope and robot is not None:
-                del scope["robot_radius"]
                 scope["footprint"] = json.dumps(robot["footprint"])
                 integration[f"{section}.footprint"] = scope["footprint"]
             scope["use_sim_time"] = True

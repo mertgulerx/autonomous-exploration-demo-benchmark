@@ -55,6 +55,7 @@ from .gui_insight import (
     save_visible,
 )
 from .gui_logs import LogView
+from .gui_campaigns import LiveCard
 from .gui_maps import LiveLayers, WorldMap, apply_monitor_reply
 from .gui_replay import Frame, ReplayBar, ReplayController, ReplayData, clock
 from .gui_marks import (
@@ -1030,6 +1031,14 @@ class MonitorPage(QtWidgets.QWidget):
         self.card.gazebo.clicked.connect(lambda: self.launch_viewer("gazebo"))
         self.card.rviz.clicked.connect(lambda: self.launch_viewer("rviz"))
         layout.addWidget(self.card, 1)
+        # With active runs and none chosen: every worker's live map at once ("Live on the map" with maps filling
+        # their columns); a tile chooses its worker.
+        self.overview = LiveCard(
+            themes, transport, tag_prefix="monitor-tile-", monitor_link=False, fill=True
+        )
+        self.overview.open_worker.connect(self.choose_worker)
+        self.overview.hide()
+        layout.addWidget(self.overview, 1)
         self.events.changed.connect(self._refresh_strip)  # readiness details come from events
         self.monitor_timer = QtCore.QTimer(self)
         self.monitor_timer.setInterval(100)
@@ -1077,6 +1086,7 @@ class MonitorPage(QtWidgets.QWidget):
     def update_status(self, status: dict[str, Any], catalog: dict[str, Any]) -> None:
         self.status, self.catalog = status, catalog
         active = self.active_runs()
+        self.overview.set_runs(active, catalog)
         for row in (status.get("campaigns") or {}).get("rows") or []:
             if isinstance(row, dict) and row.get("id"):
                 self.campaign_names[row["id"]] = row.get("name", "")
@@ -1144,6 +1154,9 @@ class MonitorPage(QtWidgets.QWidget):
             self.open_campaign.emit(campaign, self.campaign_names.get(campaign, ""))
 
     def _update_card(self) -> None:
+        overview = self.shown_run is None and bool(self.active_runs())
+        self.overview.setVisible(overview)
+        self.card.setVisible(not overview)
         if self.shown_run is None:
             self.card.set_message(IDLE_TEXT if not self.active_runs() else CHOOSE_TEXT)
             self.card.set_run_shown(False)
@@ -1848,6 +1861,8 @@ class MonitorPage(QtWidgets.QWidget):
     # ---------- replies ----------
 
     def received(self, tag: str, result: Any) -> bool:
+        if self.overview.received(tag, result):
+            return True
         if (
             self.events.received(tag, result)
             or self.slots.received(tag, result)
@@ -1926,6 +1941,8 @@ class MonitorPage(QtWidgets.QWidget):
             self.set_legend_status(message, False)
 
     def failed(self, tag: str, error: str) -> bool:
+        if self.overview.failed(tag, error):
+            return True
         if (
             self.events.failed(tag, error)
             or self.slots.failed(tag, error)

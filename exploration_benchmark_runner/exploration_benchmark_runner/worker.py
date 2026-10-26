@@ -164,6 +164,14 @@ START_REPEAT_S = 30.0
 # An explorer process exit becomes a runtime failure this many wall seconds after it is first seen, so that a
 # native completion sent just before the exit ends the run as completed.
 EXPLORER_EXIT_GRACE_S = 2.0
+# Start sweep (maintainer, 26 October 2026): once the stack is ready and before the stationary warm-up, the robot turns
+# START_SWEEP_RAD and back to its spawn heading at START_SWEEP_SPEED, so SLAM Toolbox (one scan per 0.05 rad turned)
+# adds scans between the first scan's rays; a still robot's first map is otherwise one sparse starburst scan. 0.8 rad/s
+# is below every catalog robot's limit (Waffle Pi 1.0). A sweep not finished within START_SWEEP_TIMEOUT_S simulated
+# seconds ends where the robot is. Measurement starts at the first movement after activation, as before.
+START_SWEEP_RAD = 0.3
+START_SWEEP_SPEED = 0.8
+START_SWEEP_TIMEOUT_S = 10.0
 # Frontier insight node (suite runs): its output topic and the attempt log it writes.
 INSIGHT_TOPIC = "/benchmark/frontier_insight"
 INSIGHT_LOG = "insight.log"
@@ -273,6 +281,9 @@ class Worker:
         self.clock_value = 0.0
         self.clock_received = False
         self.stationary_since = None
+        # The start sweep (START_SWEEP_RAD): its state while it runs, then its record.
+        self.sweep = None
+        self.sweep_done = False
         self.speed = float("inf")
         self.closed = False
         self.initial_pose_sent = False
@@ -1209,6 +1220,12 @@ class Worker:
                     )
         self.start_navigation_when_discovered(wall)
         missing.extend(name for name in NAV_NODES if not self.active_states.get(name))
+        if not missing and not self.sweep_done:
+            self.sweep_tick()
+            if not self.sweep_done:
+                self.stationary_since = None
+                self.detail = f"Start sweep (±{START_SWEEP_RAD:g} rad)"
+                return False
         if missing or self.speed > 0.03:
             self.stationary_since = None
         elif self.stationary_since is None:
@@ -1227,6 +1244,42 @@ class Worker:
         else:
             self.detail = "Stationary warm-up (5 simulation seconds)"
         return not missing and stationary_ready
+
+    def sweep_tick(self):
+        """One step of the start sweep: turn to +START_SWEEP_RAD from the ready heading (ground-truth odom ->
+        base_footprint), then back to it, then stop; the record goes into the manifest (``start_sweep``)."""
+        try:
+            rotation = self.buffer.lookup_transform("odom", "base_footprint", Time()).transform.rotation
+        except TransformException:
+            return
+        yaw = math.atan2(
+            2 * (rotation.w * rotation.z + rotation.x * rotation.y),
+            1 - 2 * (rotation.y**2 + rotation.z**2),
+        )
+        if self.sweep is None:
+            self.sweep = dict(origin=yaw, outward=True, started=self.clock_value, peak=0.0)
+        delta = math.atan2(math.sin(yaw - self.sweep["origin"]), math.cos(yaw - self.sweep["origin"]))
+        self.sweep["peak"] = max(self.sweep["peak"], delta)
+        timed_out = self.clock_value - self.sweep["started"] > START_SWEEP_TIMEOUT_S
+        if self.sweep["outward"] and (delta >= START_SWEEP_RAD or timed_out):
+            self.sweep["outward"] = False
+        command = Twist()
+        if not self.sweep["outward"] and (delta <= 0.0 or timed_out):
+            self.velocity_pub.publish(command)
+            self.sweep_done = True
+            record = dict(
+                angle_rad=START_SWEEP_RAD,
+                speed_rad_s=START_SWEEP_SPEED,
+                peak_rad=round(self.sweep["peak"], 4),
+                final_offset_rad=round(delta, 4),
+                duration_s=round(self.clock_value - self.sweep["started"], 3),
+                timed_out=timed_out,
+            )
+            if self.recorder:
+                self.recorder.manifest["start_sweep"] = record
+            return
+        command.angular.z = START_SWEEP_SPEED if self.sweep["outward"] else -START_SWEEP_SPEED
+        self.velocity_pub.publish(command)
 
     def start_navigation_when_discovered(self, wall):
         """Let request/reply discovery settle before Nav2's first transition.

@@ -30,6 +30,7 @@ from .known_pose import (
     GROUND_TRUTH_RECORD_PERIOD_NS,
     MAPPING_CONDITION,
     NO_RETURN_FREE_LENGTH_M,
+    SLAM_HEADING_CHECK,
     SLAM_TOOLBOX_PATCH_SHA256,
     SLAM_TOOLBOX_VERSION,
     add_ground_truth_publisher,
@@ -413,6 +414,7 @@ def mapping_parameters():
         no_return_free_length_m=NO_RETURN_FREE_LENGTH_M,
         slam_toolbox_version=SLAM_TOOLBOX_VERSION,
         slam_toolbox_patch_sha256=SLAM_TOOLBOX_PATCH_SHA256,
+        slam_heading_check=SLAM_HEADING_CHECK,
     )
 
 
@@ -467,6 +469,8 @@ def prepare_mapping(profile, directory, generated, shared):
         scan_topic=MAPPING_SCAN_TOPIC,
         use_scan_matching=False,
         do_loop_closing=False,
+        # mapping-known-pose-v6: turning in place adds scans too (minimum_travel_heading), not only travel.
+        check_min_dist_and_heading_precisely=SLAM_HEADING_CHECK,
         max_laser_range=threshold,
         scan_buffer_maximum_scan_distance=threshold,
     )
@@ -500,6 +504,7 @@ def prepare_mapping(profile, directory, generated, shared):
         ground_truth_rate_hz=GROUND_TRUTH_RATE_HZ,
         scan_matching=False,
         loop_closing=False,
+        slam_heading_check=SLAM_HEADING_CHECK,
         slam_shared_source=str(shared),
     )
 

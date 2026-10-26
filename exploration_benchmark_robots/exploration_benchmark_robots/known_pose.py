@@ -38,8 +38,13 @@ import xml.etree.ElementTree as ET
 # v1: stock SLAM Toolbox 2.8.5; v2: a Cartographer trial, reverted (tuning runs
 # only); v3: SLAM Toolbox 2.8.5 with the grid-extent patch, no-return beams free to
 # the range threshold (tuning runs only); v4: the same patch with no-return beams
-# free for NO_RETURN_FREE_LENGTH_M only (docker/patches, plan I10 §8).
-MAPPING_CONDITION = "mapping-known-pose-v4"
+# free for NO_RETURN_FREE_LENGTH_M only (docker/patches, plan I10 §8); v5: a static map -> odom, a pilot trial on
+# 26 October 2026, reverted; v6 (26 October 2026): v4 with SLAM_HEADING_CHECK, so turning in place also adds scans
+# (SLAM Toolbox's default checks only travel distance, so the worker's start sweep added none).
+MAPPING_CONDITION = "mapping-known-pose-v6"
+# SLAM Toolbox's check_min_dist_and_heading_precisely (v6): a scan is processed after minimum_travel_heading of
+# turning as well as after minimum_travel_distance of travel.
+SLAM_HEADING_CHECK = True
 # Free length of a no-return beam (Cartographer's default missing_data_ray_length): a
 # real lidar also returns nothing from glass, mirrors and dark or grazed surfaces.
 # Compiled into the patch as kBenchmarkNoReturnFreeLength; keep the two equal.
