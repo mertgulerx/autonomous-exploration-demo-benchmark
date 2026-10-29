@@ -205,7 +205,8 @@ local_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         cost_scaling_factor: 8.0
-        inflation_radius: 0.32
+        # 0.40 m (benchmark, maintainer, 28 October 2026; 0.32 m before): a wider band near obstacles.
+        inflation_radius: 0.40
       voxel_layer:
         plugin: "nav2_costmap_2d::VoxelLayer"
         enabled: True
@@ -264,8 +265,10 @@ global_costmap:
         map_subscribe_transient_local: True
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 3.0
-        inflation_radius: 0.7
+        # 1.5 and 1.0 m (benchmark, maintainer, 28 October 2026; 3.0 and 0.7 m before): costs stay high further
+        # from obstacles, so the planner keeps clear of tight gaps the local costmap blocks.
+        cost_scaling_factor: 1.5
+        inflation_radius: 1.0
       always_send_full_costmap: True
 
 

@@ -62,9 +62,15 @@ COPY simulation/Week-7-8-ROS2-Navigation/bme_ros2_navigation/package.xml /opt/be
 COPY simulation/Week-7-8-ROS2-Navigation/bme_ros2_navigation_py/setup.py simulation/Week-7-8-ROS2-Navigation/bme_ros2_navigation_py/package.xml /opt/benchmark_ws/simulation/Week-7-8-ROS2-Navigation/bme_ros2_navigation_py/
 COPY simulation/Week-7-8-ROS2-Navigation/bme_ros2_navigation/launch /opt/benchmark_ws/simulation/Week-7-8-ROS2-Navigation/bme_ros2_navigation/launch
 COPY simulation/Week-7-8-ROS2-Navigation/bme_ros2_navigation/rviz /opt/benchmark_ws/simulation/Week-7-8-ROS2-Navigation/bme_ros2_navigation/rviz
-# Registry worlds kept under simulation/worlds that bases built before them lack (the FIT-SLAM corridor), and
+# The shared Nav2, EKF and SLAM parameters, robot description and maps (29 October 2026: without them a refresh kept
+# the base's navigation.yaml, so the inflation of 28 October never reached runtime versions 22 and 23).
+COPY simulation/Week-7-8-ROS2-Navigation/bme_ros2_navigation/config /opt/benchmark_ws/simulation/Week-7-8-ROS2-Navigation/bme_ros2_navigation/config
+COPY simulation/Week-7-8-ROS2-Navigation/bme_ros2_navigation/urdf /opt/benchmark_ws/simulation/Week-7-8-ROS2-Navigation/bme_ros2_navigation/urdf
+COPY simulation/Week-7-8-ROS2-Navigation/bme_ros2_navigation/maps /opt/benchmark_ws/simulation/Week-7-8-ROS2-Navigation/bme_ros2_navigation/maps
+COPY simulation/Week-7-8-ROS2-Navigation/bme_ros2_navigation_py/bme_ros2_navigation_py /opt/benchmark_ws/simulation/Week-7-8-ROS2-Navigation/bme_ros2_navigation_py/bme_ros2_navigation_py
+# Registry worlds kept under simulation/worlds that bases built before them lack (the CMU indoor corridor), and
 # the Warehouse world changed after the base (barrier row closed, 25 October 2026).
-COPY simulation/worlds/fitslam_corridor /opt/benchmark_ws/simulation/worlds/fitslam_corridor
+COPY simulation/worlds/cmu_indoor_corridor /opt/benchmark_ws/simulation/worlds/cmu_indoor_corridor
 COPY simulation/worlds/warehouse /opt/benchmark_ws/simulation/worlds/warehouse
 COPY launch.sh docker.sh /opt/benchmark_ws/
 COPY docker/entrypoint.sh /opt/benchmark_ws/docker/entrypoint.sh

@@ -51,7 +51,7 @@ from .run_records import RunRecords
 from .exports import Exports, studies_root
 from .files import BUILDERS, TABLE_SUFFIXES, BackgroundReads, text as file_text
 from .storage import atomic_json, file_hash, sync_directory
-from .store import ACTIVE_STATES, BUSY_TIMEOUT_MS, TUNING_CAMPAIGN, Store
+from .store import ACTIVE_STATES, BUSY_TIMEOUT_MS, TUNING_CAMPAIGN, Store, replaced_campaigns
 from .studies import (
     attempt_record,
     last_repetition,
@@ -71,6 +71,7 @@ READ_METHODS = frozenset(
         "campaign.preview",
         "campaign.delete_preview",
         "campaign.status",
+        "campaign.rerun_preview",
         "results.query",
         "events.read",
         "logs.read",
@@ -100,7 +101,15 @@ READ_METHODS = READ_METHODS | {
     "files.log",
     "results.timeline",
     "study.traces",
+    # an in-memory lease a GUI renews while a study analysis uses several cores; nothing is stored
+    "analysis.hold",
 }
+# Longest analysis hold one request grants (SUITE_CHANGES_15); the GUI renews it well before it ends.
+ANALYSIS_HOLD_MAX_S = 60
+HELD_REASON = "A study analysis is using several cores: runs start after it ends (or cancel it)"
+# Rerun all takes a time-limit run only below this final coverage (percent; maintainer, 29 October 2026,
+# SUITE_CHANGES_16): the run record's coverage_final_pct, so one without it is not taken.
+RERUN_TIME_LIMIT_BELOW_PCT = 30.0
 COPY_SUFFIX = re.compile(r" \(copy (\d+)\)$")
 COLLECT_RETRY_S = (
     30.0  # a busy database is asked again for the object collection and VACUUM after this
@@ -150,6 +159,9 @@ class Engine:
         self.active: dict[str, WorkerHandle] = {}
         self.metrics: dict[str, dict[str, Any]] = {}
         self.parallel_exposed: set[str] = set()
+        self.discards_failed: set[str] = set()  # rerun discards that failed; tried again at restart
+        # monotonic end of a study analysis's hold (``analysis.hold``)
+        self.analysis_hold_until = 0.0
         self.current: str | None = None
         self.queue_enabled = False
         self.closed = False
@@ -454,7 +466,11 @@ class Engine:
             specification = json.loads(campaign["specification"])
             if is_tuning(specification):
                 raise ContractError("campaign_id", "A tuning run cannot be repeated", "conflict")
-            specification.update(name=specification["name"] + " copy", source_campaign_id=identity)
+            specification.update(
+                name=specification["name"] + " copy",
+                source_campaign_id=identity,
+                concurrency=self._concurrency(campaign),
+            )
             return {"specification": specification, "source_campaign_id": identity}
         if method == "campaign.submit":
             spec = self._in_study(
@@ -520,6 +536,44 @@ class Engine:
             self._move_queued(identity, direction)
             self.store.event("campaign.reordered", {"direction": direction}, identity)
             return {"operation_id": operation_id, "completed": True, "campaign_id": identity}
+        if method == "campaign.set_concurrency":
+            # Workers changeable until the campaign finishes; running attempts are never stopped
+            # (SUITE_CHANGES_14). The accepted specification keeps its submitted value.
+            identity = text(params.get("campaign_id"), "campaign_id")
+            workers = integer(params.get("concurrency"), "concurrency", 1, 4)
+            campaign = self.store.campaign(identity)
+            if is_tuning(json.loads(campaign["specification"])):
+                raise ContractError("campaign_id", "A tuning run runs one worker", "conflict")
+            if campaign["state"] not in (
+                "QUEUED",
+                "RUNNING",
+                "RETRYING",
+                "PAUSING",
+                "PAUSED",
+                "STOPPED",
+                "BLOCKED",
+                "RECOVERY_REQUIRED",
+            ):
+                raise ContractError(
+                    "campaign_id",
+                    "Campaign cannot change workers from " + campaign["state"],
+                    "conflict",
+                )
+            previous = self._concurrency(campaign)
+            if workers != previous:
+                self.store.db.execute(
+                    "UPDATE campaigns SET concurrency=? WHERE id=?", (workers, identity)
+                )
+                self.store.event(
+                    "campaign.concurrency_changed", {"from": previous, "to": workers}, identity
+                )
+            return {
+                "operation_id": operation_id,
+                "completed": True,
+                "campaign_id": identity,
+                "concurrency": workers,
+                "state": campaign["state"],
+            }
         if method == "reports.get":
             from .datasets import inside
 
@@ -557,11 +611,24 @@ class Engine:
                 offset=offset,
                 next_offset=offset + limit if offset + limit < total else None,
             )
+        if method == "analysis.hold":
+            # A study analysis on several cores (SUITE_CHANGES_15): granted only while no run is active, none is
+            # current and the queue is off; while it lasts no run starts, from any client. A lease the GUI
+            # renews; 0 seconds releases it.
+            seconds = integer(params.get("seconds"), "seconds", 0, ANALYSIS_HOLD_MAX_S)
+            if seconds == 0:
+                self.analysis_hold_until = 0.0
+                return {"granted": False, "released": True}
+            if not self._held() and (self.active or self.current or self.queue_enabled):
+                return {"granted": False, "reason": "runs are active or about to start"}
+            self.analysis_hold_until = time.monotonic() + seconds
+            return {"granted": True, "seconds": seconds}
         if method in ("campaign.start", "campaign.resume"):
             identity = text(params.get("campaign_id"), "campaign_id")
             campaign = self.store.campaign(identity)
             if is_tuning(json.loads(campaign["specification"])):
                 raise ContractError("campaign_id", "Start a new tuning run instead", "conflict")
+            self._refuse_while_held()
             if self.current and self.current != identity:
                 raise ContractError("campaign_id", "Another campaign owns execution", "conflict")
             allowed = (
@@ -584,6 +651,7 @@ class Engine:
             self.store.set_state(identity, "RUNNING")
             return {"operation_id": operation_id, "accepted": True, "state": "RUNNING"}
         if method == "tuning.start":
+            self._refuse_while_held()
             return self._start_tuning(params, operation_id)
         if method == "campaign.pause":
             identity = text(params.get("campaign_id"), "campaign_id")
@@ -622,6 +690,7 @@ class Engine:
                 "unsupported",
             )
         if method == "campaign.restart_copy":
+            self._refuse_while_held()
             # Runs a copy of the accepted specification now, or first in the queue when the engine is
             # busy; the source campaign, its runs and its data are never touched.
             identity = text(params.get("campaign_id"), "campaign_id")
@@ -644,7 +713,10 @@ class Engine:
             if idle:
                 self.backend.preflight()
             name = self._copy_name(source["name"])
-            specification.update(name=name, source_campaign_id=identity)
+            # the workers in effect, which may differ from the source's specification (SUITE_CHANGES_14)
+            specification.update(
+                name=name, source_campaign_id=identity, concurrency=self._concurrency(source)
+            )
             spec = CampaignSpec.accepted(specification)
             copy = self.store.submit(spec)
             self.store.event(
@@ -683,6 +755,58 @@ class Engine:
                 "operation_id": operation_id,
                 "accepted": True,
                 "attempt_id": selected_attempt["id"],
+            }
+        if method == "attempt.rerun":
+            # A finished run that did not complete runs again; its data is replaced (SUITE_CHANGES_13).
+            identity = text(params.get("attempt_id"), "attempt_id")
+            attempt = self.store.attempt(identity)
+            campaign = self.store.campaign(attempt["campaign_id"])
+            refusal = self._rerun_refusal(attempt, campaign)
+            if refusal:
+                raise ContractError("attempt_id", refusal, "conflict")
+            self._rerun(campaign, [attempt], operation_id)
+            return {
+                "operation_id": operation_id,
+                "accepted": True,
+                "attempt_id": identity,
+                "campaign_id": campaign["id"],
+            }
+        if method == "campaign.rerun_all":
+            # The campaign's runs that _rerun_all_runs takes, each as attempt.rerun, in one transaction:
+            # all of them or none (SUITE_CHANGES_16).
+            known_keys(params, {"campaign_id"}, "params")
+            identity = text(params.get("campaign_id"), "campaign_id")
+            campaign = self.store.campaign(identity)
+            attempts = self._rerun_all_runs(identity)
+            if not attempts:
+                raise ContractError(
+                    "campaign_id", "No finished run of this campaign is left to rerun", "conflict"
+                )
+            for attempt in attempts:
+                refusal = self._rerun_refusal(attempt, campaign)
+                if refusal:
+                    raise ContractError("campaign_id", refusal, "conflict")
+            self._rerun(campaign, attempts, operation_id)
+            return {
+                "operation_id": operation_id,
+                "accepted": True,
+                "campaign_id": identity,
+                "runs": len(attempts),
+                "state": self.store.campaign(identity)["state"],
+            }
+        if method == "campaign.rerun_preview":
+            # What Rerun all would take now, by outcome (read only; the GUI asks with it).
+            known_keys(params, {"campaign_id"}, "params")
+            identity = text(params.get("campaign_id"), "campaign_id")
+            campaign = self.store.campaign(identity)
+            outcomes: dict[str, int] = {}
+            for attempt in self._rerun_all_runs(identity):
+                outcomes[attempt["outcome"]] = outcomes.get(attempt["outcome"], 0) + 1
+            return {
+                "campaign_id": identity,
+                "name": campaign["name"],
+                "outcomes": outcomes,
+                "time_limit_below_pct": RERUN_TIME_LIMIT_BELOW_PCT,
             }
         if method == "attempt.stop":
             # Ends one run as manual_stop: its data is kept, the experiment is resolved and not run
@@ -1066,6 +1190,99 @@ class Engine:
                 self._request_discard(attempt_id, False, operation_id)
         return state
 
+    def _held(self) -> bool:
+        """A study analysis holds the engine (``analysis.hold``): no run starts until it ends."""
+        return time.monotonic() < self.analysis_hold_until
+
+    def _refuse_while_held(self) -> None:
+        if self._held():
+            raise ContractError("analysis_hold", HELD_REASON, "conflict")
+
+    @staticmethod
+    def _concurrency(campaign: dict[str, Any]) -> int:
+        """The campaign's workers in effect: its ``concurrency`` column (the store fills it from the
+        specification; ``campaign.set_concurrency`` changes it)."""
+        return int(campaign["concurrency"])
+
+    def _rerun_refusal(self, attempt: dict[str, Any], campaign: dict[str, Any]) -> str | None:
+        """Why ``attempt.rerun`` cannot take this attempt now, or None."""
+        experiment = self.store.one(
+            "SELECT final_attempt_id FROM experiments WHERE id=?", (attempt["experiment_id"],)
+        )
+        if experiment is None or experiment["final_attempt_id"] != attempt["id"]:
+            return "Only a run's final attempt can be rerun"
+        if attempt["outcome"] == "completed":
+            return "A completed run cannot be rerun"
+        if is_tuning(json.loads(campaign["specification"])):
+            return "A tuning run cannot be rerun"
+        if campaign["id"] in replaced_campaigns(self.store.db):
+            return "A restart copy replaced this campaign"
+        if self.current not in (None, campaign["id"]):
+            return "Another campaign owns execution"
+        if self._held():
+            return HELD_REASON
+        if campaign["state"] != "FINISHED" and not (
+            self.current == campaign["id"] and campaign["state"] in ("RUNNING", "RETRYING")
+        ):
+            return "Rerun works on a finished campaign or on the campaign that runs now"
+        if self.exports.job is not None:
+            return "A study export is running"
+        if (
+            Path(attempt["directory"]).resolve()
+            != (self.workspace / "attempts" / attempt["id"]).resolve()
+        ):
+            return "The run's files are not in its attempt directory"
+        return None
+
+    def _rerun_all_runs(self, campaign_id: str) -> list[dict[str, Any]]:
+        """The final attempts Rerun all takes, in experiment order: every one that did not complete, except
+        time-limit runs whose final coverage is not below RERUN_TIME_LIMIT_BELOW_PCT."""
+        return self.store.rows(
+            "SELECT a.* FROM experiments e JOIN attempts a ON a.id=e.final_attempt_id "
+            "WHERE e.campaign_id=? AND a.outcome IS NOT 'completed' AND (a.outcome IS NOT 'time_limit' "
+            "OR EXISTS (SELECT 1 FROM run_records r WHERE r.attempt_id=a.id "
+            "AND json_extract(r.record,'$.coverage_final_pct')<?)) ORDER BY e.position",
+            (campaign_id, RERUN_TIME_LIMIT_BELOW_PCT),
+        )
+
+    def _rerun(
+        self, campaign: dict[str, Any], attempts: list[dict[str, Any]], operation_id: str
+    ) -> None:
+        """Run the experiments of ``attempts`` (final, not completed) again: the tick discards each old
+        attempt before its experiment runs, and a finished campaign reopens for them."""
+        reopen = campaign["state"] == "FINISHED"
+        if reopen:
+            self.backend.preflight()
+        for attempt in attempts:
+            self.run_records.cancel_attempt(attempt["id"])
+            self.store.db.execute(
+                "UPDATE attempts SET discard_intent=1,restart_intent=1 WHERE id=?", (attempt["id"],)
+            )
+            # Held until the tick has discarded the old attempt; the discard releases it.
+            self.store.db.execute(
+                "UPDATE experiments SET state='NOT_DONE',held=1,outcome=NULL,final_attempt_id=NULL "
+                "WHERE id=?",
+                (attempt["experiment_id"],),
+            )
+            self.store.event(
+                "attempt.discard_requested",
+                {
+                    "restart": True,
+                    "rerun": True,
+                    "outcome": attempt["outcome"],
+                    "operation_id": operation_id,
+                },
+                campaign["id"],
+                attempt["id"],
+            )
+        # the campaign's execution ends again after the new runs (also one drained and awaiting records)
+        self.store.db.execute(
+            "UPDATE campaigns SET execution_finished_ns=NULL WHERE id=?", (campaign["id"],)
+        )
+        if reopen:
+            self.store.set_state(campaign["id"], "RUNNING")
+            self.current = campaign["id"]
+
     def _request_discard(self, identity: str, restart: bool, operation_id: str) -> None:
         attempt = self.store.attempt(identity)
         self.store.db.execute(
@@ -1107,11 +1324,15 @@ class Engine:
         shutil.rmtree(directory, ignore_errors=False) if directory.exists() else None
         if directory.parent.exists():
             sync_directory(directory.parent)
+        # a finished attempt (a rerun's old run) keeps its end; an active one ends now
+        ended = attempt["terminal_ns"] or time.time_ns()
         with self.store.transaction():
+            # A rerun discards a finished attempt: its full record goes, so the stub replaces it.
+            self.store.db.execute("DELETE FROM run_records WHERE attempt_id=?", (attempt["id"],))
             # The stub reads the attempt's reservation event, which the next statements delete.
             campaign = self.store.campaign(attempt["campaign_id"])
             self.run_records.stub(
-                dict(attempt, outcome="manual_discard", detail="", terminal_ns=time.time_ns()),
+                dict(attempt, outcome="manual_discard", detail="", terminal_ns=ended),
                 "campaign_stop"
                 if campaign["state"] in ("STOPPING", "STOPPED")
                 else "experiment_restart"
@@ -1128,10 +1349,11 @@ class Engine:
                 "UPDATE attempts SET phase='FINISHED',outcome='manual_discard',"
                 "discarded=1,retained=0,configuration='{}',metrics=NULL,directory='',detail='',"
                 "pid=NULL,pid_created=NULL,terminal_ns=?,cleanup_ns=? WHERE id=?",
-                (time.time_ns(), time.time_ns(), attempt["id"]),
+                (ended, time.time_ns(), attempt["id"]),
             )
+            # never an experiment that has a final attempt again (a late rerun discard after a restart)
             self.store.db.execute(
-                "UPDATE experiments SET state='NOT_DONE',held=? WHERE id=?",
+                "UPDATE experiments SET state='NOT_DONE',held=? WHERE id=? AND final_attempt_id IS NULL",
                 (0 if attempt["restart_intent"] else 1, attempt["experiment_id"]),
             )
             self.store.event(
@@ -1180,6 +1402,10 @@ class Engine:
                     "retry": retry,
                     "provenance_id": self.provenance_id,
                     "runs_since_engine_start": self.reservations,
+                    # the campaign's workers when this run was reserved (SUITE_CHANGES_14)
+                    "concurrency": self._concurrency(
+                        self.store.campaign(experiment["campaign_id"])
+                    ),
                 },
                 experiment["campaign_id"],
                 identity,
@@ -1506,8 +1732,30 @@ class Engine:
                 del self.active[identity]
                 self.metrics.pop(identity, None)
                 self.parallel_exposed.discard(identity)
+        # The old attempt of a rerun (``attempt.rerun``), before any run starts; also after a restart. One
+        # that cannot be deleted blocks its campaign once and is tried again at the next engine start.
+        for attempt in self.store.rows(
+            "SELECT * FROM attempts WHERE phase='FINISHED' AND discard_intent=1 AND discarded=0"
+        ):
+            if attempt["id"] in self.discards_failed:
+                continue
+            try:
+                self._discard(attempt)
+            except (OSError, ContractError) as error:
+                self.discards_failed.add(attempt["id"])
+                self.store.event(
+                    "attempt.discard_failed",
+                    {"detail": str(error)},
+                    attempt["campaign_id"],
+                    attempt["id"],
+                )
+                self.store.set_state(
+                    attempt["campaign_id"],
+                    "BLOCKED",
+                    f"The replaced run's files could not be deleted: {error}",
+                )
         if not self.current:
-            if self.queue_enabled:
+            if self.queue_enabled and not self._held():
                 next_campaign = self.store.one(
                     "SELECT id FROM campaigns WHERE state='QUEUED' ORDER BY queue_position LIMIT 1"
                 )
@@ -1542,10 +1790,12 @@ class Engine:
             return  # an export reads the store and the attempts' files: no new runs until it ends
         spec = json.loads(campaign["specification"])
         occupied = {self.store.attempt(identity)["slot"] for identity in self.active}
-        slots = range(1 if campaign["state"] == "RETRYING" else spec["concurrency"])
-        for slot in slots:
+        limit = 1 if campaign["state"] == "RETRYING" else self._concurrency(campaign)
+        for slot in range(limit):
             if slot in occupied:
                 continue
+            if len(self.active) >= limit:
+                break  # workers lowered while runs went on: those runs finish first
             experiment = self.store.one(
                 "SELECT e.* FROM experiments e LEFT JOIN retry_queue r ON e.id=r.experiment_id "
                 "WHERE e.campaign_id=? AND e.state IN ('PENDING','NOT_DONE') AND e.held=0 "

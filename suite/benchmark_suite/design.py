@@ -19,7 +19,10 @@ import uuid
 
 from .contracts import CampaignSpec, Profile, Spawn, canonical
 
-ORDERING_VERSION = "hashed-blocks-rotating-profiles-v1"
+# v2 (WORLD_COLLECTION decision 68, 26 October 2026): the profile rotation also takes an offset from the block's
+# robot, world and spawn, so worlds run with fewer repetitions than profiles do not all share one order; v1 rotated
+# by the repetition alone.
+ORDERING_VERSION = "hashed-blocks-rotating-profiles-v2"
 # Block IDs of a study's campaigns share the study's namespace, so its campaigns pair by block (RD-30).
 STUDY_NAMESPACE = uuid.UUID("6f0d7a3e-58c1-4b9e-9a51-3c0f1e2d7b44")
 
@@ -60,7 +63,8 @@ class Experiment:
 
 
 def experiments(spec: CampaignSpec, campaign_id: str) -> Iterator[Experiment]:
-    """The campaign's experiments in run order: blocks in hashed order, profiles rotated per repetition.
+    """The campaign's experiments in run order: blocks in hashed order, profiles rotated by the repetition plus
+    a hashed offset of the block's robot, world and spawn.
 
     Repetition numbers start at the study's ``first_repetition`` (0 without a study); experiment IDs stay
     in the campaign's namespace, block IDs use ``block_namespace``.
@@ -84,7 +88,11 @@ def experiments(spec: CampaignSpec, campaign_id: str) -> Iterator[Experiment]:
     position = 0
     for _, robot, world, spawn, repetition, profiles, identity in blocks:
         block_id = str(uuid.uuid5(blocks_namespace, identity))
-        shift = repetition % len(profiles)
+        place = canonical([robot, world, spawn.id])
+        offset = int.from_bytes(
+            hashlib.sha256((ORDERING_VERSION + place).encode()).digest()[:8], "big"
+        )
+        shift = (repetition + offset) % len(profiles)
         rotated = profiles[shift:] + profiles[:shift]
         for profile in rotated:
             yield Experiment(

@@ -1,4 +1,4 @@
 # Runtime image version (autonomous-exploration-benchmark:jazzy-harmonic). Raise it by one in the same change
 # whenever you edit files the refresh build (docker/Dockerfile.runtime) copies; ./suite_launch.sh then refreshes
 # the runtime image and rebuilds the suite image on it at the next start while no campaign runs.
-21
+24

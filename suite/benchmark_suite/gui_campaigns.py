@@ -72,6 +72,7 @@ from .gui_widgets import (
     plural,
     rounded_path,
 )
+from .gui_wizard import ChoiceSegments
 from .monitoring import DRAWN_LAYERS, PathCursor
 
 # ---------- operations ----------
@@ -91,6 +92,19 @@ PERMITTED: dict[str, set[str]] = {
     },
     # Restart runs a copy and never touches the source, so every state allows it.
     "restart": {state.value for state in CampaignState},
+    # Rerun all: a finished campaign or the one that runs now, as a run's Rerun (SUITE_CHANGES_16).
+    "rerun_all": {"FINISHED", "RUNNING", "RETRYING"},
+    # Workers change until the campaign finishes (SUITE_CHANGES_14).
+    "concurrency": {
+        "QUEUED",
+        "RUNNING",
+        "RETRYING",
+        "PAUSING",
+        "PAUSED",
+        "STOPPED",
+        "BLOCKED",
+        "RECOVERY_REQUIRED",
+    },
 }
 
 
@@ -528,12 +542,14 @@ def campaign_menu(
     *,
     accounting: Callable[[], None] | None = None,
 ) -> Menu:
-    """The ⋯ menu of a campaign row or card: [Attempt accounting,] Restart campaign, separator, Stop
-    campaign (danger); a disabled item gives the campaign state as its reason."""
+    """The ⋯ menu of a campaign row or card: [Attempt accounting,] Change workers, Rerun all, Restart
+    campaign, separator, Stop campaign (danger); a disabled item gives the campaign state as its reason."""
     menu = Menu(themes)
     if accounting is not None:
         menu.add_item("Attempt accounting", accounting, icon="list")
     for operation, text, icon, danger in (
+        ("concurrency", "Change workers…", "sliders", False),
+        ("rerun_all", "Rerun all…", "retry", False),
         ("restart", "Restart campaign", "retry", False),
         ("stop", "Stop campaign", "cstop", True),
     ):
@@ -704,7 +720,8 @@ def campaign_facts(
     if isinstance(specification, str):
         specification = json.loads(specification)
     specification = specification if isinstance(specification, dict) else {}
-    concurrency = int(specification.get("concurrency", 1))
+    # the workers in effect, which may differ from the submitted value (SUITE_CHANGES_14)
+    concurrency = int(campaign.get("concurrency") or specification.get("concurrency", 1))
     # explorer failures (reported-outcomes-v4) are startup or runtime failures by outcome: counted apart
     explorer_failures = int(counters.get("explorer_failures") or 0)
     counts = {
@@ -1584,3 +1601,59 @@ def confirm_restart(modal: ModalHost, themes: ThemeManager, name: str) -> bool:
     card.add_button("Cancel", False, default=True)
     card.add_button("Restart campaign", True, variant="primary", icon="retry")
     return bool(modal.exec_card(card, escape_result=False))
+
+
+def confirm_rerun_all(
+    modal: ModalHost,
+    themes: ThemeManager,
+    name: str,
+    outcomes: dict[str, int],
+    time_limit_below_pct: float,
+) -> bool:
+    """Rerun all (SUITE_CHANGES_16), as a run's Rerun (``gui_results.confirm_rerun``): the campaign, the
+    runs the engine takes by outcome, and what happens; Cancel and Rerun N runs."""
+    runs = sum(outcomes.values())
+    by_outcome = ", ".join(
+        f"{humanize(outcome).lower()} {count:,}"
+        for outcome, count in sorted(outcomes.items(), key=lambda item: (-item[1], item[0]))
+    )
+    card = Consequences(themes, "Rerun all runs that did not complete?")
+    card.add_context(name)
+    card.add_bullets(
+        [
+            bullet(f"{plural(runs, 'run')}: {by_outcome}."),
+            bullet(
+                f"Time-limit runs only below {time_limit_below_pct:g} % coverage; the others stay as "
+                "they are."
+            ),
+            bullet(
+                "Their recorded data is deleted and replaced by the new runs. This cannot be undone."
+            ),
+            bullet("They leave Runs until their new runs finish; completed runs stay as they are."),
+            bullet("A finished campaign runs again for them, then finishes."),
+        ]
+    )
+    card.add_button("Cancel", False, default=True)
+    card.add_button("Rerun " + plural(runs, "run"), True, variant="danger-solid", icon="retry")
+    return bool(modal.exec_card(card, escape_result=False))
+
+
+def choose_concurrency(
+    modal: ModalHost, themes: ThemeManager, name: str, current: int | None
+) -> int | None:
+    """Change a campaign's workers while it is queued or runs (SUITE_CHANGES_14); None when cancelled."""
+    card = Consequences(themes, "Change workers")
+    card.add_context(name)
+    choice = ChoiceSegments(
+        themes, [("Sequential", 1), ("2 parallel", 2), ("3 parallel", 3), ("4 parallel", 4)]
+    )
+    if current is not None:
+        choice.set_value(current)
+    card.add_block(choice, 16)
+    card.add_sentence(
+        [Run("Runs in progress continue. A lower number applies as runs end.", token="text.body")],
+        12,
+    )
+    card.add_button("Cancel", False, default=True)
+    card.add_button("Apply", True, variant="primary", icon="sliders")
+    return choice.value() if modal.exec_card(card, escape_result=False) else None

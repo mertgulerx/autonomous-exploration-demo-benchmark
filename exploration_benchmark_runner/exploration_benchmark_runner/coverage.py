@@ -79,6 +79,24 @@ STUCK_NO_GAIN_DETAIL = (
 STUCK_COMPLETED_DETAIL = (
     f"Robot stuck at or above {STUCK_COMPLETION_PERCENT:.1f} % coverage ({STUCK_RULE})"
 )
+# The stuck watchdog (stuck-watchdog-v1, 29 October 2026, plans/SUITE_CHANGES_17): for the explorers in
+# WATCHDOG_PROFILES only, after activation, a true pose within STUCK_RADIUS_M of its pose WATCHDOG_WINDOW_S simulated
+# seconds earlier starts an intervention through Nav2's behaviour server. The first is a nudge (a full turn for fresh
+# scans, then WATCHDOG_NUDGE_M toward the most open heading); later ones relocate (WATCHDOG_RELOCATE_M toward it).
+# At most WATCHDOG_MAX per run; the stuck stop's windows restart when one starts and when it ends.
+WATCHDOG_RULE = "stuck-watchdog-v1"
+WATCHDOG_PROFILES = frozenset({"explore_lite", "roadmap_explorer", "tdle", "mrtsp_exploration_ros2"})
+WATCHDOG_WINDOW_S = 20.0
+WATCHDOG_MAX = 3
+WATCHDOG_NUDGE_M = 1.0
+WATCHDOG_RELOCATE_M = 4.0
+WATCHDOG_SPEED_MPS = 0.2
+# Half the width of the scan sector whose smallest range rates a heading (about ±15°).
+WATCHDOG_SECTOR_RAD = 0.26
+# Explorers whose goals are held during an intervention: their processes are paused (SIGSTOP) and their Nav2 goals
+# cancelled, then resumed (SIGCONT) when it ends, so a goal they keep re-sending cannot cut the manoeuvre short.
+# roadmap-explorer is not paused: its lifecycle manager's bond would shut it down, and it sends no goal while idle.
+WATCHDOG_HOLD_PROFILES = frozenset({"explore_lite", "tdle", "mrtsp_exploration_ros2"})
 SAMPLE_INTERVAL = 1.0
 STALE_SECONDS = 5.0
 

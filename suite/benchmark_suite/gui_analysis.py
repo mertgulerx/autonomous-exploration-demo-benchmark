@@ -26,10 +26,12 @@ never stops the job. One analysis and one export run at a time.
 
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
+import os
 from pathlib import Path
 import time
 from typing import Any, Literal
 
+import psutil
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import gui_tokens
@@ -54,6 +56,10 @@ from .gui_widgets import (
 
 ANALYSIS = ROOT / "analysis"
 PYTHON = ROOT / ".venv-analysis/bin/python"
+# The engine's hold while the figures use several cores (``analysis.hold``, SUITE_CHANGES_15): a lease of
+# HOLD_S seconds, renewed every HOLD_RENEW_MS.
+HOLD_S = 30
+HOLD_RENEW_MS = 10_000
 STATUS_TEXT = TextStyle(12.5, 400, 18)
 STATUS_MONO = TextStyle(12, 400, 18, mono=True)
 NOTE_TEXT = TextStyle(12, 400, 18)
@@ -69,6 +75,13 @@ LOOKS: dict[State, BadgeLook] = {
     "failed": BadgeLook("Failed", "bad", "cx"),
     "stopped": BadgeLook("Stopped", "neutral", "cstop"),
 }
+
+
+def analysis_workers() -> int:
+    """Processes for the analysis figures (suite change 15): the cores but two, at most 8, and at most one per
+    2 GiB of available memory (as ``benchmark_suite.exports.export_workers``)."""
+    memory = int(psutil.virtual_memory().available) // (2 * 1024**3)
+    return max(1, min(8, (os.cpu_count() or 1) - 2, memory))
 
 
 def analysis_available() -> str:
@@ -265,6 +278,16 @@ class Jobs(QtCore.QObject):
         self.export_poll.setSingleShot(True)
         self.export_poll.setInterval(1000)
         self.export_poll.timeout.connect(self._poll_export)
+        # an analysis waiting for the engine's hold: study, export and its worker count
+        self.pending: tuple[str, Mapping[str, Any], int] | None = None
+        self.holding = False  # the engine holds runs for the running analysis
+        self.hold_renewal = QtCore.QTimer(self)
+        self.hold_renewal.setInterval(HOLD_RENEW_MS)
+        self.hold_renewal.timeout.connect(
+            lambda: self.transport.submit(
+                "analysis-hold:renew", "analysis.hold", {"seconds": HOLD_S}
+            )
+        )
 
     def job(self, study_id: str | None) -> Job | None:
         """The study's latest job of this session (the analysis first: the card's Analysis row)."""
@@ -274,7 +297,7 @@ class Jobs(QtCore.QObject):
         return None
 
     def running(self) -> bool:
-        return self.process is not None
+        return self.process is not None or self.pending is not None
 
     # the dialog
 
@@ -305,8 +328,10 @@ class Jobs(QtCore.QObject):
     # the analysis
 
     def start_analysis(self, study_id: str, export: Mapping[str, Any]) -> None:
-        """Run the analysis package on ``export`` (a finished export of ``study.get``)."""
-        if self.process is not None:
+        """Run the analysis package on ``export`` (a finished export of ``study.get``). Its figures use several
+        cores only under the engine's hold (``analysis.hold``, SUITE_CHANGES_15), which the engine grants while
+        no run is active or about to start and which stops every run start until the analysis ends."""
+        if self.process is not None or self.pending is not None:
             self.show(self.analysis)
             return
         hash8 = str(export.get("sums_sha256") or "")[:8]
@@ -323,10 +348,48 @@ class Jobs(QtCore.QObject):
             self.show(job)
             self.changed.emit(study_id)
             return
+        workers = analysis_workers()
+        if workers > 1:
+            self.pending = (study_id, export, workers)
+            job.add("Asking the engine to hold runs while the figures use several cores")
+            self.transport.submit("analysis-hold:start", "analysis.hold", {"seconds": HOLD_S})
+            self.tick.start()
+            self.show(job)
+            self.changed.emit(study_id)
+            return
+        self._launch(job, path, 1)
+
+    def _hold_answered(self, granted: bool, reason: str) -> None:
+        """The engine's answer to the hold: several cores when granted, else one."""
+        pending, self.pending = self.pending, None
+        job = self.analysis
+        if granted:
+            self.holding = True
+            self.hold_renewal.start()
+        if pending is None or job is None or job.cancelled:
+            if job is not None and job.cancelled and job.state == "running":
+                job.state, job.ended = "stopped", time.monotonic()
+                job.add("Stopped before it started")
+                self._refresh(job)
+            self._release()
+            return
+        _, export, workers = pending
+        if not granted:
+            job.add(f"The engine did not hold runs ({reason}): the figures use one core")
+        self._launch(job, str(export.get("path") or ""), workers if granted else 1)
+
+    def _release(self) -> None:
+        if self.holding:
+            self.holding = False
+            self.hold_renewal.stop()
+            self.transport.submit("analysis-hold:release", "analysis.hold", {"seconds": 0})
+
+    def _launch(self, job: Job, path: str, workers: int) -> None:
         process = QtCore.QProcess(self)
         process.setWorkingDirectory(str(ANALYSIS))
         process.setProgram(str(PYTHON))
-        process.setArguments(["-m", "benchmark_analysis", "--export", path])
+        options = ["--workers", str(workers)] if workers > 1 else []
+        process.setArguments(["-m", "benchmark_analysis", "--export", path, *options])
         environment = QtCore.QProcessEnvironment.systemEnvironment()
         environment.insert("PYTHONUNBUFFERED", "1")
         for name in (
@@ -341,11 +404,11 @@ class Jobs(QtCore.QObject):
         process.finished.connect(lambda code, status: self._finished(process, code, status))
         process.errorOccurred.connect(lambda error: self._error(process, error))
         self.process = process
-        job.add(f"$ python -m benchmark_analysis --export {Path(path).name}")
+        job.add(" ".join(["$ python -m benchmark_analysis --export", Path(path).name, *options]))
         process.start()
         self.tick.start()
         self.show(job)
-        self.changed.emit(study_id)
+        self.changed.emit(job.study_id)
 
     def _read(self, process: QtCore.QProcess, error: bool) -> None:
         job = self.analysis
@@ -397,6 +460,7 @@ class Jobs(QtCore.QObject):
             job.detail = f"exit code {code}; the log above says why"
         job.add(f"exit {code}")
         self.process = None
+        self._release()
         process.deleteLater()
         self._refresh(job)
         # any end: new outputs, a kept refusal (RO-22), or a directory a failed run left (listed as unreadable)
@@ -415,11 +479,19 @@ class Jobs(QtCore.QObject):
                 "the analysis environment did not start",
             )
             self.process = None
+            self._release()
             process.deleteLater()
             self._refresh(job)
 
     def cancel(self) -> None:
-        """SIGTERM: the package removes its claimed and staging directories and exits 143."""
+        """SIGTERM: the package removes its claimed and staging directories and exits 143. An analysis still
+        waiting for the engine's hold does not start."""
+        if self.process is None and self.pending is not None and self.analysis is not None:
+            if not self.analysis.cancelled:
+                self.analysis.cancelled = True
+                self.analysis.add("Stopping…")
+                self._refresh(self.analysis)
+            return
         if self.process is not None:
             if self.analysis is not None:
                 if self.analysis.cancelled:
@@ -454,6 +526,11 @@ class Jobs(QtCore.QObject):
             )
 
     def received(self, tag: str, result: Any) -> bool:
+        if tag == "analysis-hold:start":
+            self._hold_answered(bool(result.get("granted")), str(result.get("reason") or ""))
+            return True
+        if tag in ("analysis-hold:renew", "analysis-hold:release"):
+            return True
         job = self.export
         if tag.startswith("results-export:"):
             if job is not None and job.state == "running":
@@ -492,6 +569,11 @@ class Jobs(QtCore.QObject):
         return False
 
     def failed(self, tag: str, error: str) -> bool:
+        if tag == "analysis-hold:start":
+            self._hold_answered(False, error)  # an engine without the hold: one core
+            return True
+        if tag in ("analysis-hold:renew", "analysis-hold:release"):
+            return True  # the lease runs out by itself (HOLD_S)
         if not tag.startswith(("results-export:", "results-export-status:")):
             return False
         job = self.export
@@ -522,5 +604,8 @@ class Jobs(QtCore.QObject):
         self.export_poll.stop()
         if self.process is not None:
             self.process.terminate()
-            if not self.process.waitForFinished(5000):
+            # with workers the stop waits for each one's current figure: time enough, so the package can
+            # remove what it had started
+            if not self.process.waitForFinished(60_000 if self.holding else 5000):
                 self.process.kill()
+        self._release()

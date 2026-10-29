@@ -2,8 +2,8 @@
  "version": "world-descriptors-v1",
  "grid": {
   "source": "coverage_reference",
-  "reference_id": "fitslam_corridor_coverage_v2",
-  "metadata_sha256": "759fac80e688e3355239e7ca2c73757d812efb0488d19421cfa99ab3bd1bc73b",
+  "reference_id": "cmu_indoor_corridor_coverage_v2",
+  "metadata_sha256": "0fee4ae84fb5349a77e509ee08ed52993feb992a386dfa41bdf6002b48c19f70",
   "grid_sha256": "03c9a6aa91ad3027cc85d48239fdaf501b358a4a69e1cd9b0118ce5a89779cc1",
   "resolution_m": 0.05,
   "seed": 2026,
@@ -122,9 +122,9 @@
   1
  ],
  "software": {
-  "worldgen": "1.0.1",
+  "worldgen": "1.1.0",
   "worldgen_sha256": {
-   "descriptors.py": "720ac3623029c635372f961aaf8aea6035a774e7198d056ed33139362a12e82b",
+   "descriptors.py": "bab1cd637278452e0b4b914b113395acce90087c6594841672e289bbf1f447ad",
    "raster.py": "5ead4fb5ab653b14fb46a2fbb51961fecc746507f17315cada9dd0c85d6ae59d",
    "checks.py": "c6a98afbe31afc2d157792671da81ed6c72ab8cbe5525702be59e6b97268e329",
    "rng.py": "b9b5716a69bcbaaf3e4ceb308341b7d40d80a1e38ddf313add3daacde65235b3"

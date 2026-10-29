@@ -92,11 +92,12 @@ def run(
     preset: str = "ieee-journal",
     sans: bool = False,
     coding: Path | None = None,
+    workers: int = 1,
 ) -> Path:
     log(f"benchmark_analysis {__version__}: checking {export_directory.name}")
     export = open_export(export_directory)
     try:
-        return _analyse(export, out, preset=preset, sans=sans, coding_file=coding)
+        return _analyse(export, out, preset=preset, sans=sans, coding_file=coding, workers=workers)
     except Refused as exc:
         kept = refusal_path(export) if out is None and exc.kept else None
         if kept is not None:
@@ -117,7 +118,13 @@ def run(
 
 
 def _analyse(
-    export: Export, out: Path | None, *, preset: str, sans: bool, coding_file: Path | None
+    export: Export,
+    out: Path | None,
+    *,
+    preset: str,
+    sans: bool,
+    coding_file: Path | None,
+    workers: int,
 ) -> Path:
     study = load(export)
     # a method comparison (the profiles of several explorers) sets the method defaults (C4)
@@ -159,6 +166,7 @@ def _analyse(
             coding=coding,
             study=study,
             family=family,
+            workers=workers,
         ):
             log(f"warning: {warning}")
         listing = {
@@ -225,7 +233,15 @@ def main(argv: Sequence[str] | None = None) -> int:
         type=Path,
         help="the researcher's coding of runs against the plan's taxonomy (YAML; F23, T9)",
     )
+    parser.add_argument(
+        "--workers",
+        type=int,
+        default=1,
+        help="processes that draw the figures (1, the default: this process only; at most 12 are used, one per figure group); the outputs are the same",
+    )
     arguments = parser.parse_args(argv)
+    if not 1 <= arguments.workers <= 64:
+        parser.error("--workers must be between 1 and 64")
     # A stop request (the GUI's terminate) unwinds like an error, so the claimed directory and the staging are
     # removed and the next run is not blocked.
     signal.signal(signal.SIGTERM, _stop)
@@ -236,6 +252,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             preset=arguments.preset,
             sans=arguments.sans,
             coding=arguments.coding,
+            workers=arguments.workers,
         )
     except Refused as exc:
         print(f"refused: {exc}", file=sys.stderr, flush=True)

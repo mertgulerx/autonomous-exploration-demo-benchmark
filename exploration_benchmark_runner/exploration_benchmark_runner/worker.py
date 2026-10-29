@@ -51,9 +51,11 @@ from rclpy.time import Time
 import yaml
 from tf2_ros import Buffer, TransformListener, TransformException
 from action_msgs.srv import CancelGoal
-from geometry_msgs.msg import Twist, PoseStamped
+from action_msgs.msg import GoalStatus
+from builtin_interfaces.msg import Duration
+from geometry_msgs.msg import Point, Twist, PoseStamped
 from lifecycle_msgs.srv import GetState
-from nav2_msgs.action import NavigateToPose, NavigateThroughPoses
+from nav2_msgs.action import DriveOnHeading, NavigateToPose, NavigateThroughPoses, Spin
 from nav2_msgs.srv import ManageLifecycleNodes
 from nav_msgs.msg import OccupancyGrid, Odometry, Path
 from rosgraph_msgs.msg import Clock
@@ -90,6 +92,15 @@ from .coverage import (
     STUCK_RULE,
     STUCK_SAMPLE_PERIOD_S,
     STUCK_WINDOW_S,
+    WATCHDOG_HOLD_PROFILES,
+    WATCHDOG_MAX,
+    WATCHDOG_NUDGE_M,
+    WATCHDOG_PROFILES,
+    WATCHDOG_RELOCATE_M,
+    WATCHDOG_RULE,
+    WATCHDOG_SECTOR_RAD,
+    WATCHDOG_SPEED_MPS,
+    WATCHDOG_WINDOW_S,
     Calculator,
     Coverage,
     Reference,
@@ -219,6 +230,14 @@ def require_mapping_executables():
         )
 
 
+
+def yaw_of(rotation):
+    """The yaw (radians) of a quaternion message."""
+    return math.atan2(
+        2.0 * (rotation.w * rotation.z + rotation.x * rotation.y),
+        1.0 - 2.0 * (rotation.y * rotation.y + rotation.z * rotation.z),
+    )
+
 class Worker:
     def __init__(self, config):
         self.initialized = False
@@ -247,6 +266,16 @@ class Worker:
         self.last_valid_coverage = None
         self.stuck_stop = None
         self.stopped_by_stuck = False
+        # The stuck watchdog (WATCHDOG_RULE) of the explorers in WATCHDOG_PROFILES: its interventions for the
+        # manifest, its true poses (simulation time, x, y) back to the window's anchor, the intervention in
+        # progress and the latest scan, which rates the headings.
+        self.watchdog = (
+            dict(rule=WATCHDOG_RULE, interventions=[]) if self.spec.profile in WATCHDOG_PROFILES else None
+        )
+        self.watchdog_samples = deque()
+        self.watchdog_step = None
+        self.watchdog_held = False
+        self.latest_scan = None
         self.native_code = -1
         # Who caused a startup or runtime failure (C1, reported-outcomes-v4): "explorer" for the failures that
         # explorer_failure() queues, "stack" for every other failure; null for other outcomes.
@@ -395,6 +424,8 @@ class Worker:
         self.buffer = Buffer(node=self.worker)
         self.listener = TransformListener(self.buffer, self.worker)
         self.nav = ActionClient(self.worker, NavigateToPose, "/navigate_to_pose")
+        self.spin_client = ActionClient(self.worker, Spin, "/spin")
+        self.drive_client = ActionClient(self.worker, DriveOnHeading, "/drive_on_heading")
         self.nav_through = ActionClient(
             self.worker, NavigateThroughPoses, "/navigate_through_poses"
         )
@@ -668,6 +699,8 @@ class Worker:
             if channel == "clock":
                 self.clock_value = message.clock.sec + message.clock.nanosec * 1e-9
                 self.clock_received = True
+            elif channel == "scan":
+                self.latest_scan = message
             elif channel == "odom":
                 velocity = message.twist.twist
                 self.speed = max(
@@ -1052,6 +1085,7 @@ class Worker:
         above STUCK_COMPLETION_PERCENT of the latest valid coverage, else "stuck". Triggers once."""
         if (
             self.stuck_stop is not None
+            or self.watchdog_step is not None  # waits while the stuck watchdog intervenes
             or self.phase != "RUNNING"
             or not self.measurements
             or self.measurements.movement_simulation_start is None
@@ -1136,6 +1170,226 @@ class Worker:
             return None
         start = before[-1]
         return max([start, *(value for time, value in history if time > since)]) - start
+
+    def true_pose(self):
+        """The true pose (TF map->base_footprint) as (x, y, yaw), or None when unavailable or older than
+        STUCK_POSE_MAX_AGE_S simulated seconds."""
+        try:
+            transform = self.buffer.lookup_transform("map", "base_footprint", Time())
+        except TransformException:
+            return None
+        stamp = transform.header.stamp
+        if self.clock_value - (stamp.sec + stamp.nanosec * 1e-9) > STUCK_POSE_MAX_AGE_S:
+            return None
+        translation, rotation = transform.transform.translation, transform.transform.rotation
+        return translation.x, translation.y, yaw_of(rotation)
+
+    def watchdog_tick(self):
+        """The stuck watchdog (WATCHDOG_RULE): after activation, a true pose within STUCK_RADIUS_M of its pose
+        WATCHDOG_WINDOW_S simulated seconds earlier starts an intervention (watchdog_start), one at a time and at most
+        WATCHDOG_MAX per run. Poses are sampled as the stuck stop samples them (STUCK_SAMPLE_PERIOD_S,
+        STUCK_POSE_MAX_AGE_S)."""
+        with self.lock:
+            watchdog = self.watchdog
+            if (
+                watchdog is None
+                or self.phase != "RUNNING"
+                or self.watchdog_step is not None
+                or len(watchdog["interventions"]) >= WATCHDOG_MAX
+            ):
+                return
+            now = self.clock_value
+            samples = self.watchdog_samples
+            if samples and now < samples[-1][0]:
+                samples.clear()  # the simulation clock went back: restart the window
+            if samples and now - samples[-1][0] < STUCK_SAMPLE_PERIOD_S:
+                return
+            pose = self.true_pose()
+            if pose is None:
+                return
+            if samples and now - samples[-1][0] > STUCK_POSE_MAX_AGE_S:
+                samples.clear()  # an unobserved gap: restart the window
+            samples.append((now, pose[0], pose[1]))
+            cutoff = now - WATCHDOG_WINDOW_S
+            while len(samples) >= 2 and samples[1][0] <= cutoff:
+                samples.popleft()
+            anchor = samples[0]
+            if anchor[0] > cutoff or any(
+                math.hypot(x - anchor[1], y - anchor[2]) >= STUCK_RADIUS_M for _, x, y in samples
+            ):
+                return
+            self.watchdog_start(now, pose)
+
+    def watchdog_start(self, now, pose):
+        """Start an intervention: the first a nudge (a full turn for fresh scans, then WATCHDOG_NUDGE_M toward the
+        most open heading), the later ones a relocation (WATCHDOG_RELOCATE_M toward it)."""
+        interventions = self.watchdog["interventions"]
+        kind = "nudge" if not interventions else "relocate"
+        step = dict(
+            number=len(interventions) + 1,
+            kind=kind,
+            simulation=now,
+            start=[pose[0], pose[1]],
+            heading=None,
+            distance_m=None,
+            result=None,
+            end_simulation=None,
+        )
+        interventions.append(step)
+        self.watchdog_step = step
+        self.watchdog_restart()
+        if self.spec.profile in WATCHDOG_HOLD_PROFILES:
+            step["held"] = True
+            self.watchdog_hold(True)
+        self.worker.get_logger().info(f"Stuck watchdog: {kind} {step['number']} at {now:.1f} s")
+        if kind == "nudge":
+            self.watchdog_spin(2 * math.pi, self.watchdog_turn)
+        else:
+            self.watchdog_turn()
+
+    def watchdog_hold(self, held):
+        """Pause (SIGSTOP) the explorer's owned processes and cancel its Nav2 goals, or resume them (SIGCONT);
+        idempotent, so every stop path may release."""
+        with self.lock:
+            if held == self.watchdog_held:
+                return
+            self.watchdog_held = held
+            processes = self.explorer_scope.live()
+        for process in processes:
+            try:
+                process.send_signal(signal.SIGSTOP if held else signal.SIGCONT)
+            except psutil.NoSuchProcess:
+                pass
+        if held:
+            for client in self.cancel_clients:
+                if client.service_is_ready():
+                    client.call_async(CancelGoal.Request())
+
+    def watchdog_restart(self):
+        """Restart the watchdog's and the stuck stop's windows (when an intervention starts and when it ends)."""
+        self.watchdog_samples.clear()
+        self.stuck_samples.clear()
+        self.stuck_coverage.clear()
+
+    def watchdog_turn(self, _result=None):
+        """Turn to the most open heading of the latest scan, then drive."""
+        with self.lock:
+            step = self.watchdog_step
+            if step is None:
+                return
+            heading = self.open_heading()
+            if heading is None:
+                self.watchdog_end("no_scan")
+                return
+            step["heading"] = heading
+        self.watchdog_spin(heading, self.watchdog_drive)
+
+    def watchdog_drive(self, _result=None):
+        """Drive the intervention's distance straight ahead; the behaviour server stops it before a collision."""
+        with self.lock:
+            step = self.watchdog_step
+            if step is None:
+                return
+            distance = WATCHDOG_NUDGE_M if step["kind"] == "nudge" else WATCHDOG_RELOCATE_M
+        goal = DriveOnHeading.Goal()
+        goal.target = Point(x=distance)
+        goal.speed = WATCHDOG_SPEED_MPS
+        goal.time_allowance = Duration(sec=int(distance / WATCHDOG_SPEED_MPS) + 10)
+        self.watchdog_send(self.drive_client, goal, self.watchdog_end)
+
+    def watchdog_spin(self, yaw, then):
+        """Turn by ``yaw`` (radians, positive counterclockwise), then call ``then`` whatever the turn's result,
+        unless the behaviour server is unavailable or refused the goal."""
+        if abs(yaw) < 0.05:
+            then()
+            return
+        goal = Spin.Goal()
+        goal.target_yaw = float(yaw)
+        goal.time_allowance = Duration(sec=int(abs(yaw) / 0.3) + 10)
+
+        def turned(result):
+            if result in ("unavailable", "rejected"):
+                self.watchdog_end(result)
+            else:
+                then(result)
+
+        self.watchdog_send(self.spin_client, goal, turned)
+
+    def watchdog_send(self, client, goal, done):
+        """Send a behaviour goal; ``done`` receives "succeeded", "aborted", "canceled", "rejected",
+        "unavailable" or "failed"."""
+        if not client.server_is_ready():
+            done("unavailable")
+            return
+
+        def finished(future):
+            status = future.result().status
+            done(
+                "succeeded"
+                if status == GoalStatus.STATUS_SUCCEEDED
+                else "aborted"
+                if status == GoalStatus.STATUS_ABORTED
+                else "canceled"
+                if status == GoalStatus.STATUS_CANCELED
+                else "failed"
+            )
+
+        def accepted(future):
+            handle = future.result()
+            if handle is None or not handle.accepted:
+                done("rejected")
+                return
+            handle.get_result_async().add_done_callback(finished)
+
+        client.send_goal_async(goal).add_done_callback(accepted)
+
+    def watchdog_end(self, result):
+        """Record how the intervention ended and how far the robot got, then restart the windows."""
+        with self.lock:
+            step = self.watchdog_step
+            if step is None:
+                return
+            pose = self.true_pose()
+            step["result"] = result
+            step["end_simulation"] = self.clock_value
+            step["distance_m"] = (
+                None
+                if pose is None
+                else math.hypot(pose[0] - step["start"][0], pose[1] - step["start"][1])
+            )
+            self.watchdog_step = None
+            self.watchdog_restart()
+            self.watchdog_hold(False)
+        self.worker.get_logger().info(
+            f"Stuck watchdog: {step['kind']} {step['number']} {result}, moved {step['distance_m']}"
+        )
+
+    def open_heading(self):
+        """The heading (radians, robot frame) whose ±WATCHDOG_SECTOR_RAD sector of the latest scan has the largest
+        smallest range: no return counts as the scan's maximum range, invalid and too-short readings as 0. None
+        without a scan or its transform."""
+        scan = self.latest_scan
+        if scan is None or not scan.ranges or scan.angle_increment <= 0:
+            return None
+        try:
+            transform = self.buffer.lookup_transform("base_footprint", scan.header.frame_id, Time())
+        except TransformException:
+            return None
+        ranges = [
+            scan.range_max if math.isinf(value) and value > 0
+            else value if math.isfinite(value) and value >= scan.range_min
+            else 0.0
+            for value in scan.ranges
+        ]
+        count = len(ranges)
+        width = max(1, int(WATCHDOG_SECTOR_RAD / scan.angle_increment))
+        best = None
+        for index in range(0, count, max(1, count // 72)):
+            sector = min(ranges[(index + offset) % count] for offset in range(-width, width + 1))
+            if best is None or sector > best[0]:
+                best = (sector, index)
+        angle = scan.angle_min + best[1] * scan.angle_increment + yaw_of(transform.transform.rotation)
+        return math.atan2(math.sin(angle), math.cos(angle))
 
     def publish_metrics(self, snapshot):
         if self.runtime:
@@ -1885,6 +2139,7 @@ class Worker:
         for _ in range(3):
             self.velocity_pub.publish(Twist())
             time.sleep(0.05)
+        self.watchdog_hold(False)  # a paused explorer would ignore SIGINT and SIGTERM
         self.explorer_scope.stop()
         # The insight node only reads: stop it after the explorer, never delaying it.
         self.insight_scope.stop()
@@ -1911,6 +2166,8 @@ class Worker:
             recorder.manifest["stuck_stop"] = (
                 self.stuck_stop if self.stopped_by_stuck else None
             )
+            # The stuck watchdog's interventions (WATCHDOG_RULE); null for explorers without it.
+            recorder.manifest["watchdog"] = self.watchdog
             recorder.manifest["coverage_stop"] = (
                 self.coverage_stop if stopped_by_rule else None
             )
@@ -2126,6 +2383,7 @@ class Worker:
                     ("time_limit", f"Simulation-time limit ({limit:g} seconds)", -1)
                 )
             else:
+                self.watchdog_tick()
                 self.stuck_tick()
             if self.campaign:
                 if not self.measurements.motion_started and self.clock_value-self.start_sim >= 180:
@@ -2178,6 +2436,7 @@ class Worker:
         finally:
             if self.phase not in ("STOPPING", "FINISHED"):
                 self.stop("manual_stop", "Worker application exit")
+            self.watchdog_hold(False)
             self.explorer_scope.stop()
             self.insight_scope.stop()
             self.simulation_scope.stop()

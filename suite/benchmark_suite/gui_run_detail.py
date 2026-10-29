@@ -1580,7 +1580,8 @@ class ProvenanceCard(Card):
 
 class RunHead(FlexRow):
     """``.rhead``: "Runs" back link, a rule, the robot (20 px 600), the run's context and its outcome badge; at
-    the right Replay (RO-20), Block partner (disabled with its reason without one) and Files."""
+    the right Replay (RO-20), Block partner (disabled with its reason without one), Files and, for a run that
+    did not complete, Rerun."""
 
     def __init__(self, themes: ThemeManager) -> None:
         super().__init__(gap=16)
@@ -1602,7 +1603,10 @@ class RunHead(FlexRow):
         )
         self.partner = Button(themes, "Block partner", icon="route")
         self.files = Button(themes, "Files", icon="folder")
-        for button in (self.replay, self.partner, self.files):
+        # SUITE_CHANGES_13: shown for runs that did not complete; completed runs are never rerun
+        self.rerun = Button(themes, "Rerun", icon="retry")
+        self.rerun.setToolTip("Run this experiment again; the new run replaces this run's data")
+        for button in (self.replay, self.partner, self.files, self.rerun):
             self.add(button, gap=8)
 
     def relayout(self) -> None:
@@ -1631,6 +1635,7 @@ class RunView(QtWidgets.QScrollArea):
     back = QtCore.Signal()
     replay_requested = QtCore.Signal(str)  # attempt id
     files_requested = QtCore.Signal(str)  # attempt id
+    rerun_requested = QtCore.Signal(object)  # the record of a run that did not complete
     open_record = QtCore.Signal(object)  # a block partner's record
 
     def __init__(
@@ -1670,6 +1675,7 @@ class RunView(QtWidgets.QScrollArea):
         self.head.files.clicked.connect(
             lambda: self.files_requested.emit(str(self.record.get("attempt_id")))
         )
+        self.head.rerun.clicked.connect(lambda: self.rerun_requested.emit(dict(self.record)))
         self.head.partner.clicked.connect(self._open_partner)
         self.poll = QtCore.QTimer(self)
         self.poll.setSingleShot(True)
@@ -1767,6 +1773,10 @@ class RunView(QtWidgets.QScrollArea):
         excluded = record.get("report_class") not in ("reported", None)
         self.head.badge.set_look(outcome_look(record, muted=excluded))
         self.head.replay.setEnabled(record.get("record_kind") == "full")
+        # only a final run (an earlier attempt opens this view too) that did not complete
+        self.head.rerun.setVisible(
+            bool(record.get("is_final")) and record.get("outcome") != "completed"
+        )
         self._partner_button()
         self.head.relayout()
 

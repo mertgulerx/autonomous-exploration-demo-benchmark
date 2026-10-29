@@ -29,13 +29,14 @@ import uuid
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from .gui_controls import KeySelect, UnderlineTabs
+from .gui_dialogs import Consequences, bullet
 from .gui_run_detail import RunView
 from .gui_runs import OUTCOMES, Names, RunsCard, explorer_names, run_label
 from .gui_analysis import Jobs, analysis_available
 from .gui_files import FilesTab
 from .gui_study import StudyTab, newest_export
 from .gui_style import humanize
-from .gui_support import POLL_MS, Transport
+from .gui_support import POLL_MS, Transport, stale_engine_message
 from .gui_theme import ThemeManager
 from .gui_widgets import (
     BODY,
@@ -45,6 +46,7 @@ from .gui_widgets import (
     PAGE_TOP,
     Button,
     FlexRow,
+    ModalHost,
     Rule,
     TextLine,
     place,
@@ -61,12 +63,31 @@ def study_label(row: Mapping[str, Any]) -> str:
     return f"{name} · {' and '.join(str(level) for level in levels)}"
 
 
+def confirm_rerun(modal: ModalHost, themes: ThemeManager, context: str) -> bool:
+    """Ask before a rerun: the run and what happens; Cancel and Rerun (SUITE_CHANGES_13)."""
+    card = Consequences(themes, "Rerun this run?")
+    card.add_context(context)
+    card.add_bullets(
+        [
+            bullet(
+                "Its recorded data is deleted and replaced by the new run. This cannot be undone."
+            ),
+            bullet("The run leaves Runs until the new run finishes; the Monitor shows it."),
+            bullet("A finished campaign runs again for it, then finishes."),
+        ]
+    )
+    card.add_button("Cancel", False, default=True)
+    card.add_button("Rerun", True, variant="danger-solid", icon="retry")
+    return bool(modal.exec_card(card, escape_result=False))
+
+
 class ResultsPage(QtWidgets.QWidget):
     """Results: head (study select; Run analysis and Export study on the Study tab), Runs, Study and Files."""
 
     # The opened run's attempt and directory: the Monitor's Logs view reads it until a live run is chosen there.
     attempt_selected = QtCore.Signal(str, object)
     replay_requested = QtCore.Signal(str)  # attempt id
+    notify = QtCore.Signal(str, str)  # text, kind
 
     def __init__(
         self, themes: ThemeManager, transport: Transport, parent: QtWidgets.QWidget | None = None
@@ -132,6 +153,7 @@ class ResultsPage(QtWidgets.QWidget):
         self.run_view.open_record.connect(self.open_run)
         self.run_view.replay_requested.connect(self.replay_requested.emit)
         self.run_view.files_requested.connect(self.show_run_files)
+        self.run_view.rerun_requested.connect(self.rerun_run)
         self.sync = QtCore.QTimer(self)
         self.sync.setInterval(5000)
         self.sync.timeout.connect(self._sync)
@@ -398,6 +420,30 @@ class ResultsPage(QtWidgets.QWidget):
         self.tabs.set_index(FILES)
         self._tab(FILES)
 
+    def rerun_run(self, record: Mapping[str, Any]) -> None:
+        """The run view's Rerun: confirm, then ``attempt.rerun``; a fixed request ID makes a repeated click
+        return the stored answer."""
+        identity = str(record.get("attempt_id") or "")
+        modal = self.window().findChild(ModalHost)
+        if not identity or modal is None:
+            return
+        context = " · ".join(
+            part
+            for part in (
+                self.name_of("robot", record.get("robot_id")),
+                run_label(record, self.name_of),
+                humanize(str(record.get("outcome") or "")),
+            )
+            if part
+        )
+        if confirm_rerun(modal, self.themes, context):
+            self.transport.submit(
+                "results-rerun:" + identity,
+                "attempt.rerun",
+                {"attempt_id": identity},
+                request_id="attempt-rerun:" + identity,
+            )
+
     # export and analysis
 
     def _export(self) -> None:
@@ -457,6 +503,15 @@ class ResultsPage(QtWidgets.QWidget):
             return True
         if tag.startswith("results-attempts:"):
             return self.results.attempts_received(tag, result)
+        if tag.startswith("results-rerun:"):
+            # the run is no longer final: leave its view and refresh the runs it left
+            if self.run_view.record.get("attempt_id") == tag.removeprefix("results-rerun:"):
+                self.close_run()
+            self.filter_runs()
+            self.notify.emit(
+                "Rerun started. The run returns to Runs when the new run finishes.", "ok"
+            )
+            return True
         return False
 
     def failed(self, tag: str, error: str) -> bool:
@@ -474,6 +529,10 @@ class ResultsPage(QtWidgets.QWidget):
         if tag.startswith("results-attempts:"):
             self.results.expanding.pop(tag, None)
             return False  # the window shows the engine's reason
+        if tag.startswith("results-rerun:"):
+            stale = stale_engine_message(error, "Unsupported operation: attempt.rerun", "Rerun")
+            self.notify.emit(stale or "Rerun refused: " + error, "bad")
+            return True
         return False
 
     # layout

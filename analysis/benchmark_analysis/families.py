@@ -492,13 +492,17 @@ CHECKS: tuple[tuple[str, Callable[[Context, Row], Any]], ...] = (
     ("mapping_parameters", _mapping_parameters),
     ("time_limit_rule", _time_limit_rule),
 )
+# A rerun (the suite's Rerun, suite change 13) is a later attempt that may run on a later build: as it keeps its
+# cell's comparison key, its code identity and registry are not compared (maintainer, 28 October 2026).
+LATER_ATTEMPT_EXEMPT = frozenset({"registry_sha256", "provenance_id"})
 
 
 def _homogeneous(context: Context, unit: Unit) -> None:
     """Refuse a unit whose runs (every population it reports: reported runs, and excluded runs when
     ``exclusions_as_failures`` is used) mix robot, registry, code identity, SLAM configuration, mapping condition
     or its parameters (I10), time-limit rule or (a family) generator version, naming each value's runs (RO-22).
-    Only uniformity is checked, not the values themselves."""
+    Only uniformity is checked, not the values themselves. A later attempt (a rerun) is left out of the registry
+    and code identity checks (``LATER_ATTEMPT_EXEMPT``)."""
     classes = [REPORTED]
     if "exclusions_as_failures" in context.populations(unit.ref.mandated):
         classes += EXCLUDED
@@ -509,6 +513,8 @@ def _homogeneous(context: Context, unit: Unit) -> None:
     for column, read in checks:
         grouped: dict[str, list[Row]] = defaultdict(list)
         for run in runs:
+            if column in LATER_ATTEMPT_EXEMPT and (run.get("attempt_number") or 1) > 1:
+                continue
             value = read(context, run)
             if (
                 value in (None, NO_MANIFEST)

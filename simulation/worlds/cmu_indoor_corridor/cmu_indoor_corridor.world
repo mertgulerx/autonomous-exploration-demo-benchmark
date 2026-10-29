@@ -35,7 +35,7 @@
       <elevation>0</elevation>
       <heading_deg>0</heading_deg>
     </spherical_coordinates>
-    <!-- FIT-SLAM 2 corridor world: the "indoor" environment (mesh by Hongbiao Zhu, CMU Autonomous Exploration
+    <!-- CMU indoor corridor: the "indoor" environment (mesh by Hongbiao Zhu, CMU Autonomous Exploration
          Development Environment) as shipped in github.com/suchetanrs/gz-sim-environment (branch humble,
          gz_sim_worlds/worlds/indoor.sdf, package licence MIT). Same placement (pose 0); light from indoor.sdf;
          physics, systems and scene from the benchmark's Bookstore world. -->

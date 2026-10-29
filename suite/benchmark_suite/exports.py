@@ -24,16 +24,21 @@ module reads only an export and the study's file.
 
 from collections import Counter, defaultdict
 from collections.abc import Iterable, Iterator
+from concurrent.futures import ProcessPoolExecutor
 import csv
+import ctypes
 from dataclasses import dataclass
 import gzip
 import hashlib
 import io
+from itertools import repeat
 import json
+import multiprocessing as mp
 import os
 from pathlib import Path
 import re
 import shutil
+import signal
 import sqlite3
 import time
 from typing import TYPE_CHECKING, Any
@@ -44,6 +49,7 @@ from exploration_benchmark_runner.coverage import STUCK_COMPLETION_PERCENT, STUC
 from exploration_benchmark_runner.worlds import WorldRegistry
 import numpy as np
 from PIL import Image
+import psutil
 import pyarrow as pa
 import pyarrow.compute as pc
 import pyarrow.csv as pcsv
@@ -363,8 +369,19 @@ def snapshot(workspace: Path, study_id: str) -> Snapshot:
         campaigns = [campaign for campaign in campaigns if campaign["id"] not in replaced]
         if not campaigns:
             raise Refused(f"Study {study_id} has no campaigns")
+        # The highest workers a campaign ran with: its specification's or a later change's
+        # (SUITE_CHANGES_14), so the analysis's note on parallel runs (B8) stays right.
+        changed = dict(
+            database.execute(
+                "SELECT campaign_id,MAX(json_extract(payload,'$.to')) FROM events "
+                "WHERE kind='campaign.concurrency_changed' GROUP BY campaign_id"
+            ).fetchall()
+        )
         for campaign in campaigns:
             campaign["specification"] = json.loads(campaign["specification"])
+            campaign["highest_concurrency"] = max(
+                campaign["specification"]["concurrency"], changed.get(campaign["id"]) or 0
+            )
         ids = [campaign["id"] for campaign in campaigns]
         marks = ",".join("?" * len(ids))
         attempts = _rows(
@@ -910,6 +927,63 @@ def _accounting_rows(
     ]
 
 
+PR_SET_PDEATHSIG = 1  # linux/prctl.h
+# One final run's manifest, coverage and ground-truth rows, and derived tables by name (``_run_part``).
+RunPart = tuple[
+    dict[str, Any], list[dict[str, Any]], list[dict[str, Any]], list[tuple[str, pa.Table]]
+]
+
+
+def export_workers() -> int:
+    """Processes for the per-run stage (SUITE_CHANGES_15): the host's cores but two, at most 8, and at most one
+    per 2 GiB of available memory. An export runs only while no run is active, and no run starts during it
+    (``Engine.tick``), so they never take time from a simulation."""
+    cores = os.cpu_count() or 1
+    memory = int(psutil.virtual_memory().available) // (2 * 1024**3)
+    return max(1, min(8, cores - 2, memory))
+
+
+def _worker_start(parent: int) -> None:
+    """A per-run worker dies with its export job (``PR_SET_PDEATHSIG``), so none writes into a staging
+    directory after the job stopped; one thread each, as the job's other libraries. (The analysis package's
+    figure workers have the same guard, ``benchmark_analysis.outputs._figure_worker``.)"""
+    libc = ctypes.CDLL(None, use_errno=True)
+    if libc.prctl(PR_SET_PDEATHSIG, signal.SIGKILL) != 0:
+        raise OSError(ctypes.get_errno(), "prctl(PR_SET_PDEATHSIG) failed")
+    if os.getppid() != parent:  # the job ended before the call above took effect
+        os._exit(1)
+    pa.set_cpu_count(1)
+
+
+def _run_part(
+    workspace: Path, staging: Path, attempt_id: str, pairs: list[tuple[str, str]]
+) -> RunPart:
+    """One final run's rows, derived tables, map and raw copy. It writes only its own files (``maps/<id>.*``,
+    ``raw/<id>/``), so runs can be built in parallel."""
+    directory = workspace / "attempts" / attempt_id
+    manifest = materialize_manifest(directory)
+    activation = manifest.get("simulation_start")
+    activation_ns = round(float(activation) * 1e9) if activation is not None else None
+    coverage = list(_coverage_rows(directory, activation_ns))
+    trajectory = _trajectory_rows(directory, manifest)
+    derived: list[tuple[str, pa.Table]] = []
+    for name in ("goals", "explorer_decisions", "gate_evaluations"):
+        path = directory / "derived" / f"{name}.v{DERIVED_VERSION}.parquet"
+        if path.is_file():
+            table = pq.read_table(path)
+            derived.append(
+                (
+                    name,
+                    table.add_column(
+                        0, "attempt_id", pa.array([attempt_id] * table.num_rows, pa.string())
+                    ),
+                )
+            )
+    _map(directory, staging / "maps" / attempt_id, manifest)
+    _raw(directory, staging / "raw" / attempt_id, pairs)
+    return manifest, coverage, trajectory, derived
+
+
 def _per_run(
     workspace: Path,
     staging: Path,
@@ -920,38 +994,52 @@ def _per_run(
 ) -> tuple[
     list[dict[str, Any]], list[dict[str, Any]], dict[str, list[pa.Table]], dict[str, list[str]]
 ]:
-    """Coverage, ground truth, derived tables, maps, references and raw copies of the final runs."""
+    """Coverage, ground truth, derived tables, maps, references and raw copies of the final runs.
+
+    The runs are built in ``export_workers()`` processes and taken back in run order;
+    the coverage references, which runs share, are written here in that order, so the export is the one a
+    single process builds. On an error the queued runs are cancelled and the running ones awaited before it
+    leaves, so no worker writes into the staging directory the caller then removes."""
     coverage: list[dict[str, Any]] = []
     trajectory: list[dict[str, Any]] = []
     derived: dict[str, list[pa.Table]] = defaultdict(list)
     references: dict[str, list[str]] = defaultdict(list)
     (staging / "maps").mkdir()
     (staging / "references").mkdir()
-    for attempt, record, _ in finals:
-        if record["record_kind"] != "full":
-            continue
-        directory = workspace / "attempts" / attempt["id"]
-        manifest = materialize_manifest(directory)
-        activation = manifest.get("simulation_start")
-        activation_ns = round(float(activation) * 1e9) if activation is not None else None
-        coverage.extend(_coverage_rows(directory, activation_ns))
-        trajectory.extend(_trajectory_rows(directory, manifest))
-        for name in ("goals", "explorer_decisions", "gate_evaluations"):
-            path = directory / "derived" / f"{name}.v{DERIVED_VERSION}.parquet"
-            if path.is_file():
-                table = pq.read_table(path)
-                derived[name].append(
-                    table.add_column(
-                        0, "attempt_id", pa.array([attempt["id"]] * table.num_rows, pa.string())
-                    )
-                )
-        _map(directory, staging / "maps" / attempt["id"], manifest)
-        reference = _reference(
-            workspace, manifest, staging / "references", pairs, registry, warnings
+    full = [attempt["id"] for attempt, record, _ in finals if record["record_kind"] == "full"]
+    if full:
+        (staging / "raw").mkdir()  # here, not by concurrent workers (as ``_raw`` alone made it)
+    count = export_workers()
+    pool = (
+        ProcessPoolExecutor(
+            max_workers=min(count, len(full)),
+            mp_context=mp.get_context("spawn"),
+            initializer=_worker_start,
+            initargs=(os.getpid(),),
         )
-        if reference:
-            references[reference].append(attempt["id"])
-        _raw(directory, staging / "raw" / attempt["id"], pairs)
+        if count > 1 and len(full) > 1
+        else None
+    )
+    try:
+        arguments = (repeat(workspace), repeat(staging), full, repeat(pairs))
+        parts: Iterator[RunPart] = (
+            pool.map(_run_part, *arguments) if pool is not None else map(_run_part, *arguments)
+        )
+        for attempt_id, (manifest, run_coverage, run_trajectory, run_derived) in zip(
+            full, parts, strict=True
+        ):
+            coverage.extend(run_coverage)
+            trajectory.extend(run_trajectory)
+            for name, table in run_derived:
+                derived[name].append(table)
+            reference = _reference(
+                workspace, manifest, staging / "references", pairs, registry, warnings
+            )
+            if reference:
+                references[reference].append(attempt_id)
+    finally:
+        if pool is not None:
+            pool.shutdown(wait=True, cancel_futures=True)
     return coverage, trajectory, derived, references
 
 
@@ -1238,7 +1326,7 @@ def _study_files(
                                 "first_repetition", 0
                             ),
                             repetitions=c["specification"]["repetitions"],
-                            concurrency=c["specification"]["concurrency"],
+                            concurrency=c["highest_concurrency"],  # SUITE_CHANGES_14
                             world_time_limits=c["specification"].get("world_time_limits"),
                             # I4: the rule that set the limits and its inputs (null without the rule).
                             time_limit_rule=c["specification"].get("time_limit_rule"),

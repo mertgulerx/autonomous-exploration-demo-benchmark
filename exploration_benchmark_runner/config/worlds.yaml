@@ -35,24 +35,24 @@ worlds:
     descriptors:
       file: exploration_benchmark_runner/config/coverage/bookstore_descriptors.json
       sha256: 00817564310d8a5f0033393443c351a0ae53dfb19dcfd78eed39ce0451f44f5c
-  fitslam_corridor:
-    label: FIT-SLAM corridor
+  cmu_indoor_corridor:
+    label: CMU indoor corridor
     tier: A
     family: null
     role: evaluation
-    world_file: simulation/worlds/fitslam_corridor/fitslam_corridor.world
+    world_file: simulation/worlds/cmu_indoor_corridor/cmu_indoor_corridor.world
     source: null
-    # The corridor world of FIT-SLAM 2 (Saravanan et al., RAS 2025): gz-sim-environment indoor.sdf (CMU mesh).
+    # The CMU "indoor" environment mesh as shipped in gz-sim-environment (indoor.sdf); renamed from
+    # fitslam_corridor on 28 October 2026 (maintainer: the world is not FIT-SLAM's).
     scenario:
-      file: exploration_benchmark_runner/config/coverage/fitslam_corridor_scenario.yaml
-      key: fitslam_corridor
+      file: exploration_benchmark_runner/config/coverage/cmu_indoor_corridor_scenario.yaml
+      key: cmu_indoor_corridor
     reference:
       metric_version: 2
-      id: fitslam_corridor_coverage_v2
-      metadata_sha256: 759fac80e688e3355239e7ca2c73757d812efb0488d19421cfa99ab3bd1bc73b
-    # The spawn of FIT-SLAM's simulator for this world (spawn_robot.launch.py robot_coordinates[0], "# corridor":
-    # x 0.0, y 0.0; no yaw given, so 0).
-    default_spawn: {id: default-fitslam_corridor, name: Default, x: 0.0, y: 0.0, z: 0.11, yaw: 0.0}
+      id: cmu_indoor_corridor_coverage_v2
+      metadata_sha256: 0fee4ae84fb5349a77e509ee08ed52993feb992a386dfa41bdf6002b48c19f70
+    # The spawn at the world's origin (x 0.0, y 0.0, yaw 0).
+    default_spawn: {id: default-cmu_indoor_corridor, name: Default, x: 0.0, y: 0.0, z: 0.11, yaw: 0.0}
     spawns: []
     robots:
       tb3_waffle_pi: {}
@@ -62,8 +62,8 @@ worlds:
     resource_paths: []
     moving_objects: null
     descriptors:
-      file: exploration_benchmark_runner/config/coverage/fitslam_corridor_descriptors.json
-      sha256: 6a87494f75f34e41e882941c41239f7cf72221891750f3c70d023f59de5a8342
+      file: exploration_benchmark_runner/config/coverage/cmu_indoor_corridor_descriptors.json
+      sha256: de170e74b67a95380393753dd73660617cdde7f2660d3b3f15a05ecd302ccd3b
   corridor:
     label: Corridor
     tier: A

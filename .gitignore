@@ -47,3 +47,5 @@ CLAUDE.local.md
 .codex/
 /results/research
 /results
+# CMU autonomous exploration development environment with RADEF (local workspace).
+/cmu-exploration/

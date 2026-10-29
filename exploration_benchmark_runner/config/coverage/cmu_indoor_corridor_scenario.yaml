@@ -1,0 +1,12 @@
+# Coverage settings of cmu_indoor_corridor (the CMU "indoor" mesh); hashed into
+# cmu_indoor_corridor_v2.json. Bounds: the mesh's point-cloud extent (x -1.9..127.5, y -29.2..70.0) plus margin;
+# the inclusion is the 4-connected free floor reachable from the spawn inside them.
+resolution: 0.05
+body_height_slab: [0.03, 0.35]
+scenarios:
+  cmu_indoor_corridor:
+    bounds: [-3.0, -30.5, 128.5, 71.0]
+    inclusion_polygons:
+    - [[-3.0, -30.5], [128.5, -30.5], [128.5, 71.0], [-3.0, 71.0]]
+    exclusion_polygons: []
+    review: 'CMU indoor corridor (gz-sim-environment indoor.sdf): free floor connected to the spawn at the origin (0, 0)'

@@ -40,7 +40,7 @@ from .run_record import (
     validate,
 )
 from .storage import load_object
-from .store import Store
+from .store import Store, replaced_campaigns
 from .strata import COMPARISON_KEY_VERSION
 
 if TYPE_CHECKING:
@@ -136,9 +136,11 @@ class RunRecords:
                 )
 
     def pending(self, campaign_id: str | None = None) -> list[str]:
-        """Finished attempts that still need a record, oldest first (excluding failures until restart)."""
+        """Finished attempts that still need a record, oldest first (excluding failures until restart
+        and the old attempt of a rerun, whose files go)."""
         rows = self.store.rows(
             "SELECT a.id FROM attempts a WHERE a.phase='FINISHED' AND a.discarded=0 "
+            "AND a.discard_intent=0 "
             "AND COALESCE(a.outcome,'')!='engine_interruption' "
             + ("AND a.campaign_id=? " if campaign_id else "")
             + "AND NOT EXISTS (SELECT 1 FROM run_records r WHERE r.attempt_id=a.id "
@@ -205,8 +207,17 @@ class RunRecords:
     def cancel(self, campaign_ids: list[str]) -> None:
         """Stop a record job whose attempt belongs to a campaign about to be deleted (its files go)."""
         if self.job is not None and self.building_campaign in campaign_ids:
-            self.job.close()
-            self.job, self.building, self.building_campaign = None, None, None
+            self._close_job()
+
+    def cancel_attempt(self, attempt_id: str) -> None:
+        """Stop the record job of an attempt a rerun is about to discard (its files go)."""
+        if self.job is not None and self.building == attempt_id:
+            self._close_job()
+
+    def _close_job(self) -> None:
+        assert self.job is not None
+        self.job.close()
+        self.job, self.building, self.building_campaign = None, None, None
 
     def _fail(self, attempt: dict[str, Any], detail: str) -> None:
         self.failed[attempt["id"]] = detail
@@ -335,6 +346,8 @@ class RunRecords:
         """Store a full record from a job's result; the caller holds a transaction."""
         facts, specification = self.engine_facts(attempt)
         fields = dict(measured["fields"])
+        if fields.get("comparison_key") is not None:
+            fields["comparison_key"] = self._kept_key(facts) or fields["comparison_key"]
         defaults = (specification.get("default_parameter_hashes") or {}).get(facts["robot_id"])
         record = ordered(
             dict(
@@ -373,6 +386,37 @@ class RunRecords:
             ),
             attempt["campaign_id"],
             attempt["id"],
+        )
+
+    def _kept_key(self, facts: dict[str, Any]) -> str | None:
+        """A rerun keeps its cell's comparison key (SUITE_CHANGES_13 §7): the key of the study's earliest
+        recorded run of the same robot, world and spawn (the cell the analysis checks, across the study's
+        campaigns but not those a restart copy replaced), so a rebuilt image never splits the cell. None
+        for a run that is no rerun, or when the cell holds no other key."""
+        rerun = self.store.one(
+            "SELECT 1 FROM events v JOIN attempts a ON a.id=v.attempt_id WHERE a.experiment_id=? "
+            "AND v.kind='attempt.discard_requested' AND json_extract(v.payload,'$.rerun')=1 LIMIT 1",
+            (facts["experiment_id"],),
+        )
+        if rerun is None:
+            return None
+        replaced = replaced_campaigns(self.store.db)
+        rows = self.store.rows(
+            "SELECT campaign_id,comparison_key FROM run_records WHERE run_record_version=? "
+            "AND study_id=? AND robot_id=? AND world_id=? AND spawn_id=? AND attempt_id!=? "
+            "AND comparison_key IS NOT NULL ORDER BY recorded_ns",
+            (
+                RUN_RECORD_VERSION,
+                facts["study_id"],
+                facts["robot_id"],
+                facts["world_id"],
+                facts["spawn_id"],
+                facts["attempt_id"],
+            ),
+        )
+        return next(
+            (str(row["comparison_key"]) for row in rows if row["campaign_id"] not in replaced),
+            None,
         )
 
     def stub(self, attempt: dict[str, Any], discard_trigger: str | None) -> None:

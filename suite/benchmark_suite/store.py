@@ -267,6 +267,15 @@ class Store:
                     f"version {STORE_VERSION}",
                 )
             self.db.executescript(SCHEMA)
+            # The workers in effect (SUITE_CHANGES_14): changeable after submission, so kept outside the
+            # accepted specification; campaigns from before the column take their specification's value.
+            columns = {row[1] for row in self.db.execute("PRAGMA table_info(campaigns)")}
+            if "concurrency" not in columns:
+                self.db.execute("ALTER TABLE campaigns ADD COLUMN concurrency INTEGER")
+            self.db.execute(
+                "UPDATE campaigns SET concurrency=json_extract(specification,'$.concurrency') "
+                "WHERE concurrency IS NULL"
+            )
             check = self.db.execute("PRAGMA quick_check").fetchone()[0]
             if check != "ok":
                 raise ContractError("workspace", "Database integrity check failed: " + check)
@@ -399,7 +408,7 @@ class Store:
             ).fetchone()[0]
             self.db.execute(
                 "INSERT INTO campaigns(id,name,state,specification,count,queue_position,"
-                "created_ns,ordering_version) VALUES(?,?,?,?,?,?,?,?)",
+                "created_ns,ordering_version,concurrency) VALUES(?,?,?,?,?,?,?,?,?)",
                 (
                     identity,
                     spec.name,
@@ -409,6 +418,7 @@ class Store:
                     position,
                     time.time_ns(),
                     ORDERING_VERSION,
+                    spec.concurrency,
                 ),
             )
             self.db.executemany(

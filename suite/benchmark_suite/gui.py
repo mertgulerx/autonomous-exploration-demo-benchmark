@@ -35,7 +35,9 @@ from .gui_campaigns import (
     LiveCard,
     OverviewRow,
     TableCard,
+    choose_concurrency,
     confirm_deletion,
+    confirm_rerun_all,
     confirm_restart,
     confirm_stop,
 )
@@ -58,6 +60,7 @@ from .gui_widgets import (
     TextLine,
     ToastArea,
     ToastKind,
+    plural,
 )
 from .gui_monitor import MonitorPage
 from .gui_results import ResultsPage
@@ -276,6 +279,7 @@ class Window(QtWidgets.QMainWindow):
         self.results_page = ResultsPage(self.themes, self.transport)
         self.results_page.attempt_selected.connect(self.monitor.log_view.select_attempt)
         self.results_page.replay_requested.connect(self.open_replay)
+        self.results_page.notify.connect(self.page_notice)
         self.results = self.results_page.results
         self.tables.append(self.results)
         layout.addWidget(self.results_page, 1)
@@ -363,6 +367,21 @@ class Window(QtWidgets.QMainWindow):
         elif tag.startswith("campaign-control:"):
             self.campaigns.finish_control(
                 tag.removeprefix("campaign-control:"), result.get("state", "PAUSING")
+            )
+        elif tag.startswith("campaign-concurrency:"):
+            self.campaigns.finish_control(tag.removeprefix("campaign-concurrency:"))
+            self.notify(f"Workers set to {result.get('concurrency')}.", "ok")
+        elif tag.startswith("campaign-rerun-count:"):
+            self.rerun_all(tag.removeprefix("campaign-rerun-count:"), result)
+        elif tag.startswith("campaign-rerun-all:"):
+            self.campaigns.finish_control(
+                tag.removeprefix("campaign-rerun-all:"), result.get("state")
+            )
+            self.results_page.filter_runs()
+            self.notify(
+                f"Rerun started for {plural(int(result['runs']), 'run')}. They return to Runs as "
+                "their new runs finish.",
+                "ok",
             )
         elif tag == "campaign-delete-preview":
             # Ticks on campaigns that are gone could not be cleared from the table any more.
@@ -465,6 +484,30 @@ class Window(QtWidgets.QMainWindow):
             )
         elif tag.startswith("campaign-control:"):
             self.campaigns.finish_control(tag.removeprefix("campaign-control:"))
+        elif tag.startswith("campaign-concurrency:"):
+            self.campaigns.finish_control(tag.removeprefix("campaign-concurrency:"))
+            error = (
+                stale_engine_message(
+                    error, "Unsupported operation: campaign.set_concurrency", "changing workers"
+                )
+                or error
+            )
+        elif tag.startswith("campaign-rerun-count:"):
+            self.campaigns.finish_control(tag.removeprefix("campaign-rerun-count:"))
+            error = (
+                stale_engine_message(
+                    error, "Unsupported operation: campaign.rerun_preview", "Rerun all"
+                )
+                or error
+            )
+        elif tag.startswith("campaign-rerun-all:"):
+            self.campaigns.finish_control(tag.removeprefix("campaign-rerun-all:"))
+            error = (
+                stale_engine_message(
+                    error, "Unsupported operation: campaign.rerun_all", "Rerun all"
+                )
+                or "Rerun refused: " + error
+            )
         elif tag.startswith("campaign-restart:"):
             self.campaigns.finish_control(tag.removeprefix("campaign-restart:"))
             stale = stale_engine_message(
@@ -603,17 +646,37 @@ class Window(QtWidgets.QMainWindow):
         self.campaigns.reset_page()
 
     def control_selected_campaign(self, identity: str, operation: str) -> None:
-        """Start, Pause, Resume, Stop or Restart from the campaign card."""
+        """Start, Pause, Resume, Change workers, Stop or Restart from the campaign card."""
         if self.campaigns.begin_control(identity):
             self.control_campaign_row(identity, operation)
 
     def control_campaign_row(self, identity: str, operation: str) -> None:
-        name = next(
-            (row["name"] for _, row in self.campaigns.model.records() if row["id"] == identity),
-            self.campaign_card.facts.name if identity == self.campaign_id else "this campaign",
+        row = next(
+            (record for _, record in self.campaigns.model.records() if record["id"] == identity),
+            None,
         )
+        if row is not None:
+            name = row["name"]
+        else:
+            name = (
+                self.campaign_card.facts.name if identity == self.campaign_id else "this campaign"
+            )
         if operation == "stop" and not confirm_stop(self.modal, self.themes, name):
             self.campaigns.finish_control(identity)
+            return
+        if operation == "concurrency":
+            # the workers in effect; an older engine's rows have none, and the dialog preselects nothing
+            value = row.get("concurrency") if row is not None else None
+            current = value if isinstance(value, int) else None
+            workers = choose_concurrency(self.modal, self.themes, name, current)
+            if workers is None or workers == current:
+                self.campaigns.finish_control(identity)
+                return
+            self.transport.submit(
+                "campaign-concurrency:" + identity,
+                "campaign.set_concurrency",
+                {"campaign_id": identity, "concurrency": workers},
+            )
             return
         if operation == "restart":
             if not confirm_restart(self.modal, self.themes, name):
@@ -623,8 +686,37 @@ class Window(QtWidgets.QMainWindow):
                 "campaign-restart:" + identity, "campaign.restart_copy", {"campaign_id": identity}
             )
             return
+        if operation == "rerun_all":
+            # the engine's own selection first (rerun_all asks with it)
+            self.transport.submit(
+                "campaign-rerun-count:" + identity,
+                "campaign.rerun_preview",
+                {"campaign_id": identity},
+            )
+            return
         self.transport.submit(
             "campaign-control:" + identity, "campaign." + operation, {"campaign_id": identity}
+        )
+
+    def rerun_all(self, identity: str, preview: dict[str, Any]) -> None:
+        """Rerun all (SUITE_CHANGES_16): the runs ``campaign.rerun_preview`` names, by outcome; once
+        confirmed, ``campaign.rerun_all`` reruns them in one engine transaction."""
+        outcomes = {outcome: int(count) for outcome, count in preview["outcomes"].items() if count}
+        if not outcomes:
+            self.campaigns.finish_control(identity)
+            self.notify("No finished run of this campaign is left to rerun.", "neutral")
+            return
+        if not confirm_rerun_all(
+            self.modal,
+            self.themes,
+            preview["name"],
+            outcomes,
+            float(preview["time_limit_below_pct"]),
+        ):
+            self.campaigns.finish_control(identity)
+            return
+        self.transport.submit(
+            "campaign-rerun-all:" + identity, "campaign.rerun_all", {"campaign_id": identity}
         )
 
     def open_profile(self, operation: str) -> None:

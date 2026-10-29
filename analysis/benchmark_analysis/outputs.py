@@ -32,13 +32,21 @@ over the plan's whole hypothesis list (``families.merge_hypotheses``); the expor
 
 from collections import Counter
 from collections.abc import Callable, Iterable
+from concurrent.futures import Future, ProcessPoolExecutor, as_completed
+import ctypes
 from dataclasses import dataclass
 from datetime import UTC, datetime
 import io
 from itertools import chain
 import json
+import multiprocessing as mp
+from multiprocessing.synchronize import Event
+import os
 from pathlib import Path
-from typing import Any
+import pickle
+import signal
+from types import MappingProxyType
+from typing import Any, cast
 
 from matplotlib.figure import Figure
 from matplotlib.layout_engine import ConstrainedLayoutEngine
@@ -519,6 +527,255 @@ def freeze_layout(figure: Figure) -> None:
     figure.set_layout_engine("none")
 
 
+# One module per group of figures (FIGURE_EXTENSION), in figure-number order.
+FIGURE_MODULES = {
+    "figures": figures,
+    "conduct": conduct,
+    "comparisons": comparisons,
+    "behaviour": behaviour,
+    "heatmaps": heatmaps,
+    "regionmaps": regionmaps,
+    "decisions": decisions,
+    "schematic": schematic,
+    "composites": composites,
+    "summaries": summaries,
+}
+# The family figures (F24, F25, F28) after the modules, as they also take the family estimates' inputs; the
+# taxonomy last, as it also takes the coding file.
+FIGURE_GROUPS = (*FIGURE_MODULES, "families", "taxonomy")
+# The order the worker processes take the groups in: the longest first (the RADEF study on one core, 28 October
+# 2026: behaviour 968 s, regionmaps 733 s, figures 375 s); it changes no output.
+SUBMIT_ORDER = (
+    "behaviour",
+    "regionmaps",
+    "figures",
+    "summaries",
+    "composites",
+    "comparisons",
+    "heatmaps",
+    "conduct",
+    "decisions",
+    "schematic",
+    "families",
+    "taxonomy",
+)
+if sorted(SUBMIT_ORDER) != sorted(FIGURE_GROUPS):
+    raise RuntimeError("SUBMIT_ORDER must name every figure group once")
+# numeric libraries of a figure worker: one thread each, so ``--workers`` bounds the cores used
+THREAD_VARIABLES = (
+    "OMP_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+)
+PR_SET_PDEATHSIG = 1  # linux/prctl.h
+
+
+@dataclass(frozen=True)
+class FigureJob:
+    """What every figure group needs; pickled once for each worker process (suite change 15)."""
+
+    context: figures.FigureContext
+    base: dict[str, Any]
+    preset: str
+    sans: bool
+    family_inputs: tuple[str, ...]
+    coding: taxonomy.Coding | None
+    figure_directory: Path
+    sheet_directory: Path
+
+
+@dataclass(frozen=True)
+class SavedFigure:
+    """A saved figure's name, PDF check outcome and log line."""
+
+    name: str
+    check_available: bool
+    problems: tuple[str, ...]
+    log: str
+
+
+def _group_figures(job: FigureJob, name: str) -> Iterable[figures.FigureOut]:
+    if name == "families":
+        return families_figures.figures(job.context, list(job.family_inputs))
+    if name == "taxonomy":
+        return taxonomy.figures(job.context, job.coding)
+    return cast(Iterable[figures.FigureOut], FIGURE_MODULES[name].figures(job.context))
+
+
+def _save_figure(job: FigureJob, built: figures.FigureOut) -> SavedFigure:
+    """Save, check and close one figure, with its contact sheet and sidecar; writes only its own files."""
+    path = job.figure_directory / f"{built.name}.pdf"
+    freeze_layout(built.figure)
+    built.figure.savefig(path, metadata={"CreationDate": None})
+    result = checks.check_pdf(path, style.width_pt(job.preset, built.width))
+    views = checks.contact_sheet(built.figure, job.sheet_directory / f"{built.name}.png")
+    plt.close(built.figure)
+    # a figure with no runs behind it reads no study files and has no counts
+    with_runs = f"figures/{built.name}.pdf" not in NO_RUNS
+    study_inputs = INPUTS["figure"] if with_runs else ()
+    inputs = [*study_inputs, *sorted(built.inputs)]
+    (job.figure_directory / f"{built.name}.sidecar.json").write_text(
+        _sidecar(
+            job.base,
+            job.context.study,
+            inputs,
+            built.attempt_ids,
+            with_counts=with_runs,
+            output=f"{built.name}.pdf",
+            alt_text=built.alt_text,
+            # where an encoding repeats (style.profile_styles): said on every figure with runs
+            caption_notes=[*built.notes, *(job.context.style_notes if with_runs else ())],
+            check_pdf=result,
+            contact_sheet=dict(file=f"contact_sheets/{built.name}.png", views=views),
+            **built.extra,
+        ),
+        encoding="utf-8",
+    )
+    return SavedFigure(
+        built.name,
+        bool(result.get("available", True)),
+        tuple(result.get("problems") or ()),
+        f"figure {built.name}" + ("" if result.get("ok", True) else " (check_pdf: see sidecar)"),
+    )
+
+
+def _figure_group(
+    job: FigureJob,
+    name: str,
+    *,
+    on_saved: Callable[[str], None] | None = None,
+    stop: Event | None = None,
+) -> list[SavedFigure]:
+    """One group's figures, drawn one at a time: each is saved and closed before the next is drawn. ``stop``
+    (a worker's) ends the group before the next figure is drawn, and drops one drawn meanwhile."""
+    saved: list[SavedFigure] = []
+    with style.context(job.preset, job.sans):
+        drawing = iter(_group_figures(job, name))
+        while stop is None or not stop.is_set():
+            built = next(drawing, None)
+            if built is None:
+                break
+            if stop is not None and stop.is_set():
+                plt.close(built.figure)
+                break
+            saved.append(_save_figure(job, built))
+            if on_saved is not None:
+                on_saved(saved[-1].log)
+    return saved
+
+
+def _read_only(items: dict[Any, Any]) -> MappingProxyType[Any, Any]:
+    return MappingProxyType(items)
+
+
+class _JobPickler(pickle.Pickler):
+    """Pickles the read-only views ``Settings`` keeps (``MappingProxyType``, which pickle cannot name) as new views
+    of plain copies (``_read_only``); every other object as pickle does."""
+
+    def reducer_override(self, obj: Any) -> Any:
+        if type(obj) is MappingProxyType:
+            return _read_only, (dict(obj),)
+        return NotImplemented
+
+
+def _pickled(job: FigureJob, log: Callable[[str], None]) -> bytes | None:
+    """The job for the worker processes, or None (with the reason) when it cannot be pickled: then the figures
+    are drawn in this process, with the same result."""
+    buffer = io.BytesIO()
+    try:
+        _JobPickler(buffer, protocol=pickle.HIGHEST_PROTOCOL).dump(job)
+    except (pickle.PicklingError, TypeError, AttributeError) as exc:
+        log(f"figures on one core: their inputs cannot be passed to worker processes ({exc})")
+        return None
+    return buffer.getvalue()
+
+
+def _figures_in_parallel(
+    payload: bytes, workers: int, log: Callable[[str], None]
+) -> dict[str, list[SavedFigure]]:
+    """The figure groups in ``workers`` processes (suite change 15). Each writes only its own figures' files;
+    a group's log lines come when it ends. On an error or a stop the queued groups are cancelled and every
+    running one ends before its next figure; this returns only then, so no worker writes into the staging
+    directory the caller then removes. Runs in the main thread (the CLI's)."""
+    spawn = mp.get_context("spawn")
+    stop = spawn.Event()
+    count = min(workers, len(FIGURE_GROUPS))
+    # A stop (SIGTERM) requested while the workers start is kept until all of them are registered with the pool:
+    # one arriving inside ``submit`` could leave a worker that the shutdown below never ends.
+    deferred: list[int] = []
+    handler = signal.signal(signal.SIGTERM, lambda signum, frame: deferred.append(signum))
+    try:
+        pool, futures = _start_workers(spawn, payload, count, stop)
+    finally:
+        signal.signal(signal.SIGTERM, handler)
+    by_group: dict[str, list[SavedFigure]] = {}
+    try:
+        if deferred:
+            signal.raise_signal(
+                signal.SIGTERM
+            )  # the stop requested meanwhile, now that every worker can end
+        log(f"figures: {len(FIGURE_GROUPS)} groups in {count} processes")
+        for future in as_completed(futures):
+            name = futures[future]
+            by_group[name] = future.result()
+            for saved in by_group[name]:
+                log(saved.log)
+    finally:
+        stop.set()
+        pool.shutdown(wait=True, cancel_futures=True)
+    return by_group
+
+
+def _start_workers(
+    spawn: Any, payload: bytes, count: int, stop: Event
+) -> tuple[ProcessPoolExecutor, dict[Future[list[SavedFigure]], str]]:
+    """``count`` figure workers, one numeric thread each, given every group (the longest first)."""
+    previous = {name: os.environ.get(name) for name in THREAD_VARIABLES}
+    pool: ProcessPoolExecutor | None = None
+    try:
+        for name in THREAD_VARIABLES:
+            os.environ[name] = "1"  # the workers inherit it when they start below
+        pool = ProcessPoolExecutor(
+            max_workers=count,
+            mp_context=spawn,
+            initializer=_figure_worker,
+            initargs=(os.getpid(), payload, stop),
+        )
+        return pool, {pool.submit(_worker_group, name): name for name in SUBMIT_ORDER}
+    except BaseException:
+        if pool is not None:
+            stop.set()
+            pool.shutdown(wait=True, cancel_futures=True)
+        raise
+    finally:
+        for name, value in previous.items():  # this process keeps its own settings
+            if value is None:
+                os.environ.pop(name, None)
+            else:
+                os.environ[name] = value
+
+
+_WORKER: dict[str, Any] = {}
+
+
+def _figure_worker(parent: int, payload: bytes, stop: Event) -> None:
+    """A figure worker: dies with the analysis (``PR_SET_PDEATHSIG``), so none writes after it stopped, and runs
+    at the lowest priority, so a simulation started meanwhile keeps the CPU. (The suite's export workers have
+    the same guard, ``benchmark_suite.exports._worker_start``; this package does not import the suite.)"""
+    libc = ctypes.CDLL(None, use_errno=True)
+    if libc.prctl(PR_SET_PDEATHSIG, signal.SIGKILL) != 0:
+        raise OSError(ctypes.get_errno(), "prctl(PR_SET_PDEATHSIG) failed")
+    if os.getppid() != parent:  # the analysis ended before the call above took effect
+        os._exit(1)
+    os.nice(19)
+    _WORKER.update(job=pickle.loads(payload), stop=stop)
+
+
+def _worker_group(name: str) -> list[SavedFigure]:
+    return _figure_group(_WORKER["job"], name, stop=_WORKER["stop"])
+
+
 def write_all(
     export: Export,
     settings: Settings,
@@ -530,11 +787,13 @@ def write_all(
     coding: taxonomy.Coding | None = None,
     study: Study | None = None,
     family: families.FamilyResult | None = None,
+    workers: int = 1,
 ) -> list[str]:
     """Every output into ``directory``; returns the warnings to print. ``coding`` is the researcher's coding file
     (``--coding``: ``taxonomy.read_coding``, already checked against the runs by ``taxonomy.check_runs``);
     ``study`` the export's loaded study and ``family`` its family estimates when the caller has them
-    (``data.load`` and ``families.family_estimates`` otherwise; a refusal of either is the caller's)."""
+    (``data.load`` and ``families.family_estimates`` otherwise; a refusal of either is the caller's).
+    ``workers`` above 1 draws the figure groups in that many processes, with the same outputs."""
     study = study or load(export)
     family = family if family is not None else families.family_estimates(study, settings)
     entries = families.merge_hypotheses(estimates(study, settings) + family.entries, settings)
@@ -637,68 +896,32 @@ def write_all(
         ),
         strict=True,
     )
-    missing_poppler = False
     with style.context(preset, sans):
         context = figures.context(
             study, settings, Entries(entries), grid_rows, preset, source.order
         )
-        # one module per group of figures (FIGURE_EXTENSION), in figure-number order; the family figures (F24,
-        # F25, F28) after them, as they also take the family estimates' inputs; the taxonomy last, as it also
-        # takes the coding file
-        modules = (
-            figures,
-            conduct,
-            comparisons,
-            behaviour,
-            heatmaps,
-            regionmaps,
-            decisions,
-            schematic,
-            composites,
-            summaries,
-        )
-        # every module yields its figures one at a time: each is saved and closed before the next is drawn
-        built_all = chain(
-            *(module.figures(context) for module in modules),
-            families_figures.figures(context, family_inputs),
-            taxonomy.figures(context, coding),
-        )
-        for built in built_all:
-            path = figure_directory / f"{built.name}.pdf"
-            freeze_layout(built.figure)
-            built.figure.savefig(path, metadata={"CreationDate": None})
-            result = checks.check_pdf(path, style.width_pt(preset, built.width))
-            views = checks.contact_sheet(built.figure, sheet_directory / f"{built.name}.png")
-            plt.close(built.figure)
-            if not result.get("available", True):
+    job = FigureJob(
+        context,
+        base,
+        preset,
+        sans,
+        tuple(family_inputs),
+        coding,
+        figure_directory,
+        sheet_directory,
+    )
+    payload = _pickled(job, log) if workers > 1 else None
+    if payload is None:
+        by_group = {name: _figure_group(job, name, on_saved=log) for name in FIGURE_GROUPS}
+    else:
+        by_group = _figures_in_parallel(payload, workers, log)
+    missing_poppler = False
+    for name in FIGURE_GROUPS:  # in figure-number order, however the groups were drawn
+        for saved in by_group[name]:
+            if not saved.check_available:
                 missing_poppler = True
-            elif result.get("problems"):
-                warnings.append(f"{built.name}: " + "; ".join(result["problems"]))
-            # a figure with no runs behind it reads no study files and has no counts
-            with_runs = f"figures/{built.name}.pdf" not in NO_RUNS
-            study_inputs = INPUTS["figure"] if with_runs else ()
-            inputs = [*study_inputs, *sorted(built.inputs)]
-            (figure_directory / f"{built.name}.sidecar.json").write_text(
-                _sidecar(
-                    base,
-                    study,
-                    inputs,
-                    built.attempt_ids,
-                    with_counts=with_runs,
-                    output=f"{built.name}.pdf",
-                    alt_text=built.alt_text,
-                    # where an encoding repeats (style.profile_styles): said on every figure with runs
-                    caption_notes=[*built.notes, *(context.style_notes if with_runs else ())],
-                    check_pdf=result,
-                    contact_sheet=dict(file=f"contact_sheets/{built.name}.png", views=views),
-                    **built.extra,
-                ),
-                encoding="utf-8",
-            )
-            log(
-                f"figure {built.name}"
-                + ("" if result.get("ok", True) else " (check_pdf: see sidecar)")
-            )
+            elif saved.problems:
+                warnings.append(f"{saved.name}: " + "; ".join(saved.problems))
     if missing_poppler:
         warnings.append(
             "check_pdf did not run: poppler-utils (pdfinfo, pdffonts, pdfimages) not found"
