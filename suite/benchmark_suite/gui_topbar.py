@@ -12,15 +12,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Top bar of the Main design (HANDOFF §7.2): wordmark, centred navigation, engine state, theme switch."""
+"""Top bar of the Main design (HANDOFF §7.2): wordmark, centred navigation, engine state, path colours, theme
+switch."""
 
+from functools import partial
 import math
 
 from PySide6 import QtCore, QtGui, QtWidgets
 
 from . import gui_icons, gui_tokens
-from .gui_theme import Theme, ThemeManager, css_color
+from .gui_menus import Menu
+from .gui_theme import PATH_COLOURS, Theme, ThemeManager, css_color
 from .gui_widgets import (
+    Button,
+    PopupHost,
     SegmentedControl,
     TextStyle,
     Themed,
@@ -265,6 +270,7 @@ class TopBar(Themed):
 
     navigate = QtCore.Signal(str)
     theme_requested = QtCore.Signal(str)
+    path_colours_requested = QtCore.Signal(str)
 
     def __init__(self, themes: ThemeManager, parent: QtWidgets.QWidget | None = None) -> None:
         super().__init__(themes, parent)
@@ -284,6 +290,13 @@ class TopBar(Themed):
             tooltips=("Light theme", "Dark theme"),
             parent=self,
         )
+        # The maps' path colours (gui_maps.PATH_SCALES), chosen from a menu.
+        self.colours = Button(
+            themes, icon="route", variant="ghost", small=True, icon_size=16, parent=self
+        )
+        self.colours.setToolTip("Path colours")
+        self.colours.setAccessibleName("Path colours")
+        self.colours.clicked.connect(self._colours_menu)
         self.switch.setAccessibleName("Theme")
         self.switch.setFixedSize(68, 32)
         self.switch.set_index(1 if themes.current.dark else 0)
@@ -293,6 +306,21 @@ class TopBar(Themed):
         themes.changed.connect(self._theme_changed)
         self.ready = True
         self.place()
+
+    def _colours_menu(self) -> None:
+        host = self.window().findChild(PopupHost)
+        if host is None:
+            return
+        menu = Menu(self.themes)
+        for name in PATH_COLOURS:
+            current = name == self.themes.path_colours
+            menu.add_item(
+                name.capitalize(),
+                partial(self.path_colours_requested.emit, name),
+                enabled=not current,
+                reason="Current" if current else "",
+            )
+        menu.popup(host, self.colours)
 
     def _theme_changed(self, theme: Theme) -> None:
         self.switch.set_index(1 if theme.dark else 0)
@@ -311,7 +339,8 @@ class TopBar(Themed):
         self.nav.move(math.floor(left), 11)
         self.nav.relayout(left - math.floor(left))
         self.switch.move(width - 24 - 68, 12)
-        engine = width - 24 - 68 - 16 - self.engine.natural_width()
+        self.colours.move(width - 24 - 68 - 8 - 28, 14)
+        engine = width - 24 - 68 - 8 - 28 - 16 - self.engine.natural_width()
         self.engine.shift = engine - math.floor(engine)
         self.engine.move(math.floor(engine), 19)
         self.engine.update()

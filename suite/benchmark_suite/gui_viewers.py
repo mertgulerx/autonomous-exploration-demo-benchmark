@@ -65,6 +65,20 @@ TRACKER_PARAMETERS = ROOT / "rviz/src/frontier_path_tracker.yaml"
 VIEW_TARGET = "/tmp/benchmark-run-view.rviz"
 CONTROL_PANEL = "rviz_autonomous_exploration_benchmark/ExplorationControlPanel"
 LABEL = "org.benchmark.suite.viewer"
+TRAVELED_PATH = "/explore/traversed_path"
+# The traversed path as one line coloured by travelled distance (frontier_path_tracker.py; cividis).
+COLOURED_PATH_DISPLAY: dict[str, object] = {
+    "Class": "rviz_default_plugins/Marker",
+    "Name": "Traveled Path (coloured)",
+    "Enabled": True,
+    "Topic": {
+        "Value": "/explore/traversed_path_coloured",
+        "Durability Policy": "Transient Local",
+        "Reliability Policy": "Reliable",
+        "History Policy": "Keep Last",
+        "Depth": 5,
+    },
+}
 SETUP = (
     "if [[ -e /dev/nvidiactl && -r /usr/share/glvnd/egl_vendor.d/10_nvidia.json ]]; then "
     "export __EGL_VENDOR_LIBRARY_FILENAMES=/usr/share/glvnd/egl_vendor.d/10_nvidia.json; fi; "
@@ -153,14 +167,19 @@ def private_directory(environment: Mapping[str, str]) -> Path:
 
 
 def run_view(environment: Mapping[str, str]) -> Path:
-    """``navigation.rviz`` without the Exploration Control panel, the robot description read transient-local;
-    every other setting as configured. Written to the private directory and returned."""
+    """``navigation.rviz`` without the Exploration Control panel, the robot description read transient-local and
+    the coloured path (``COLOURED_PATH_DISPLAY``) in place of the plain traversed path, which stays listed but
+    off; every other setting as configured. Written to the private directory and returned."""
     try:
         view = yaml.safe_load(NAVIGATION_VIEW.read_text())
         view["Panels"] = [p for p in view.get("Panels") or [] if p.get("Class") != CONTROL_PANEL]
-        for display in view["Visualization Manager"]["Displays"]:
+        displays = view["Visualization Manager"]["Displays"]
+        for display in displays:
             if display.get("Class") == "rviz_default_plugins/RobotModel":
                 display["Description Topic"]["Durability Policy"] = "Transient Local"
+            if (display.get("Topic") or {}).get("Value") == TRAVELED_PATH:
+                display["Enabled"] = False
+        displays.append(dict(COLOURED_PATH_DISPLAY))
     except (OSError, yaml.YAMLError, KeyError, TypeError, AttributeError) as exc:
         raise ContractError("viewer", f"Cannot read {NAVIGATION_VIEW.name}: {exc}") from exc
     target = private_directory(environment) / "run_view.rviz"

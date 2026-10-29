@@ -35,6 +35,7 @@ from . import gui_icons
 from .gui_maps import (
     LiveLayers,
     PathLayers,
+    paint_path_swatch,
     Placement,
     WorldMap,
     explored_image,
@@ -170,7 +171,7 @@ class LiveMap(Themed):
         self.zoom = 1.0
         self.focus = (0.5, 0.5)  # the box fraction at the stage centre
         self._drag: QtCore.QPointF | None = None
-        self.path_layers = PathLayers()
+        self.path_layers = PathLayers(coloured=True)
         # The base image with its view key and the explored cells it shows (kept alive, compared by identity).
         self._base: tuple[tuple[object, ...], Explored | None, QtGui.QImage] | None = None
         self._explored: tuple[Explored, str, QtGui.QImage] | None = None
@@ -444,7 +445,8 @@ class LiveMap(Themed):
         if self.SCALE_BAR:
             self._paint_scale(painter, placement, theme)
         if not complete:
-            QtCore.QTimer.singleShot(0, self.update)  # a long path goes on at the next paint
+            # a long path goes on at the next paint; a coloured path waits for its next redraw
+            QtCore.QTimer.singleShot(self.path_layers.retry_ms, self.update)
 
     def _paint_scale(self, painter: QtGui.QPainter, placement: Placement, theme: Theme) -> None:
         """``.scale``: 10 px inside the fitted box's bottom-left corner; ``map.float``, 1 px ``border.line``,
@@ -571,13 +573,8 @@ class MapLegend(Themed):
         ink = theme.color("text.ink")
         # Inline SVG and the dot's box are painted on whole pixels.
         x = snap(x)
-        if kind == "path":  # 22×10: a 5 px halo and a 2.4 px path, round caps
-            y = snap(top + 4) + 5
-            for color, width in ((theme.color("map.halo"), 5.0), (theme.color("data.path"), 2.4)):
-                pen = QtGui.QPen(color, width)
-                pen.setCapStyle(QtCore.Qt.PenCapStyle.RoundCap)
-                painter.setPen(pen)
-                painter.drawLine(QtCore.QPointF(x + 1, y), QtCore.QPointF(x + 21, y))
+        if kind == "path":  # 22×10: the line from the start's colour to the newest's
+            paint_path_swatch(painter, x, snap(top + 4) + 5, 22.0, theme)
         elif kind == "explored":  # 12×12, radius 2: coverage at 22 % with a 45 % inset ring
             box = QtCore.QRectF(x, snap(top + 3), 12, 12)
             free, coverage = theme.color("map.free"), theme.color("data.coverage")

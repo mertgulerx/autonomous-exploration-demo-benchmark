@@ -38,7 +38,7 @@ from . import gui_tokens
 from .contracts import GAP_S, OUR_EXPLORER, explorer_failure, measured_as, milestone_key
 from .gui_cells import MONO_TEXT, OverlayScrollBar
 from .gui_controls import StatusBadge
-from .gui_maps import LiveLayers, WorldMap, decode_grey
+from .gui_maps import LiveLayers, WorldMap, decode_grey, paint_path_swatch
 from .gui_mapview import LiveMap
 from .gui_marks import CHART_LABEL, KeyValue, KeyValueList, tick_step
 from .gui_profile_preview import profile_differences
@@ -331,13 +331,7 @@ class MapLegend(Themed):
         if not self.ready:
             draw_text(painter, 0, 0, LEGEND.elide(self.text, self.width()), LEGEND, secondary)
             return
-        painter.save()
-        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
-        pen = QtGui.QPen(theme.color("data.path"), 2.2)
-        pen.setCapStyle(QtCore.Qt.PenCapStyle.RoundCap)
-        painter.setPen(pen)
-        painter.drawLine(QtCore.QPointF(1, 9), QtCore.QPointF(17, 9))
-        painter.restore()
+        paint_path_swatch(painter, 0, 9, 18.0, theme)
         x = 18 + 6 + draw_text(painter, 24, 0, "Ground-truth path", LEGEND, secondary) + 16
         coverage, free = theme.color("data.coverage"), theme.map_color("free")
         share = gui_tokens.EXPLORED_OPACITY[theme.name]

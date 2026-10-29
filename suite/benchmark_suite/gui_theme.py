@@ -19,7 +19,7 @@ the choice in the application's QSettings, applies palette, style and style shee
 painted widgets and caches repaint without a restart.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from functools import lru_cache
 import logging
 import math
@@ -31,6 +31,9 @@ from PySide6 import QtCore, QtGui, QtWidgets
 from . import gui_tokens
 
 THEME_KEY = "appearance/theme"
+# The coloured path's scale (gui_maps.PATH_SCALES), chosen beside the theme switch; orange is the plain line.
+PATH_COLOURS_KEY = "appearance/path_colours"
+PATH_COLOURS = ("cividis", "inferno", "plasma", "rainbow", "orange")
 UI_FAMILIES = ("Ubuntu Sans", "Segoe UI Variable Text", "Segoe UI", "SF Pro Text")
 MONO_FAMILIES = ("Ubuntu Sans Mono", "Cascadia Mono", "SF Mono")
 LOG = logging.getLogger(__name__)
@@ -49,6 +52,7 @@ def css_color(value: str) -> QtGui.QColor:
 class Theme:
     name: str
     tokens: Mapping[str, str]
+    path_colours: str = PATH_COLOURS[0]
 
     @property
     def dark(self) -> bool:
@@ -404,16 +408,27 @@ class ThemeManager(QtCore.QObject):
             # First launch: follow the desktop; afterwards the stored choice wins.
             hints = QtGui.QGuiApplication.styleHints()
             stored = "dark" if hints.colorScheme() == QtCore.Qt.ColorScheme.Dark else "light"
-        self.current: Theme = THEMES[str(stored)]
+        colours = settings.value(PATH_COLOURS_KEY)
+        self.path_colours = str(colours) if colours in PATH_COLOURS else PATH_COLOURS[0]
+        self.current: Theme = replace(THEMES[str(stored)], path_colours=self.path_colours)
         self.style = MainStyle(self)
 
     def set(self, name: str) -> None:
         if name not in THEMES:
             raise ValueError(f"Unknown theme: {name}")
         if name != self.current.name:
-            self.current = THEMES[name]
+            self.current = replace(THEMES[name], path_colours=self.path_colours)
             self.settings.setValue(THEME_KEY, name)
             self.apply()
+
+    def set_path_colours(self, name: str) -> None:
+        if name not in PATH_COLOURS:
+            raise ValueError(f"Unknown path colours: {name}")
+        if name != self.path_colours:
+            self.path_colours = name
+            self.settings.setValue(PATH_COLOURS_KEY, name)
+            self.current = replace(self.current, path_colours=name)
+            self.changed.emit(self.current)
 
     def apply(self) -> None:
         application = QtWidgets.QApplication.instance()

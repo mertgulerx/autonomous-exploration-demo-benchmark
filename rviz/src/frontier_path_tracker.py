@@ -17,7 +17,7 @@ limitations under the License.
 
 import math
 
-from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import Point, PoseStamped
 from nav_msgs.msg import Path
 import rclpy
 from rclpy.executors import ExternalShutdownException
@@ -26,13 +26,33 @@ from rclpy.qos import DurabilityPolicy
 from rclpy.qos import HistoryPolicy
 from rclpy.qos import QoSProfile
 from rclpy.qos import ReliabilityPolicy
-from std_msgs.msg import String
+from std_msgs.msg import ColorRGBA, String
 from std_msgs.msg import Empty as EmptyMsg
 from std_srvs.srv import Empty as EmptySrv
 from rclpy.time import Time
 from tf2_ros import Buffer
 from tf2_ros import TransformException
 from tf2_ros import TransformListener
+from visualization_msgs.msg import Marker
+
+# Matplotlib's cividis at 33 even steps (colour-blind and print safe); linear between them.
+CIVIDIS = [
+    tuple(int(code[i : i + 2], 16) / 255 for i in (0, 2, 4))
+    for code in (
+        "00224E 00285B 002E6A 053371 1A386F 273E6E 32436D 3B496C 434E6C 4B546C 535A6D 5A5F6E 61656F "
+        "686A71 6F7073 767676 7D7C78 848279 8C8878 938E78 9B9476 A39A74 ABA072 B4A76F BCAE6C C4B468 "
+        "CDBB63 D5C25E DEC958 E7D150 F0D846 F9E03A FEE838"
+    ).split()
+]
+
+
+def cividis(value: float) -> ColorRGBA:
+    """Cividis for a value in [0, 1]: 0 dark blue, 1 yellow."""
+    position = min(max(value, 0.0), 1.0) * (len(CIVIDIS) - 1)
+    low = min(int(position), len(CIVIDIS) - 2)
+    share = position - low
+    r, g, b = (a + (c - a) * share for a, c in zip(CIVIDIS[low], CIVIDIS[low + 1]))
+    return ColorRGBA(r=r, g=g, b=b, a=1.0)
 
 
 # Path tracker node keeps per-explorer traversed paths in separate topics while sharing
@@ -62,6 +82,8 @@ class FrontierPathTracker(Node):
         self.declare_parameter("reset_topic", "/explore/reset_traveled_path")
         self.declare_parameter("update_rate_hz", 5.0)
         self.declare_parameter("min_translation_delta_m", 0.05)
+        self.declare_parameter("coloured_path_topic", "/explore/traversed_path_coloured")
+        self.declare_parameter("coloured_path_width_m", 0.06)
 
         # Read once at startup; runtime reconfiguration is out of scope for this utility.
         self.global_frame = str(self.get_parameter("global_frame").value)
@@ -120,6 +142,12 @@ class FrontierPathTracker(Node):
         self.active_package = self.default_package
         self.initial_pose_publisher = self.create_publisher(
             PoseStamped, self.initial_pose_topic, self.path_qos
+        )
+        # The active path as one line coloured by travelled distance (cividis: start dark blue, newest yellow;
+        # rescaled on every update), latched like the paths.
+        self.coloured_path_width_m = float(self.get_parameter("coloured_path_width_m").value)
+        self.coloured_path_publisher = self.create_publisher(
+            Marker, str(self.get_parameter("coloured_path_topic").value), self.path_qos
         )
         # Reset is exposed as both topic and service for compatibility with different callers.
         self.active_package_subscriber = self.create_subscription(
@@ -210,6 +238,7 @@ class FrontierPathTracker(Node):
             self.path_msgs[package_name] = path_msg
             publisher.publish(path_msg)
         self.active_package = self.default_package
+        self._publish_coloured_path(Path())
         self.get_logger().info("Traveled path reset requested for all packages.")
 
     def _on_reset_topic(self, _: EmptyMsg) -> None:
@@ -260,6 +289,31 @@ class FrontierPathTracker(Node):
         active_path.header.stamp = pose.header.stamp
         active_path.poses.append(pose)
         self.path_publishers[active_package].publish(active_path)
+        self._publish_coloured_path(active_path)
+
+    def _publish_coloured_path(self, path: Path) -> None:
+        # One LINE_STRIP with a colour per vertex by the distance travelled along the path; fewer than two
+        # vertices delete it.
+        marker = Marker()
+        marker.header.frame_id = self.global_frame
+        marker.header.stamp = self.get_clock().now().to_msg()
+        marker.ns, marker.id = "traversed_path_coloured", 0
+        marker.pose.orientation.w = 1.0
+        if len(path.poses) < 2:
+            marker.action = Marker.DELETE
+            self.coloured_path_publisher.publish(marker)
+            return
+        marker.type, marker.action = Marker.LINE_STRIP, Marker.ADD
+        marker.scale.x = self.coloured_path_width_m
+        marker.points = [
+            Point(x=p.pose.position.x, y=p.pose.position.y, z=p.pose.position.z) for p in path.poses
+        ]
+        travelled = [0.0]
+        for a, b in zip(marker.points, marker.points[1:]):
+            travelled.append(travelled[-1] + math.dist((a.x, a.y, a.z), (b.x, b.y, b.z)))
+        span = travelled[-1] or 1.0
+        marker.colors = [cividis(value / span) for value in travelled]
+        self.coloured_path_publisher.publish(marker)
 
     def _should_append_pose(self, pose: PoseStamped) -> bool:
         # First valid pose always seeds the path.

@@ -20,3 +20,7 @@ frontier_path_tracker:
     # Sampling guard to keep the path detailed without publishing duplicate poses.
     update_rate_hz: 5.0
     min_translation_delta_m: 0.05
+
+    # The active path as one line coloured by travelled distance (cividis), latched.
+    coloured_path_topic: /explore/traversed_path_coloured
+    coloured_path_width_m: 0.06

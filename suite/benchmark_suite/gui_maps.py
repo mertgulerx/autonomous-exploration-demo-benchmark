@@ -24,6 +24,7 @@ import base64
 from collections import deque
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
+from functools import partial
 import math
 import struct
 import time
@@ -571,6 +572,139 @@ def _layer_image(size: QtCore.QSize, ratio: float) -> QtGui.QImage:
     return image
 
 
+# ---------- coloured path (display only) ----------
+
+# The path line coloured by the distance travelled so far, in the scale chosen beside the theme switch
+# (``Theme.path_colours``): cividis (the default; colour-blind and print safe, as the paper's figures),
+# inferno, plasma or RViz's rainbow, start to newest vertex; the colours rescale as the run grows. Orange is
+# the plain line. A display value, never the run's distance (MEASUREMENTS: odometry distance and ground-truth
+# path length).
+PATH_SHADES = 128  # colours drawn per frame
+PATH_REDRAW_S = 0.5  # every new vertex rescales all colours: the line is redrawn at most this often
+COLOURED_HALO_WIDTH, COLOURED_PATH_WIDTH = (
+    6.3,
+    4.0,
+)  # px: wider than the plain line, the colours need area
+
+
+def _table(codes: str) -> np.ndarray[Any, np.dtype[np.float64]]:
+    """An (N, 3) RGB table in [0, 1] from hex codes."""
+    return np.array([[int(code[i : i + 2], 16) / 255 for i in (0, 2, 4)] for code in codes.split()])
+
+
+# matplotlib's colour maps at 33 even steps; linear between them (within 5 of 255)
+CIVIDIS = _table(
+    "00224E 00285B 002E6A 053371 1A386F 273E6E 32436D 3B496C 434E6C 4B546C 535A6D 5A5F6E 61656F 686A71 6F7073 "
+    "767676 7D7C78 848279 8C8878 938E78 9B9476 A39A74 ABA072 B4A76F BCAE6C C4B468 CDBB63 D5C25E DEC958 E7D150 "
+    "F0D846 F9E03A FEE838"
+)
+INFERNO = _table(
+    "000004 040312 0B0724 150B37 210C4A 2F0A5B 3D0965 4A0C6B 57106E 64156E 71196E 7D1E6D 8A226A 972766 A32C61 "
+    "B0315B BC3754 C73E4C D24644 DB503B E45A31 EB6628 F1731D F68013 F98E09 FB9D07 FCAC11 FBBC21 F9CB35 F5DB4C "
+    "F2EA69 F3F68A FCFFA4"
+)
+PLASMA = _table(
+    "0D0887 220690 310597 3F049C 4C02A1 5901A5 6600A7 7201A8 7E03A8 8A09A5 9511A1 A01A9C AA2395 B32C8E BC3587 "
+    "C43E7F CC4778 D35171 DA5A6A E06363 E66C5C EB7655 F0804E F58B47 F89540 FBA139 FDAC33 FEB82C FDC527 FCD225 "
+    "F8DF25 F4ED27 F0F921"
+)
+
+
+def _interpolated(
+    table: np.ndarray[Any, np.dtype[np.float64]], values: np.ndarray[Any, np.dtype[np.float64]]
+) -> np.ndarray[Any, np.dtype[np.float64]]:
+    steps = np.linspace(0.0, 1.0, len(table))
+    return np.stack([np.interp(values, steps, table[:, i]) for i in range(3)], axis=1)
+
+
+def rainbow(values: np.ndarray[Any, np.dtype[np.float64]]) -> np.ndarray[Any, np.dtype[np.float64]]:
+    """RViz 2's ``getRainbowColor`` run from red (0) to magenta (1)."""
+    h = (1.0 - np.clip(values, 0.0, 1.0)) * 5.0 + 1.0
+    segment = np.floor(h)
+    f = np.where(segment % 2 == 0, 1.0 - (h - segment), h - segment)  # even segments run backwards
+    n = 1.0 - f
+    choices = [segment <= 1, segment == 2, segment == 3, segment == 4, segment >= 5]
+    red = np.select(choices, [n, 0.0, 0.0, n, 1.0])
+    green = np.select(choices, [0.0, n, 1.0, 1.0, n])
+    blue = np.select(choices, [1.0, 1.0, n, 0.0, 0.0])
+    return np.stack([red, green, blue], axis=1)
+
+
+Scale = Callable[[np.ndarray[Any, np.dtype[np.float64]]], np.ndarray[Any, np.dtype[np.float64]]]
+# Values in [0, 1] (start to newest) to (N, 3) RGB in [0, 1].
+PATH_SCALES: Mapping[str, Scale] = {
+    "cividis": partial(_interpolated, CIVIDIS),
+    "inferno": partial(_interpolated, INFERNO),
+    "plasma": partial(_interpolated, PLASMA),
+    "rainbow": rainbow,
+}
+
+
+def rgb(colour: np.ndarray[Any, np.dtype[np.float64]]) -> QtGui.QColor:
+    """A colour from an RGB row in [0, 1]."""
+    return QtGui.QColor.fromRgbF(float(colour[0]), float(colour[1]), float(colour[2]))
+
+
+class Travelled:
+    """The distance travelled along a ``LivePath`` at each kept vertex (metres): the sum of the steps between
+    joined vertices, so a segment start (a recording gap or jump) adds nothing. Starts again when the path does
+    (``LivePath.generation``)."""
+
+    def __init__(self) -> None:
+        self.source: LivePath | None = None
+        self.generation = -1
+        self.values: list[float] = []
+
+    def update(self, path: LivePath) -> bool:
+        """Extend to the path's kept vertices; True when the values changed."""
+        changed = False
+        if path is not self.source or path.generation != self.generation:
+            self.source, self.generation, self.values = path, path.generation, []
+            changed = True
+        for index in range(len(self.values), len(path)):
+            if not self.values or path.starts[index]:
+                value = self.values[-1] if self.values else 0.0
+            else:
+                step = math.hypot(
+                    path.x[index] - path.x[index - 1], path.y[index] - path.y[index - 1]
+                )
+                value = self.values[-1] + step
+            self.values.append(value)
+            changed = True
+        return changed
+
+
+def path_widths(theme: Theme, coloured: bool = True) -> tuple[float, float]:
+    """The halo and line widths: wider for a coloured path than for the plain (orange) line."""
+    if coloured and theme.path_colours in PATH_SCALES:
+        return COLOURED_HALO_WIDTH, COLOURED_PATH_WIDTH
+    return HALO_WIDTH, PATH_WIDTH
+
+
+def paint_path_swatch(
+    painter: QtGui.QPainter, x: float, y: float, width: float, theme: Theme
+) -> None:
+    """A legend swatch: a short line in the path's colours (start to newest), over its halo."""
+    halo_width, line_width = path_widths(theme)
+    pen = round_pen(theme.color("data.path"), line_width)
+    scale = PATH_SCALES.get(theme.path_colours)
+    if scale is not None:
+        gradient = QtGui.QLinearGradient(QtCore.QPointF(x, y), QtCore.QPointF(x + width, y))
+        stops = np.linspace(0.0, 1.0, 6, dtype=np.float64)
+        colours = scale(stops)
+        for index, stop in enumerate(stops.tolist()):
+            gradient.setColorAt(stop, rgb(colours[index, :]))
+        pen.setBrush(QtGui.QBrush(gradient))
+    start, end = QtCore.QPointF(x + 1, y), QtCore.QPointF(x + width - 1, y)
+    painter.save()
+    painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+    painter.setPen(round_pen(theme.color("map.halo"), halo_width))
+    painter.drawLine(start, end)
+    painter.setPen(pen)
+    painter.drawLine(start, end)
+    painter.restore()
+
+
 class PathLayers:
     """A live map's path in two device-pixel images for one view: every halo (opaque, shown at 90 % as one
     shape, as the SVG stroke) and every line. Each ``draw`` adds the vertices kept since the last one, then goes
@@ -583,11 +717,17 @@ class PathLayers:
     BLOCK = 8192  # vertices mapped to the screen at once
     BUDGET_S = 0.025
 
-    def __init__(self) -> None:
+    def __init__(self, coloured: bool = False) -> None:
         self.source: LivePath | None = None
         self.key: tuple[object, ...] | None = None
         self.halo = self.line = QtGui.QImage()
         self.low = self.high = 0  # the vertices low to high (exclusive) are drawn
+        # Coloured by travelled distance (Monitor and run view): redrawn whole when vertices are added, as the
+        # colours rescale, at most every PATH_REDRAW_S; ``retry_ms`` tells the map when to paint again.
+        self.travelled = Travelled() if coloured else None
+        self.drawn_at = -math.inf
+        self.drawn = 0  # vertices in the coloured line
+        self.retry_ms = 0
 
     def invalidate(self) -> None:
         self.key = None
@@ -602,9 +742,25 @@ class PathLayers:
             (size.width(), size.height()),
             ratio,
             theme.name,
+            theme.path_colours,
             path.generation,
         )
         count = len(path)
+        scale = self.scale(theme)
+        if self.travelled is not None and scale is not None:
+            changed = self.travelled.update(path)
+            fresh = path is not self.source or key != self.key
+            wait = PATH_REDRAW_S - (time.monotonic() - self.drawn_at)
+            self.retry_ms = math.ceil(wait * 1000) if changed and not fresh and wait > 0 else 0
+            if self.retry_ms:
+                return False  # the new vertices are drawn at the next redraw
+            if fresh or changed:
+                self.source, self.key = path, key
+                self.halo, self.line = _layer_image(size, ratio), _layer_image(size, ratio)
+                if count:
+                    self._colour_line(path, self.travelled, scale, placement, size, theme)
+                self.drawn_at, self.drawn = time.monotonic(), count
+            return True
         if path is not self.source or key != self.key:
             self.source, self.key = path, key
             self.halo, self.line = _layer_image(size, ratio), _layer_image(size, ratio)
@@ -638,6 +794,38 @@ class PathLayers:
         for painter in painters:
             painter.end()
         return self.low == 0 and self.high == count
+
+    def scale(self, theme: Theme) -> Scale | None:
+        """The colour scale this map draws its path in, or None for the plain line."""
+        return PATH_SCALES.get(theme.path_colours) if self.travelled is not None else None
+
+    def _colour_line(
+        self,
+        path: LivePath,
+        travelled: Travelled,
+        scale: Scale,
+        placement: Placement,
+        size: QtCore.QSize,
+        theme: Theme,
+    ) -> None:
+        """The whole path as the line over its halo, each run of vertices in the shade of the distance travelled
+        at its end, joined to the run before it so the line stays continuous."""
+        values = np.asarray(travelled.values, dtype=np.float64)
+        shade = np.rint(values / max(values[-1], 1e-9) * (PATH_SHADES - 1)).astype(np.int64)
+        colours = scale(np.linspace(0.0, 1.0, PATH_SHADES, dtype=np.float64))
+        starts = np.asarray(path.starts, dtype=bool)
+        changes = np.flatnonzero(starts | np.r_[True, shade[1:] != shade[:-1]])
+        bounds = QtCore.QRectF(0, 0, size.width(), size.height()).adjusted(-4, -4, 4, 4)
+        halo, line = QtGui.QPainter(self.halo), QtGui.QPainter(self.line)
+        for painter in (halo, line):
+            painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
+        halo.setPen(round_pen(theme.color("map.halo"), COLOURED_HALO_WIDTH))
+        for first, end in zip(changes.tolist(), [*changes[1:].tolist(), len(path)], strict=True):
+            line.setPen(round_pen(rgb(colours[shade[first], :]), COLOURED_PATH_WIDTH))
+            begin = first if starts[first] else first - 1
+            self._stroke((halo, line), path, placement, begin, end, bounds, None)
+        halo.end()
+        line.end()
 
     def _stroke(
         self,
@@ -677,17 +865,21 @@ class PathLayers:
         self, painter: QtGui.QPainter, layers: LiveLayers, placement: Placement, theme: Theme
     ) -> None:
         """Composite the drawn path: the halos at 90 % (the tail's halo joined to them), the lines, the tail's
-        line (last vertex to the pose) and the start mark (only while the path's start is kept)."""
+        line (last drawn vertex to the pose) and the start mark (only while the path's start is kept)."""
         path = layers.path
+        scale = self.scale(theme)
+        # a coloured line is redrawn at most every PATH_REDRAW_S: the tail bridges the vertices not yet in it
+        last = min(self.drawn, len(path)) - 1 if scale is not None else len(path) - 1
         tail: QtGui.QPainterPath | None = None
-        if layers.tail is not None and len(path):
-            tail = QtGui.QPainterPath(placement.point(path.x[-1], path.y[-1]))
+        if layers.tail is not None and last >= 0:
+            tail = QtGui.QPainterPath(placement.point(path.x[last], path.y[last]))
             tail.lineTo(placement.point(*layers.tail))
+        halo_width, line_width = path_widths(theme, scale is not None)
         saved: tuple[QtCore.QPoint, QtGui.QImage] | None = None
         if tail is not None:
             # Drawn into the halo image and taken out again, only around the tail.
             ratio = self.halo.devicePixelRatio()
-            area = tail.boundingRect().adjusted(-HALO_WIDTH, -HALO_WIDTH, HALO_WIDTH, HALO_WIDTH)
+            area = tail.boundingRect().adjusted(-halo_width, -halo_width, halo_width, halo_width)
             region = QtCore.QRect(
                 math.floor(area.left() * ratio),
                 math.floor(area.top() * ratio),
@@ -697,7 +889,7 @@ class PathLayers:
             saved = (region.topLeft(), self.halo.copy(region))
             layer = QtGui.QPainter(self.halo)
             layer.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
-            layer.setPen(round_pen(theme.color("map.halo"), HALO_WIDTH))
+            layer.setPen(round_pen(theme.color("map.halo"), halo_width))
             layer.drawPath(tail)
             layer.end()
         painter.save()
@@ -715,7 +907,8 @@ class PathLayers:
         if tail is not None:
             painter.save()
             painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing)
-            painter.setPen(round_pen(theme.color("data.path"), PATH_WIDTH))
+            colour = theme.color("data.path") if scale is None else rgb(scale(np.ones(1))[0, :])
+            painter.setPen(round_pen(colour, line_width))
             painter.drawPath(tail)
             painter.restore()
         if len(path) and path.start_known:

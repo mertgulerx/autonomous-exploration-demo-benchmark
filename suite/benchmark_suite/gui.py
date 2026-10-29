@@ -100,6 +100,7 @@ class Window(QtWidgets.QMainWindow):
         self.topbar = TopBar(self.themes)
         self.topbar.navigate.connect(self.navigate)
         self.topbar.theme_requested.connect(self.themes.set)
+        self.topbar.path_colours_requested.connect(self.themes.set_path_colours)
         root.addWidget(self.topbar)
         root.addWidget(self.pages, 1)
         self.setCentralWidget(central)
